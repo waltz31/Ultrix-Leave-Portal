@@ -1494,7 +1494,11 @@ router.post('/invoices', authRequired, async (req, res) => {
   }
 
   const { data, totalAmount } = validated;
-  const pdfData = String(req.body?.pdfData || '').trim() || null;
+  // Cap stored PDF size (~8MB base64) so Postgres TEXT inserts stay healthy
+  let pdfData = String(req.body?.pdfData || '').trim() || null;
+  if (pdfData && pdfData.length > 8_000_000) {
+    pdfData = null;
+  }
 
   const duplicate = await db
     .prepare(`SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?`)

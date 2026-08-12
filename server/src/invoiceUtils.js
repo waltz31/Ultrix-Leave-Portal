@@ -77,7 +77,8 @@ export function validateInvoicePayload(body) {
     bank: String(body.bank || '').trim(),
     branch: String(body.branch || '').trim(),
     invoiceFont: String(body.invoiceFont || 'source-sans'),
-    signatureDataUrl: body.signatureDataUrl || null,
+    // Keep signatures out of JSON storage — they live in the PDF (and can be huge).
+    signatureDataUrl: null,
   };
 
   return { data, totalAmount };
