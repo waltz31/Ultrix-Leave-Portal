@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import db from './db.js';
 import routes from './routes.js';
+import { slackStatus } from './slack.js';
 
 await db.ready;
 
@@ -39,6 +40,7 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     timezone: 'Asia/Kolkata',
     db: db.dialect,
+    slack: slackStatus(),
   });
 });
 
@@ -50,5 +52,11 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, () => {
+  const slack = slackStatus();
   console.log(`Leave Portal API running on port ${PORT} (IST, ${db.dialect})`);
+  console.log(
+    slack.configured
+      ? `Slack: ${slack.mode} → ${slack.channel || 'webhook'}`
+      : 'Slack: off (missing SLACK_BOT_TOKEN / SLACK_LEAVE_CHANNEL)'
+  );
 });

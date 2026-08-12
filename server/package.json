@@ -7,7 +7,7 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "TZ=Asia/Kolkata nodemon src/index.js",
+    "dev": "TZ=Asia/Kolkata nodemon --watch src --watch .env src/index.js",
     "start": "node src/index.js",
     "seed": "TZ=Asia/Kolkata node src/seed.js"
   },

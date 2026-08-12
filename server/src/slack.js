@@ -128,9 +128,13 @@ async function postViaBot(payload) {
     });
     const data = await res.json().catch(() => ({}));
     if (!data.ok) {
-      console.error('Slack chat.postMessage failed:', data.error || res.status);
+      console.error(
+        `Slack chat.postMessage failed (${channel}):`,
+        data.error || res.status
+      );
       return { ok: false, error: data.error };
     }
+    console.log(`Slack: posted leave request to ${channel}`);
     return { ok: true };
   } catch (err) {
     console.error('Slack bot error:', err.message);
@@ -160,6 +164,17 @@ async function postViaWebhook(payload) {
   }
 }
 
+export function slackStatus() {
+  const token = botToken();
+  const channel = leaveChannel();
+  const webhook = webhookUrl();
+  return {
+    configured: Boolean((token && channel) || webhook),
+    mode: token && channel ? 'bot' : webhook ? 'webhook' : 'off',
+    channel: channel || null,
+  };
+}
+
 export async function notifyLeaveApplied(details) {
   const payload = buildLeavePayload(details);
 
@@ -170,5 +185,8 @@ export async function notifyLeaveApplied(details) {
     return postViaWebhook(payload);
   }
 
+  console.warn(
+    'Slack: skipped leave notification (set SLACK_BOT_TOKEN + SLACK_LEAVE_CHANNEL, or SLACK_WEBHOOK_URL)'
+  );
   return { skipped: true };
 }

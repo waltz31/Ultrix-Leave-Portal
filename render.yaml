@@ -26,3 +26,7 @@ services:
         sync: false
       - key: APP_PUBLIC_URL
         sync: false
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_LEAVE_CHANNEL
+        sync: false
