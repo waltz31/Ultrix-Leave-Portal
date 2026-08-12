@@ -29,6 +29,11 @@ export function translateSql(sql) {
     `(date_trunc('month', (now() AT TIME ZONE '${APP_TIMEZONE}') - interval '5 months'))::date`
   );
   s = s.replace(/\bdate\((er\.created_at)\)/g, '($1)::date');
+  // leave_requests dates are stored as TEXT — cast when compared to date expressions
+  s = s.replace(
+    /\b(lr\.)?(start_date|end_date)\s*(>=|<=|>|<)\s*\(/gi,
+    (_, lrPrefix, col, op) => `${lrPrefix || ''}${col}::date ${op} (`
+  );
   s = s.replace(/ON CONFLICT\(user_id\)/gi, 'ON CONFLICT (user_id)');
   s = s.replace(/ON CONFLICT\(key\)/gi, 'ON CONFLICT (key)');
   return s;
