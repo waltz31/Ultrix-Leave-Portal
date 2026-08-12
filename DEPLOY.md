@@ -107,7 +107,7 @@ Render’s free web service sleeps after idle time. The first request after slee
 
    | Key | Environment | Value |
    |-----|-------------|--------|
-   | `VITE_API_URL` | Production | `https://YOUR-API.onrender.com` (no trailing slash) |
+   | `VITE_API_URL` | Production | `https://ultrix-leave-portal.onrender.com` (no trailing slash) |
 
    Vite bakes this in at **build** time. If you change the Render URL later, update the env var and **Redeploy**.
 

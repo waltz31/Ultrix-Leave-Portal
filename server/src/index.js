@@ -16,9 +16,9 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
   .map((s) => s.trim())
   .filter(Boolean);
 
-const allowVercelPreviews = allowedOrigins.some((o) =>
-  /\.vercel\.app$/i.test(o)
-);
+const allowVercelPreviews =
+  process.env.NODE_ENV === 'production' ||
+  allowedOrigins.some((o) => /\.vercel\.app$/i.test(o));
 
 app.use(
   cors({
