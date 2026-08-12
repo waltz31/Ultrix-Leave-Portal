@@ -117,6 +117,10 @@ function createPostgres() {
 let db;
 if (isPostgres) {
   db = createPostgres();
+} else if (process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'DATABASE_URL is not set. On Render, add your Supabase Postgres URI as DATABASE_URL. SQLite is only for local development.'
+  );
 } else {
   const { default: sqlite } = await import('./sqliteInit.js');
   db = wrapSqlite(sqlite);

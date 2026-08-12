@@ -50,13 +50,14 @@ postgresql://postgres.xxxx:PASSWORD@aws-0-ap-south-1.pooler.supabase.com:6543/po
 ## 2. API on Render
 
 1. [dashboard.render.com](https://dashboard.render.com) → **New → Web Service** → connect this GitHub repo.
-2. Settings:
+2. Settings (do **not** leave these as Render defaults — Yarn + Node 26 will fail):
 
    | Field | Value |
    |-------|--------|
    | **Root Directory** | `server` |
    | **Runtime** | Node |
-   | **Build Command** | `npm install --omit=optional` |
+   | **Node Version** | `22` (Environment → `NODE_VERSION=22`) |
+   | **Build Command** | `npm install --omit=optional` (not `yarn`) |
    | **Start Command** | `npm start` |
    | **Instance** | Free is fine to start |
 
@@ -64,12 +65,14 @@ postgresql://postgres.xxxx:PASSWORD@aws-0-ap-south-1.pooler.supabase.com:6543/po
 
    | Key | Value |
    |-----|--------|
-   | `DATABASE_URL` | Supabase URI from step 1 |
+   | `DATABASE_URL` | Supabase URI from step 1 (**required** in production) |
+   | `DATABASE_SSL` | `true` |
    | `JWT_SECRET` | long random string |
    | `CLIENT_ORIGIN` | `https://YOUR-APP.vercel.app` (set after Vercel exists; comma-separated if you also have a custom domain) |
    | `APP_PUBLIC_URL` | same as `CLIENT_ORIGIN` |
    | `TZ` | `Asia/Kolkata` |
    | `NODE_ENV` | `production` |
+   | `NODE_VERSION` | `22` |
 
    Optional mail: `MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` (see `server/.env.example`).
 

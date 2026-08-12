@@ -20,6 +20,8 @@ services:
         generateValue: true
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_SSL
+        value: "true"
       - key: CLIENT_ORIGIN
         sync: false
       - key: APP_PUBLIC_URL

@@ -1,6 +1,7 @@
+import 'dotenv/config';
 import { APP_TIMEZONE } from './time.js';
 
-export const isPostgres = Boolean(process.env.DATABASE_URL);
+export const isPostgres = Boolean(String(process.env.DATABASE_URL || '').trim());
 
 /** Current IST timestamp as SQL (sqlite vs postgres). */
 export const SQL_NOW_IST = isPostgres
