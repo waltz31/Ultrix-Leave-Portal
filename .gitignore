@@ -1,0 +1,10 @@
+node_modules
+dist
+.cache
+.env
+server/data
+*.db
+.DS_Store
+.vercel
+.idea
+*.iml

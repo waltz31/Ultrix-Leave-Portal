@@ -1,0 +1,17 @@
+{
+  "name": "ultrix-leave-portal",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Ultrix Leave Portal — React + Express + SQLite",
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "seed": "npm run seed --prefix server",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "dev": "npm run seed && npm run dev:server & npm run dev:client",
+    "start": "npm run start --prefix server"
+  },
+  "dependencies": {
+    "@slack/bolt": "^5.0.0"
+  }
+}

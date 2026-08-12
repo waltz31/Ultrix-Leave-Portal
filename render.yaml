@@ -1,0 +1,26 @@
+# Render Blueprint — API only. Frontend is deployed on Vercel.
+# Dashboard: New → Blueprint → this repo.
+
+services:
+  - type: web
+    name: ultrix-leave-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install --omit=optional
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: TZ
+        value: Asia/Kolkata
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: APP_PUBLIC_URL
+        sync: false

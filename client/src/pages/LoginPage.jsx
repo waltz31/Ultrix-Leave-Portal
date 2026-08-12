@@ -1,0 +1,86 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth';
+import { homePathForRole } from '../utils';
+import { APP_VERSION } from '../version';
+
+export default function LoginPage() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const user = await login(email, password);
+      navigate(homePathForRole(user.role), { replace: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-bg" aria-hidden="true">
+        <img src="/assets/login-bg.png" alt="" />
+      </div>
+
+      <div className="login-content">
+        <img
+          className="login-logo"
+          src="/assets/yupnup.svg"
+          alt="YupNup"
+          width={380}
+          height={140}
+        />
+
+        <div className="login-panel glass">
+          <form className="login-form" onSubmit={onSubmit}>
+            <h1 className="login-title">Sign in</h1>
+            <p className="login-sub">Ultrix Leave Portal</p>
+            <label>
+              Email
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="username"
+                placeholder="you@company.com"
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="Enter your password"
+              />
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <button className="btn primary full" type="submit" disabled={busy}>
+              {busy ? 'Signing in…' : 'Sign in'}
+            </button>
+            <p className="hint">
+              HR: <code>hr@ultrix.com</code> / <code>hr123</code>
+            </p>
+          </form>
+        </div>
+
+        <footer className="login-footer">
+          <span className="login-version">v{APP_VERSION}</span>
+        </footer>
+      </div>
+    </div>
+  );
+}

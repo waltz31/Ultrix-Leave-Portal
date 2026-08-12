@@ -1,0 +1,178 @@
+import './time.js';
+
+function parseDate(value) {
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatYmd(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** All calendar days (incl. weekends) between two YYYY-MM-DD dates inclusive. */
+export function eachCalendarDay(startDate, endDate) {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    return [];
+  }
+  const days = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    days.push(formatYmd(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+/** Collapse sorted YYYY-MM-DD list into contiguous [start, end] ranges. */
+export function contiguousRanges(dates) {
+  if (!dates.length) return [];
+  const sorted = [...dates].sort();
+  const ranges = [];
+  let rangeStart = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i < sorted.length; i += 1) {
+    const day = sorted[i];
+    const next = parseDate(prev);
+    next.setDate(next.getDate() + 1);
+    if (formatYmd(next) === day) {
+      prev = day;
+    } else {
+      ranges.push({ startDate: rangeStart, endDate: prev });
+      rangeStart = day;
+      prev = day;
+    }
+  }
+  ranges.push({ startDate: rangeStart, endDate: prev });
+  return ranges;
+}
+
+/** Count weekdays (Mon–Fri) between two YYYY-MM-DD dates inclusive. */
+export function countWeekdays(startDate, endDate) {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    throw new Error('Invalid date');
+  }
+  if (end < start) throw new Error('End date must be on or after start date');
+
+  let days = 0;
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) days += 1;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
+export const SESSIONS = ['full', 'morning', 'afternoon'];
+
+/** Full-day weekday count, or 0.5 for morning/afternoon on a single weekday. */
+export function countLeaveDays(startDate, endDate, session = 'full') {
+  const sess = SESSIONS.includes(session) ? session : 'full';
+  if (sess !== 'full') {
+    if (startDate !== endDate) {
+      throw new Error('Morning/afternoon leave must be for a single day');
+    }
+    const weekdays = countWeekdays(startDate, endDate);
+    if (weekdays <= 0) {
+      throw new Error('Session leave must fall on a weekday');
+    }
+    return 0.5;
+  }
+  return countWeekdays(startDate, endDate);
+}
+
+export function sessionsOverlap(a, b) {
+  if (a.endDate < b.startDate || b.endDate < a.startDate) return false;
+  const aHalf = a.session !== 'full' && a.startDate === a.endDate;
+  const bHalf = b.session !== 'full' && b.startDate === b.endDate;
+  if (aHalf && bHalf && a.startDate === b.startDate && a.session !== b.session) {
+    return false;
+  }
+  return true;
+}
+
+export const LEAVE_TYPES = ['casual', 'earned', 'sick'];
+export const REQUEST_TYPES = [...LEAVE_TYPES, 'wfh'];
+
+export function isBalanceType(type) {
+  return LEAVE_TYPES.includes(type);
+}
+
+export function publicUser(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    managerId: row.manager_id ?? null,
+    managerName: row.manager_name ?? null,
+    employeeNumber: row.employee_number ?? null,
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+  };
+}
+
+export function mapLeave(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userName: row.user_name,
+    userEmail: row.user_email,
+    employeeNumber: row.employee_number ?? null,
+    leaveType: row.leave_type,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    days: row.days,
+    session: row.session || 'full',
+    reason: row.reason,
+    status: row.status,
+    managerNote: row.manager_note,
+    managerId: row.manager_id,
+    managerName: row.manager_reviewer_name || row.team_manager_name || null,
+    managerReviewedAt: row.manager_reviewed_at,
+    hrNote: row.hr_note,
+    hrId: row.hr_id,
+    hrName: row.hr_reviewer_name,
+    hrReviewedAt: row.hr_reviewed_at,
+    // back-compat aliases used in older UI
+    adminNote: row.hr_note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapBalance(row) {
+  if (!row) {
+    return { casual: 0, earned: 0, sick: 0 };
+  }
+  return {
+    casual: row.casual,
+    earned: row.earned,
+    sick: row.sick,
+    updatedAt: row.updated_at,
+  };
+}
+
+export const LEAVE_SELECT = `
+  SELECT lr.*,
+         u.name AS user_name,
+         u.email AS user_email,
+         u.employee_number AS employee_number,
+         team_mgr.name AS team_manager_name,
+         mgr.name AS manager_reviewer_name,
+         hr.name AS hr_reviewer_name
+  FROM leave_requests lr
+  JOIN users u ON u.id = lr.user_id
+  LEFT JOIN users team_mgr ON team_mgr.id = u.manager_id
+  LEFT JOIN users mgr ON mgr.id = lr.manager_id
+  LEFT JOIN users hr ON hr.id = lr.hr_id
+`;

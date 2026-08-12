@@ -1,0 +1,186 @@
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth';
+import { ThemeProvider } from './theme';
+import LoginPage from './pages/LoginPage';
+import {
+  HrApprovals,
+  HrCalendar,
+  HrHistory,
+  HrOverview,
+  HrUsers,
+} from './pages/HrPages';
+import {
+  ManagerApprovals,
+  ManagerCalendar,
+  ManagerHistory,
+  ManagerOverview,
+} from './pages/ManagerPages';
+import { UserApply, UserCalendar, UserHistory, UserHome } from './pages/UserPages';
+import { UserRatings, ManagerRatings, HrRatings } from './pages/RatingsPages';
+import { homePathForRole } from './utils';
+
+function Protected({ role, children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="boot">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  if (role && user.role !== role) {
+    return <Navigate to={homePathForRole(user.role)} replace />;
+  }
+  return children;
+}
+
+function HomeRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="boot">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={homePathForRole(user.role)} replace />;
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/" element={<HomeRedirect />} />
+
+          {/* Legacy admin URLs → HR */}
+          <Route path="/admin/*" element={<Navigate to="/hr" replace />} />
+
+          <Route
+            path="/hr"
+            element={
+              <Protected role="hr">
+                <HrOverview />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/approvals"
+            element={
+              <Protected role="hr">
+                <HrApprovals />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/users"
+            element={
+              <Protected role="hr">
+                <HrUsers />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/calendar"
+            element={
+              <Protected role="hr">
+                <HrCalendar />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/history"
+            element={
+              <Protected role="hr">
+                <HrHistory />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/ratings"
+            element={
+              <Protected role="hr">
+                <HrRatings />
+              </Protected>
+            }
+          />
+
+          <Route
+            path="/manager"
+            element={
+              <Protected role="manager">
+                <ManagerOverview />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/approvals"
+            element={
+              <Protected role="manager">
+                <ManagerApprovals />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/calendar"
+            element={
+              <Protected role="manager">
+                <ManagerCalendar />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/history"
+            element={
+              <Protected role="manager">
+                <ManagerHistory />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/ratings"
+            element={
+              <Protected role="manager">
+                <ManagerRatings />
+              </Protected>
+            }
+          />
+
+          <Route
+            path="/app"
+            element={
+              <Protected role="user">
+                <UserHome />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/apply"
+            element={
+              <Protected role="user">
+                <UserApply />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/calendar"
+            element={
+              <Protected role="user">
+                <UserCalendar />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/history"
+            element={
+              <Protected role="user">
+                <UserHistory />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/ratings"
+            element={
+              <Protected role="user">
+                <UserRatings />
+              </Protected>
+            }
+          />
+
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </ThemeProvider>
+  );
+}
