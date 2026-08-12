@@ -34,7 +34,8 @@ import {
 import { todayIst } from './time.js';
 import { SQL_NOW_IST, SQL_TODAY_IST, isUniqueViolation } from './sqlDialect.js';
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
-import { mapInvoice, validateInvoicePayload, INVOICE_SELECT } from './invoiceUtils.js';
+import { mapInvoice, validateInvoicePayload, INVOICE_SELECT, INVOICE_RETENTION_NOTICE } from './invoiceUtils.js';
+import { purgeExpiredInvoices } from './invoiceCleanup.js';
 
 const router = Router();
 
@@ -1182,7 +1183,13 @@ router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, re
            AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date`
       )
       .get(req.user.id)).c;
-    return res.json({ pendingManager, pendingHr: 0, users: team, onLeaveToday, onWfhToday });
+    return res.json({
+      pendingManager: Number(pendingManager) || 0,
+      pendingHr: 0,
+      users: Number(team) || 0,
+      onLeaveToday: Number(onLeaveToday) || 0,
+      onWfhToday: Number(onWfhToday) || 0,
+    });
   }
 
   const pendingManager = (await db
@@ -1210,7 +1217,14 @@ router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, re
          AND ${SQL_TODAY_IST} BETWEEN start_date AND end_date`
     )
     .get()).c;
-  res.json({ pendingManager, pendingHr, pending: pendingHr, users, onLeaveToday, onWfhToday });
+  res.json({
+    pendingManager: Number(pendingManager) || 0,
+    pendingHr: Number(pendingHr) || 0,
+    pending: Number(pendingHr) || 0,
+    users: Number(users) || 0,
+    onLeaveToday: Number(onLeaveToday) || 0,
+    onWfhToday: Number(onWfhToday) || 0,
+  });
 });
 
 router.get('/reports/overview', authRequired, async (req, res) => {
@@ -1501,7 +1515,10 @@ router.post('/invoices', authRequired, async (req, res) => {
   }
 
   const duplicate = await db
-    .prepare(`SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?`)
+    .prepare(
+      `SELECT id FROM invoices
+       WHERE user_id = ? AND invoice_number = ? AND submitter_deleted_at IS NULL`
+    )
     .get(req.user.id, data.invoiceNumber);
   if (duplicate) {
     return res.status(409).json({
@@ -1556,12 +1573,19 @@ router.post('/invoices', authRequired, async (req, res) => {
   res.status(201).json({ invoice });
 });
 
+router.get('/invoices/retention-policy', authRequired, (_req, res) => {
+  res.json({ notice: INVOICE_RETENTION_NOTICE });
+});
+
 router.get('/invoices/mine', authRequired, async (req, res) => {
+  await purgeExpiredInvoices(db);
   const rows = (await db
-    .prepare(`${INVOICE_SELECT} WHERE i.user_id = ? ORDER BY i.created_at DESC`)
+    .prepare(
+      `${INVOICE_SELECT} WHERE i.user_id = ? AND i.submitter_deleted_at IS NULL ORDER BY i.created_at DESC`
+    )
     .all(req.user.id))
     .map(mapInvoice);
-  res.json({ invoices: rows });
+  res.json({ invoices: rows, retentionNotice: INVOICE_RETENTION_NOTICE });
 });
 
 router.get('/invoices/submitters', authRequired, hrRequired, async (_req, res) => {
@@ -1584,6 +1608,7 @@ router.get('/invoices/submitters', authRequired, hrRequired, async (_req, res) =
 });
 
 router.get('/invoices', authRequired, hrRequired, async (req, res) => {
+  await purgeExpiredInvoices(db);
   const { billingPeriod, userId } = req.query;
   const clauses = ['1=1'];
   const params = [];
@@ -1608,7 +1633,41 @@ router.get('/invoices', authRequired, hrRequired, async (req, res) => {
     .all(...params))
     .map(mapInvoice);
 
-  res.json({ invoices: rows });
+  res.json({ invoices: rows, retentionNotice: INVOICE_RETENTION_NOTICE });
+});
+
+router.delete('/invoices/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: 'Invalid invoice id' });
+  }
+
+  const row = await db
+    .prepare(`SELECT id, user_id, submitter_deleted_at FROM invoices WHERE id = ?`)
+    .get(id);
+  if (!row) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
+
+  const isOwner = row.user_id === req.user.id;
+  const isHr = req.user.role === 'hr';
+  if (!isOwner && !isHr) {
+    return res.status(403).json({ error: 'Not allowed to delete this invoice' });
+  }
+
+  if (isHr) {
+    await db.prepare(`DELETE FROM invoices WHERE id = ?`).run(id);
+    return res.json({ ok: true, removed: true });
+  }
+
+  if (row.submitter_deleted_at) {
+    return res.json({ ok: true, hidden: true });
+  }
+
+  await db
+    .prepare(`UPDATE invoices SET submitter_deleted_at = ${SQL_NOW_IST} WHERE id = ?`)
+    .run(id);
+  res.json({ ok: true, hidden: true });
 });
 
 router.get('/invoices/:id', authRequired, async (req, res) => {
@@ -1619,6 +1678,9 @@ router.get('/invoices/:id', authRequired, async (req, res) => {
   if (req.user.role !== 'hr' && row.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Not allowed' });
   }
+  if (req.user.role !== 'hr' && row.submitter_deleted_at) {
+    return res.status(404).json({ error: 'Invoice not found' });
+  }
 
   res.json({ invoice: mapInvoice(row) });
 });
@@ -1626,12 +1688,15 @@ router.get('/invoices/:id', authRequired, async (req, res) => {
 router.get('/invoices/:id/pdf', authRequired, async (req, res) => {
   const id = Number(req.params.id);
   const row = await db
-    .prepare(`SELECT user_id, invoice_number, pdf_data FROM invoices WHERE id = ?`)
+    .prepare(`SELECT user_id, invoice_number, pdf_data, submitter_deleted_at FROM invoices WHERE id = ?`)
     .get(id);
   if (!row) return res.status(404).json({ error: 'Invoice not found' });
 
   if (req.user.role !== 'hr' && row.user_id !== req.user.id) {
     return res.status(403).json({ error: 'Not allowed' });
+  }
+  if (req.user.role !== 'hr' && row.submitter_deleted_at) {
+    return res.status(404).json({ error: 'Invoice not found' });
   }
 
   if (!row.pdf_data) {

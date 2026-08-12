@@ -7,6 +7,29 @@ export const INVOICE_SELECT = `
   JOIN users u ON u.id = i.user_id
 `;
 
+/** Invoices are removed on the 1st, two calendar months after the billing period month. */
+export function invoiceDeletionDate(billingPeriod) {
+  const match = String(billingPeriod || '').match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!year || month < 1 || month > 12) return null;
+  const d = new Date(Date.UTC(year, month - 1 + 2, 1));
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function isInvoiceExpired(billingPeriod, todayIso) {
+  const deletesOn = invoiceDeletionDate(billingPeriod);
+  if (!deletesOn || !todayIso) return false;
+  return todayIso >= deletesOn;
+}
+
+export const INVOICE_RETENTION_NOTICE =
+  'Submitted invoices are automatically deleted on the 1st of the month, two months after the billing period (for example, August invoices are removed on 1 October). Download a PDF copy before then. You can remove an invoice from your list — HR will keep a copy until they delete it or the retention date passes.';
+
 export function mapInvoice(row) {
   if (!row) return null;
   let data = {};
@@ -27,6 +50,8 @@ export function mapInvoice(row) {
     consultant: row.consultant,
     totalAmount: row.total_amount,
     createdAt: row.created_at,
+    deletesOn: invoiceDeletionDate(row.billing_period),
+    hiddenFromSubmitter: Boolean(row.submitter_deleted_at),
     data,
     hasPdf: Boolean(row.pdf_data),
   };
@@ -76,7 +101,6 @@ export function validateInvoicePayload(body) {
     swift: String(body.swift || '').trim(),
     bank: String(body.bank || '').trim(),
     branch: String(body.branch || '').trim(),
-    invoiceFont: String(body.invoiceFont || 'source-sans'),
     // Keep signatures out of JSON storage — they live in the PDF (and can be huge).
     signatureDataUrl: null,
   };

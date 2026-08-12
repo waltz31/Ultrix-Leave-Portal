@@ -1,231 +1,226 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import html2pdf from 'html2pdf.js';
 import { api } from '../api';
 import { downloadInvoicePdf } from '../downloadInvoice';
 import { useAuth } from '../auth';
 import InvoiceDocument from './InvoiceDocument';
 import {
-  INVOICE_FONTS,
+  blobToBase64,
+  compressSignatureDataUrl,
+  generateInvoicePdfBlob,
+} from '../generateInvoicePdf';
+import {
   defaultInvoiceForm,
+  emptyInvoiceForm,
   emptyLineItem,
+  formatDeletesOn,
   invoiceTotal,
   randomInvoiceNumber,
 } from '../invoiceUtils';
+import InvoiceRetentionNotice from './InvoiceRetentionNotice';
+import StatusCelebration from './StatusCelebration';
 import '../invoice.css';
 
 const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
+const OPEN_SECTIONS_DEFAULT = {
+  info: false,
+  billing: false,
+  services: false,
+  payment: false,
+  signature: false,
+};
+
+function InvoiceFormSection({ sectionKey, title, open, onToggle, children }) {
+  return (
+    <fieldset className={`invoice-fieldset form-section${open ? '' : ' collapsed'}`}>
+      <button
+        type="button"
+        className="section-toggle"
+        onClick={() => onToggle(sectionKey)}
+        aria-expanded={open}
+      >
+        {title}
+      </button>
+      <div className="section-body">{children}</div>
+    </fieldset>
+  );
+}
+
 function SignaturePad({ onChange }) {
+  const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const drawing = useRef(false);
   const hasStroke = useRef(false);
   const lastPoint = useRef(null);
+  const [empty, setEmpty] = useState(true);
 
-  const resize = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width < 2) return;
-    const ratio = Math.max(window.devicePixelRatio || 1, 1);
-    const snapshot = hasStroke.current ? canvas.toDataURL('image/png') : null;
-    const cssWidth = Math.floor(rect.width);
-    const cssHeight = Math.floor(rect.height);
-    canvas.width = Math.max(1, Math.floor(cssWidth * ratio));
-    canvas.height = Math.max(1, Math.floor(cssHeight * ratio));
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(ratio, ratio);
-    ctx.lineWidth = 2.2;
+  const paintStyle = useCallback((ctx, ratio) => {
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#111111';
+  }, []);
+
+  const resize = useCallback(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    const cssWidth = wrap.clientWidth;
+    const cssHeight = wrap.clientHeight;
+    if (cssWidth < 2 || cssHeight < 2) return;
+
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    const snapshot = hasStroke.current ? canvas.toDataURL('image/png') : null;
+
+    canvas.width = Math.round(cssWidth * ratio);
+    canvas.height = Math.round(cssHeight * ratio);
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${cssHeight}px`;
+
+    const ctx = canvas.getContext('2d');
+    paintStyle(ctx, ratio);
+
     if (snapshot) {
       const img = new Image();
       img.onload = () => {
-        ctx.clearRect(0, 0, cssWidth, cssHeight);
+        paintStyle(ctx, ratio);
         ctx.drawImage(img, 0, 0, cssWidth, cssHeight);
       };
       img.src = snapshot;
     }
-  }, []);
+  }, [paintStyle]);
 
   useEffect(() => {
     resize();
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
+    const wrap = wrapRef.current;
+    if (!wrap) return undefined;
+
+    const observer = new ResizeObserver(() => resize());
+    observer.observe(wrap);
+    return () => observer.disconnect();
   }, [resize]);
 
   function pointerPos(e) {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
   }
 
-  function emitSignature() {
+  async function emitSignature() {
     const canvas = canvasRef.current;
     if (!canvas || !hasStroke.current) {
       onChange(null);
       return;
     }
-    onChange(canvas.toDataURL('image/png'));
+    const compressed = await compressSignatureDataUrl(canvas.toDataURL('image/png'));
+    onChange(compressed);
   }
 
   function startDraw(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const point = pointerPos(e);
     drawing.current = true;
-    lastPoint.current = pointerPos(e);
+    hasStroke.current = true;
+    setEmpty(false);
+    lastPoint.current = point;
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
     try {
-      canvasRef.current.setPointerCapture(e.pointerId);
+      canvas.setPointerCapture(e.pointerId);
     } catch {
       // ignore
     }
   }
 
   function draw(e) {
-    if (!drawing.current) return;
+    if (!drawing.current || !lastPoint.current) return;
     e.preventDefault();
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const point = pointerPos(e);
-    if (!lastPoint.current) {
-      lastPoint.current = point;
-      ctx.beginPath();
-      ctx.moveTo(point.x, point.y);
-      return;
-    }
-    const midX = (lastPoint.current.x + point.x) / 2;
-    const midY = (lastPoint.current.y + point.y) / 2;
-    ctx.quadraticCurveTo(lastPoint.current.x, lastPoint.current.y, midX, midY);
+    ctx.beginPath();
+    ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+    ctx.lineTo(point.x, point.y);
     ctx.stroke();
     lastPoint.current = point;
-    hasStroke.current = true;
   }
 
   function endDraw(e) {
     if (!drawing.current) return;
     drawing.current = false;
     lastPoint.current = null;
+    try {
+      canvasRef.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
     emitSignature();
   }
 
   function clear() {
     const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    const ratio = Math.max(window.devicePixelRatio || 1, 1);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    paintStyle(ctx, ratio);
+    drawing.current = false;
     hasStroke.current = false;
+    lastPoint.current = null;
+    setEmpty(true);
     onChange(null);
   }
 
   return (
     <div className="invoice-signature-wrap">
-      <canvas
-        ref={canvasRef}
-        className="invoice-signature-pad"
-        width={320}
-        height={140}
-        onPointerDown={startDraw}
-        onPointerMove={draw}
-        onPointerUp={endDraw}
-        onPointerLeave={endDraw}
-        aria-label="Signature drawing pad"
-      />
-      <button type="button" className="btn ghost full" onClick={clear}>
-        Clear signature
-      </button>
+      <div className="invoice-signature-card">
+        <div className="invoice-signature-pad-shell" ref={wrapRef}>
+          {empty && (
+            <span className="invoice-signature-placeholder" aria-hidden="true">
+              Sign here
+            </span>
+          )}
+          <canvas
+            ref={canvasRef}
+            className="invoice-signature-pad"
+            onPointerDown={startDraw}
+            onPointerMove={draw}
+            onPointerUp={endDraw}
+            onPointerCancel={endDraw}
+            aria-label="Signature drawing pad"
+          />
+        </div>
+        <button type="button" className="btn ghost invoice-signature-clear" onClick={clear}>
+          Clear signature
+        </button>
+      </div>
     </div>
   );
-}
-
-async function generatePdfBlob(previewEl, filename) {
-  previewEl.classList.add('pdf-export');
-  try {
-    if (document.fonts?.ready) await document.fonts.ready;
-    await new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(resolve))
-    );
-
-    const worker = html2pdf().set({
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(previewEl);
-
-    const canvasEl = await worker.toCanvas().get('canvas');
-    const { jsPDF } = await import('jspdf');
-
-    if (!canvasEl) {
-      await html2pdf()
-        .set({
-          margin: [6, 6, 6, 6],
-          filename,
-          image: { type: 'jpeg', quality: 0.82 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: '#ffffff',
-          },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        })
-        .from(previewEl)
-        .save();
-      return null;
-    }
-
-    const targetWidthPx = 1320;
-    const scale = Math.min(1, targetWidthPx / canvasEl.width);
-    const out = document.createElement('canvas');
-    out.width = Math.max(1, Math.round(canvasEl.width * scale));
-    out.height = Math.max(1, Math.round(canvasEl.height * scale));
-    const ctx = out.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, out.width, out.height);
-    ctx.drawImage(canvasEl, 0, 0, out.width, out.height);
-
-    const pdf = new jsPDF({
-      unit: 'mm',
-      format: 'a4',
-      orientation: 'portrait',
-      compress: true,
-    });
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 6;
-    const maxWidth = pageWidth - margin * 2;
-    const maxHeight = pageHeight - margin * 2;
-    let drawWidth = maxWidth;
-    let drawHeight = (out.height * drawWidth) / out.width;
-    if (drawHeight > maxHeight) {
-      const fit = maxHeight / drawHeight;
-      drawWidth *= fit;
-      drawHeight = maxHeight;
-    }
-    const offsetX = margin + (maxWidth - drawWidth) / 2;
-    const offsetY = margin;
-    const imgData = out.toDataURL('image/jpeg', 0.84);
-    pdf.addImage(imgData, 'JPEG', offsetX, offsetY, drawWidth, drawHeight, undefined, 'MEDIUM');
-    return pdf.output('blob');
-  } finally {
-    previewEl.classList.remove('pdf-export');
-  }
 }
 
 export default function InvoiceGenerator() {
   const { user } = useAuth();
   const previewRef = useRef(null);
+  const signatureUploadRef = useRef(null);
   const [form, setForm] = useState(() => defaultInvoiceForm(user?.name || ''));
+  const [formKey, setFormKey] = useState(0);
+  const [openSections, setOpenSections] = useState(OPEN_SECTIONS_DEFAULT);
   const [signatureMode, setSignatureMode] = useState('draw');
   const [ifscStatus, setIfscStatus] = useState('');
   const [autoIfsc, setAutoIfsc] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [submitPopup, setSubmitPopup] = useState(null);
   const [submitted, setSubmitted] = useState([]);
 
   const loadMine = useCallback(() => {
@@ -308,12 +303,28 @@ export default function InvoiceGenerator() {
     if (autoIfsc) fetchIfsc();
   }
 
-  function resetForm() {
-    setForm(defaultInvoiceForm(user?.name || ''));
-    setError('');
-    setSuccess('');
+  function toggleSection(key) {
+    setOpenSections((sections) => ({ ...sections, [key]: !sections[key] }));
+  }
+
+  function applyEmptyForm() {
+    setForm(emptyInvoiceForm());
     setIfscStatus('');
     setSignatureMode('draw');
+    setAutoIfsc(true);
+    setOpenSections({ ...OPEN_SECTIONS_DEFAULT });
+    setFormKey((k) => k + 1);
+    if (signatureUploadRef.current) {
+      signatureUploadRef.current.value = '';
+    }
+  }
+
+  function handleClearAll() {
+    const ok = window.confirm('Clear all invoice fields and start fresh?');
+    if (!ok) return;
+    setError('');
+    setSuccess('');
+    applyEmptyForm();
   }
 
   async function downloadPdf() {
@@ -323,15 +334,14 @@ export default function InvoiceGenerator() {
     setError('');
     try {
       const filename = `${form.invoiceNumber || 'invoice'}.pdf`;
-      const blob = await generatePdfBlob(el, filename);
-      if (blob) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
+      const blob = await generateInvoicePdfBlob(el);
+      if (!blob) throw new Error('Could not generate PDF');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
       setError(err.message || 'Could not generate PDF');
     } finally {
@@ -360,16 +370,8 @@ export default function InvoiceGenerator() {
       const el = previewRef.current;
       let pdfData = null;
       if (el) {
-        const blob = await generatePdfBlob(el, `${form.invoiceNumber}.pdf`);
-        if (blob) {
-          const buffer = await blob.arrayBuffer();
-          const bytes = new Uint8Array(buffer);
-          let binary = '';
-          for (let i = 0; i < bytes.length; i += 1) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          pdfData = btoa(binary);
-        }
+        const blob = await generateInvoicePdfBlob(el);
+        if (blob) pdfData = await blobToBase64(blob);
       }
 
       await api('/invoices', {
@@ -383,9 +385,15 @@ export default function InvoiceGenerator() {
           pdfData,
         },
       });
-      setSuccess('Invoice submitted to HR.');
+      const submittedNumber = form.invoiceNumber;
+      setSubmitPopup({
+        message: 'Invoice submitted',
+        detail: `${submittedNumber} has been sent to HR.`,
+      });
+      setError('');
+      setSuccess('');
       loadMine();
-      resetForm();
+      applyEmptyForm();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -393,18 +401,46 @@ export default function InvoiceGenerator() {
     }
   }
 
-  function handleSignatureUpload(e) {
+  async function handleSignatureUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      updateField('signatureDataUrl', reader.result);
+    reader.onload = async () => {
+      const compressed = await compressSignatureDataUrl(reader.result);
+      updateField('signatureDataUrl', compressed);
     };
     reader.readAsDataURL(file);
   }
 
+  async function deleteSubmittedInvoice(inv) {
+    const ok = window.confirm(
+      `Remove invoice ${inv.invoiceNumber} from your list? HR will still keep a copy until they delete it or the retention date passes.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/invoices/${inv.id}`, { method: 'DELETE' });
+      setSuccess('Invoice removed from your list.');
+      loadMine();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="invoice-studio">
+      <StatusCelebration
+        show={Boolean(submitPopup)}
+        onDone={() => setSubmitPopup(null)}
+        message={submitPopup?.message || 'Invoice submitted'}
+        detail={submitPopup?.detail || ''}
+        imageSrc="/assets/request-submitted.gif"
+        durationMs={3200}
+      />
+      <InvoiceRetentionNotice />
       <div className="invoice-studio-layout">
         <aside className="invoice-studio-panel panel">
           <header className="invoice-studio-header">
@@ -412,20 +448,26 @@ export default function InvoiceGenerator() {
             <p className="muted">Fill in details, preview, then submit to HR.</p>
           </header>
 
-          <div className="invoice-form stack">
-            <fieldset className="invoice-fieldset">
-              <legend>Invoice info</legend>
-              <label>
-                Consultant
-                <input
-                  value={form.consultant}
-                  onChange={(e) => updateField('consultant', e.target.value)}
-                />
-              </label>
-              <label>
-                PAN
-                <input value={form.pan} onChange={(e) => updateField('pan', e.target.value)} />
-              </label>
+          <div key={`invoice-form-${formKey}`} className="invoice-form stack">
+            <InvoiceFormSection
+              sectionKey="info"
+              title="Invoice info"
+              open={openSections.info}
+              onToggle={toggleSection}
+            >
+              <div className="invoice-form-grid">
+                <label>
+                  Consultant
+                  <input
+                    value={form.consultant}
+                    onChange={(e) => updateField('consultant', e.target.value)}
+                  />
+                </label>
+                <label>
+                  PAN
+                  <input value={form.pan} onChange={(e) => updateField('pan', e.target.value)} />
+                </label>
+              </div>
               <label>
                 Invoice number
                 <div className="input-with-action">
@@ -442,41 +484,37 @@ export default function InvoiceGenerator() {
                   </button>
                 </div>
               </label>
-              <label>
-                Invoice date
-                <input
-                  type="date"
-                  value={form.invoiceDate}
-                  onChange={(e) => updateField('invoiceDate', e.target.value)}
-                />
-              </label>
-              <label>
-                Billing period
-                <input
-                  type="month"
-                  value={form.billingPeriod}
-                  onChange={(e) => updateField('billingPeriod', e.target.value)}
-                />
-              </label>
-              <label>
-                Invoice font
-                <select
-                  value={form.invoiceFont}
-                  onChange={(e) => updateField('invoiceFont', e.target.value)}
-                >
-                  {INVOICE_FONTS.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
-                  ))}
-                </select>
-              </label>
-            </fieldset>
+              <div className="invoice-form-grid">
+                <label>
+                  Invoice date
+                  <input
+                    type="date"
+                    value={form.invoiceDate}
+                    onChange={(e) => updateField('invoiceDate', e.target.value)}
+                  />
+                </label>
+                <label>
+                  Billing period
+                  <input
+                    type="month"
+                    value={form.billingPeriod}
+                    onChange={(e) => updateField('billingPeriod', e.target.value)}
+                  />
+                </label>
+              </div>
+            </InvoiceFormSection>
 
-            <fieldset className="invoice-fieldset">
-              <legend>Billing</legend>
+            <InvoiceFormSection
+              sectionKey="billing"
+              title="Billing"
+              open={openSections.billing}
+              onToggle={toggleSection}
+            >
               <label>
                 Billed to
                 <input
                   value={form.billedTo}
+                  placeholder="Company name"
                   onChange={(e) => updateField('billedTo', e.target.value)}
                 />
               </label>
@@ -487,10 +525,14 @@ export default function InvoiceGenerator() {
                   onChange={(e) => updateField('address', e.target.value)}
                 />
               </label>
-            </fieldset>
+            </InvoiceFormSection>
 
-            <fieldset className="invoice-fieldset">
-              <legend>Services</legend>
+            <InvoiceFormSection
+              sectionKey="services"
+              title="Services"
+              open={openSections.services}
+              onToggle={toggleSection}
+            >
               <button type="button" className="btn secondary full" onClick={addLineItem}>
                 Add item
               </button>
@@ -498,7 +540,7 @@ export default function InvoiceGenerator() {
                 {form.lineItems.map((item) => (
                   <div key={item.id} className="invoice-line-item-row">
                     <textarea
-                      rows={1}
+                      rows={2}
                       placeholder="Description"
                       value={item.description}
                       onChange={(e) => updateLineItem(item.id, 'description', e.target.value)}
@@ -523,24 +565,30 @@ export default function InvoiceGenerator() {
                   </div>
                 ))}
               </div>
-            </fieldset>
+            </InvoiceFormSection>
 
-            <fieldset className="invoice-fieldset">
-              <legend>Payment details</legend>
-              <label>
-                Account holder
-                <input
-                  value={form.accountHolder}
-                  onChange={(e) => updateField('accountHolder', e.target.value)}
-                />
-              </label>
-              <label>
-                Account number
-                <input
-                  value={form.accountNumber}
-                  onChange={(e) => updateField('accountNumber', e.target.value)}
-                />
-              </label>
+            <InvoiceFormSection
+              sectionKey="payment"
+              title="Payment details"
+              open={openSections.payment}
+              onToggle={toggleSection}
+            >
+              <div className="invoice-form-grid">
+                <label>
+                  Account holder
+                  <input
+                    value={form.accountHolder}
+                    onChange={(e) => updateField('accountHolder', e.target.value)}
+                  />
+                </label>
+                <label>
+                  Account number
+                  <input
+                    value={form.accountNumber}
+                    onChange={(e) => updateField('accountNumber', e.target.value)}
+                  />
+                </label>
+              </div>
               <label>
                 IFSC
                 <div className="input-with-action">
@@ -564,22 +612,28 @@ export default function InvoiceGenerator() {
                 />
                 Auto-fill bank details from IFSC
               </label>
-              <label>
-                SWIFT
-                <input value={form.swift} onChange={(e) => updateField('swift', e.target.value)} />
-              </label>
-              <label>
-                Bank
-                <input value={form.bank} onChange={(e) => updateField('bank', e.target.value)} />
-              </label>
+              <div className="invoice-form-grid">
+                <label>
+                  SWIFT
+                  <input value={form.swift} onChange={(e) => updateField('swift', e.target.value)} />
+                </label>
+                <label>
+                  Bank
+                  <input value={form.bank} onChange={(e) => updateField('bank', e.target.value)} />
+                </label>
+              </div>
               <label>
                 Branch
                 <input value={form.branch} onChange={(e) => updateField('branch', e.target.value)} />
               </label>
-            </fieldset>
+            </InvoiceFormSection>
 
-            <fieldset className="invoice-fieldset">
-              <legend>Signature</legend>
+            <InvoiceFormSection
+              sectionKey="signature"
+              title="Signature"
+              open={openSections.signature}
+              onToggle={toggleSection}
+            >
               <div className="signature-source-options">
                 <label className="radio-label">
                   <input
@@ -602,24 +656,28 @@ export default function InvoiceGenerator() {
               </div>
               {signatureMode === 'draw' ? (
                 <SignaturePad
+                  key={formKey}
                   onChange={(dataUrl) => updateField('signatureDataUrl', dataUrl)}
                 />
               ) : (
                 <input
+                  key={`sig-upload-${formKey}`}
+                  ref={signatureUploadRef}
+                  className="invoice-signature-upload"
                   type="file"
                   accept="image/png,image/jpeg,image/webp"
                   onChange={handleSignatureUpload}
                 />
               )}
-            </fieldset>
+            </InvoiceFormSection>
           </div>
 
           <div className="invoice-studio-actions">
-            <button type="button" className="btn ghost" onClick={resetForm} disabled={busy}>
-              Clear
-            </button>
             <button type="button" className="btn secondary" onClick={downloadPdf} disabled={busy}>
               Download PDF
+            </button>
+            <button type="button" className="btn ghost" onClick={handleClearAll} disabled={busy}>
+              Clear all
             </button>
             <button type="button" className="btn primary" onClick={submitInvoice} disabled={busy}>
               {busy ? 'Working…' : 'Submit to HR'}
@@ -633,10 +691,10 @@ export default function InvoiceGenerator() {
         <div className="invoice-studio-preview">
           <div className="invoice-preview-toolbar">
             <span>Live preview</span>
-            <span className="muted">A4 · PDF export</span>
+            <span className="muted">A4 · compact PDF</span>
           </div>
           <div className="invoice-preview-stage">
-            <InvoiceDocument form={form} previewRef={previewRef} />
+            <InvoiceDocument key={`preview-${formKey}`} form={form} previewRef={previewRef} />
           </div>
         </div>
       </div>
@@ -652,6 +710,7 @@ export default function InvoiceGenerator() {
                   <th>Period</th>
                   <th>Total</th>
                   <th>Submitted</th>
+                  <th>Deletes on</th>
                   <th></th>
                 </tr>
               </thead>
@@ -662,7 +721,8 @@ export default function InvoiceGenerator() {
                     <td>{inv.billingPeriod}</td>
                     <td>₹{Number(inv.totalAmount).toLocaleString('en-IN')}</td>
                     <td>{inv.createdAt}</td>
-                    <td>
+                    <td>{formatDeletesOn(inv.deletesOn)}</td>
+                    <td className="invoice-row-actions">
                       {inv.hasPdf && (
                         <button
                           type="button"
@@ -676,6 +736,14 @@ export default function InvoiceGenerator() {
                           PDF
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="btn ghost small invoice-delete-btn"
+                        disabled={busy}
+                        onClick={() => deleteSubmittedInvoice(inv)}
+                      >
+                        Remove
+                      </button>
                     </td>
                   </tr>
                 ))}

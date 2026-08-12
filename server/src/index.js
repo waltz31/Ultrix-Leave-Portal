@@ -5,11 +5,11 @@ import cors from 'cors';
 import db from './db.js';
 import routes from './routes.js';
 import { slackStatus } from './slack.js';
-
-await db.ready;
+import { purgeExpiredInvoices } from './invoiceCleanup.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+let dbReady = false;
 
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
   .split(',')
@@ -37,12 +37,26 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 app.get('/api/health', (_req, res) => {
+  if (!dbReady) {
+    return res.status(503).json({
+      ok: false,
+      status: 'starting',
+      timezone: 'Asia/Kolkata',
+    });
+  }
   res.json({
     ok: true,
     timezone: 'Asia/Kolkata',
     db: db.dialect,
     slack: slackStatus(),
   });
+});
+
+app.use('/api', async (req, res, next) => {
+  if (!dbReady) {
+    return res.status(503).json({ error: 'Server is starting, please retry in a few seconds' });
+  }
+  return next();
 });
 
 app.use('/api', routes);
@@ -66,3 +80,26 @@ app.listen(PORT, () => {
       : 'Slack: off (missing SLACK_BOT_TOKEN / SLACK_LEAVE_CHANNEL)'
   );
 });
+
+try {
+  await db.ready;
+  dbReady = true;
+  console.log('Database ready');
+
+  async function runInvoiceCleanup() {
+    try {
+      const removed = await purgeExpiredInvoices(db);
+      if (removed > 0) {
+        console.log(`Invoice cleanup: removed ${removed} expired invoice(s)`);
+      }
+    } catch (err) {
+      console.error('Invoice cleanup failed:', err);
+    }
+  }
+
+  runInvoiceCleanup();
+  setInterval(runInvoiceCleanup, 24 * 60 * 60 * 1000);
+} catch (err) {
+  console.error('Fatal database startup error:', err);
+  process.exit(1);
+}

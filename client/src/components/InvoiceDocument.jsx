@@ -3,15 +3,16 @@ import { formatBillingPeriod, formatDisplayDate, formatINR } from '../invoiceUti
 export default function InvoiceDocument({ form, previewRef }) {
   const items = form.lineItems || [];
   const total = items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const fontClass = `font-${form.invoiceFont || 'source-sans'}`;
 
   return (
     <article
       ref={previewRef}
-      className={`invoice ${fontClass}`}
+      className="invoice font-source-sans"
       aria-label="Invoice preview"
     >
-      <h2 className="invoice-title">INVOICE</h2>
+      <header className="invoice-header-row">
+        <h2 className="invoice-title">INVOICE</h2>
+      </header>
 
       <table className="inv-table meta-table">
         <tbody>

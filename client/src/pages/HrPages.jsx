@@ -72,7 +72,7 @@ export function HrOverview() {
           </Link>
           <Link to="/hr/calendar" className="stat stat-link">
             <span>On leave / WFH today</span>
-            <strong>{(stats.onLeaveToday || 0) + (stats.onWfhToday || 0)}</strong>
+            <strong>{Number(stats.onLeaveToday || 0) + Number(stats.onWfhToday || 0)}</strong>
           </Link>
         </div>
       )}

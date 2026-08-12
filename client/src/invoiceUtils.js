@@ -1,14 +1,3 @@
-export const INVOICE_FONTS = [
-  { value: 'source-sans', label: 'Source Sans' },
-  { value: 'ibm-plex', label: 'IBM Plex Sans' },
-  { value: 'lora', label: 'Lora' },
-  { value: 'cormorant', label: 'Cormorant Garamond' },
-  { value: 'georgia', label: 'Georgia' },
-  { value: 'times', label: 'Times New Roman' },
-  { value: 'arial', label: 'Arial' },
-  { value: 'courier', label: 'Courier New' },
-];
-
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -71,7 +60,27 @@ export function defaultInvoiceForm(userName = '') {
     swift: '',
     bank: '',
     branch: '',
-    invoiceFont: 'source-sans',
+    signatureDataUrl: null,
+  };
+}
+
+/** Completely blank form — used by Clear all. */
+export function emptyInvoiceForm() {
+  return {
+    consultant: '',
+    pan: '',
+    invoiceNumber: '',
+    invoiceDate: '',
+    billingPeriod: '',
+    billedTo: '',
+    address: '',
+    lineItems: [emptyLineItem()],
+    accountHolder: '',
+    accountNumber: '',
+    ifsc: '',
+    swift: '',
+    bank: '',
+    branch: '',
     signatureDataUrl: null,
   };
 }
@@ -98,4 +107,14 @@ export const PERIOD_MONTHS = [
 export function billingPeriodFromMonthYear(month, year) {
   if (!month || !year) return '';
   return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+export const INVOICE_RETENTION_NOTICE =
+  'Submitted invoices are automatically deleted on the 1st of the month, two months after the billing period (for example, August invoices are removed on 1 October). Download a PDF copy before then. You can remove an invoice from your list — HR will keep a copy until they delete it or the retention date passes.';
+
+export function formatDeletesOn(iso) {
+  if (!iso) return '—';
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return iso;
+  return `${day} ${MONTHS[month - 1]} ${year}`;
 }

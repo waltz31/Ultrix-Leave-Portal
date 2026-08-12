@@ -94,6 +94,20 @@ migrateEmployeeRatingsScale();
 migrateEmployeeRatingsUniquePeriod();
 migrateTimestampsToIst();
 migrateInvoicesTable();
+migrateInvoiceSubmitterDeleted();
+
+function migrateInvoiceSubmitterDeleted() {
+  const cols = db.prepare(`PRAGMA table_info(invoices)`).all();
+  if (!cols.some((c) => c.name === 'submitter_deleted_at')) {
+    db.exec(`ALTER TABLE invoices ADD COLUMN submitter_deleted_at TEXT`);
+  }
+  db.exec(`
+    DROP INDEX IF EXISTS idx_invoices_user_number;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_user_number
+      ON invoices(user_id, invoice_number)
+      WHERE submitter_deleted_at IS NULL;
+  `);
+}
 
 function migrateUsersTable() {
   const cols = db.prepare(`PRAGMA table_info(users)`).all();
@@ -362,10 +376,13 @@ function migrateInvoicesTable() {
       total_amount REAL NOT NULL DEFAULT 0,
       data_json TEXT NOT NULL,
       pdf_data TEXT,
+      submitter_deleted_at TEXT,
       created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
     );
+    DROP INDEX IF EXISTS idx_invoices_user_number;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_user_number
-      ON invoices(user_id, invoice_number);
+      ON invoices(user_id, invoice_number)
+      WHERE submitter_deleted_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_invoices_billing_period ON invoices(billing_period);
     CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id);
   `);

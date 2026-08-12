@@ -4,9 +4,11 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
 import InvoiceGenerator from '../components/InvoiceGenerator';
+import InvoiceRetentionNotice from '../components/InvoiceRetentionNotice';
 import {
   billingPeriodFromMonthYear,
   formatBillingPeriod,
+  formatDeletesOn,
   formatINR,
   PERIOD_MONTHS,
 } from '../invoiceUtils';
@@ -58,6 +60,7 @@ export function HrInvoices() {
   const [employeeId, setEmployeeId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
   const billingPeriod = billingPeriodFromMonthYear(month, year);
   const periodYears = useMemo(
@@ -87,8 +90,26 @@ export function HrInvoices() {
     load();
   }, [load]);
 
+  async function deleteInvoice(inv) {
+    const ok = window.confirm(
+      `Permanently delete invoice ${inv.invoiceNumber} from ${inv.userName}? This removes it for HR and cannot be undone.`
+    );
+    if (!ok) return;
+    setBusyId(inv.id);
+    setError('');
+    try {
+      await api(`/invoices/${inv.id}`, { method: 'DELETE' });
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <AppShell title={`Invoices · ${user?.name || ''}`} nav={HR_NAV}>
+      <InvoiceRetentionNotice className="invoice-retention-notice-hr" />
       <section className="panel employee-ratings-section">
         <header className="employee-ratings-header">
           <div>
@@ -153,6 +174,7 @@ export function HrInvoices() {
                   <th>Period</th>
                   <th>Total (INR)</th>
                   <th>Submitted</th>
+                  <th>Deletes on</th>
                   <th></th>
                 </tr>
               </thead>
@@ -162,17 +184,22 @@ export function HrInvoices() {
                     <td>
                       {inv.userName}
                       {inv.employeeNumber ? ` · ${inv.employeeNumber}` : ''}
+                      {inv.hiddenFromSubmitter ? (
+                        <span className="badge invoice-hidden-badge">Removed by submitter</span>
+                      ) : null}
                     </td>
                     <td>{inv.consultant}</td>
                     <td>{inv.invoiceNumber}</td>
                     <td>{formatBillingPeriod(inv.billingPeriod)}</td>
                     <td>{formatINR(inv.totalAmount)}</td>
                     <td>{formatDateTime(inv.createdAt)}</td>
-                    <td>
+                    <td>{formatDeletesOn(inv.deletesOn)}</td>
+                    <td className="invoice-row-actions">
                       {inv.hasPdf ? (
                         <button
                           type="button"
                           className="btn ghost small"
+                          disabled={busyId === inv.id}
                           onClick={() =>
                             downloadInvoicePdf(inv.id, `${inv.invoiceNumber}.pdf`).catch(
                               (err) => setError(err.message)
@@ -184,6 +211,14 @@ export function HrInvoices() {
                       ) : (
                         <span className="muted">—</span>
                       )}
+                      <button
+                        type="button"
+                        className="btn ghost small invoice-delete-btn"
+                        disabled={busyId === inv.id}
+                        onClick={() => deleteInvoice(inv)}
+                      >
+                        {busyId === inv.id ? 'Deleting…' : 'Delete'}
+                      </button>
                     </td>
                   </tr>
                 ))}
