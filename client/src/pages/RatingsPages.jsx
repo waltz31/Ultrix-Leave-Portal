@@ -42,7 +42,7 @@ function formatPeriodLabel(year, month) {
 const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
-  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/nav-team.png' },
+  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
 ];
@@ -51,7 +51,8 @@ const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/users', label: 'Users', icon: '/assets/nav-team.png' },
-  { to: '/hr/ratings', label: 'Ratings', icon: '/assets/nav-team.png' },
+  { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
 ];

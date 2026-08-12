@@ -3227,6 +3227,21 @@ th.leave-type-heading {
   margin-bottom: 4px;
 }
 
+.rating-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rating-picker-star {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
 .rating-picker-tone {
   display: flex;
   flex-direction: column;
@@ -3240,14 +3255,6 @@ th.leave-type-heading {
 
 .rating-picker-tone.visible {
   opacity: 1;
-}
-
-.rating-picker-emoji {
-  width: 52px;
-  height: 52px;
-  object-fit: contain;
-  display: block;
-  pointer-events: none;
 }
 
 .rating-tone-badge {

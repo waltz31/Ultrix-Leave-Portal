@@ -93,6 +93,7 @@ migrateEmployeeRatingsTable();
 migrateEmployeeRatingsScale();
 migrateEmployeeRatingsUniquePeriod();
 migrateTimestampsToIst();
+migrateInvoicesTable();
 
 function migrateUsersTable() {
   const cols = db.prepare(`PRAGMA table_info(users)`).all();
@@ -347,6 +348,27 @@ function migrateTimestampsToIst() {
     db.exec('ROLLBACK');
     throw err;
   }
+}
+
+function migrateInvoicesTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      invoice_number TEXT NOT NULL,
+      invoice_date TEXT NOT NULL,
+      billing_period TEXT NOT NULL,
+      consultant TEXT NOT NULL,
+      total_amount REAL NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL,
+      pdf_data TEXT,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_user_number
+      ON invoices(user_id, invoice_number);
+    CREATE INDEX IF NOT EXISTS idx_invoices_billing_period ON invoices(billing_period);
+    CREATE INDEX IF NOT EXISTS idx_invoices_user ON invoices(user_id);
+  `);
 }
 
 export default db;

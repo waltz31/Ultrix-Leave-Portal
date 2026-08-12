@@ -13,7 +13,8 @@ const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
   { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/app/ratings', label: 'Ratings', icon: '/assets/nav-team.png' },
+  { to: '/app/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/app/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/app/history', label: 'History', icon: '/assets/nav-history.png' },
 ];
 
@@ -31,6 +32,7 @@ function pathForNotification(role, type) {
   if (type === 'approved') return '/app/calendar';
   if (type === 'balance_credited') return '/app';
   if (type === 'rating_received') return '/app/ratings';
+  if (type === 'invoice_submitted') return '/hr/invoices';
   if (type === 'cancelled') return '/app/history';
   if (type === 'pending_manager' || type === 'pending_hr') return '/app';
   return '/app/history';

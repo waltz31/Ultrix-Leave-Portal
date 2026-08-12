@@ -18,18 +18,7 @@ const TONE_LABELS_BY_SCORE = {
   9: 'Excellent', 10: 'Outstanding',
 };
 
-const RATING_EMOJI_BY_SCORE = {
-  1: '/assets/rating-emojis/sad-1.gif',
-  2: '/assets/rating-emojis/sad-1.gif',
-  3: '/assets/rating-emojis/sad-1.gif',
-  4: '/assets/rating-emojis/sick.gif',
-  5: '/assets/rating-emojis/sick.gif',
-  6: '/assets/rating-emojis/sad.gif',
-  7: '/assets/rating-emojis/sad.gif',
-  8: '/assets/rating-emojis/surprised.gif',
-  9: '/assets/rating-emojis/happy.gif',
-  10: '/assets/rating-emojis/surprised.gif',
-};
+export const RATING_STAR_ICON = '/assets/rating-star.png';
 
 export function scoreTone(score) {
   const n = Math.round(Number(score) || 0);
@@ -109,7 +98,6 @@ export function RatingScorePicker({ value, onChange }) {
   const tone = selected ? scoreTone(selected) : null;
   const meta = tone ? TONE_META[tone] : null;
   const toneLabel = selected ? TONE_LABELS_BY_SCORE[selected] : null;
-  const emojiSrc = selected ? RATING_EMOJI_BY_SCORE[selected] : null;
 
   function handleClick(n, e) {
     onChange(n);
@@ -122,16 +110,16 @@ export function RatingScorePicker({ value, onChange }) {
   return (
     <div className="rating-picker">
       <div className="rating-picker-header">
-        <label>Rating (1–{RATING_MAX})</label>
+        <label className="rating-picker-label">
+          <img
+            className="rating-picker-star"
+            src={RATING_STAR_ICON}
+            alt=""
+            aria-hidden
+          />
+          Rating (1–{RATING_MAX})
+        </label>
         <div className={`rating-picker-tone${toneLabel ? ' visible' : ''}`}>
-          {emojiSrc && (
-            <img
-              className="rating-picker-emoji"
-              src={emojiSrc}
-              alt=""
-              aria-hidden
-            />
-          )}
           <span
             className={`rating-tone-badge${toneLabel ? ' visible' : ''}`}
             style={

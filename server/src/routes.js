@@ -34,6 +34,7 @@ import {
 import { todayIst } from './time.js';
 import { SQL_NOW_IST, SQL_TODAY_IST, isUniqueViolation } from './sqlDialect.js';
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
+import { mapInvoice, validateInvoicePayload, INVOICE_SELECT } from './invoiceUtils.js';
 
 const router = Router();
 
@@ -1479,6 +1480,166 @@ router.post('/ratings', authRequired, managerRequired, async (req, res) => {
   });
 
   res.status(201).json({ rating: mapRating(rating) });
+});
+
+// ——— Invoices ———
+router.post('/invoices', authRequired, async (req, res) => {
+  if (req.user.role !== 'user' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Only employees and managers can submit invoices' });
+  }
+
+  const validated = validateInvoicePayload(req.body || {});
+  if (validated.error) {
+    return res.status(400).json({ error: validated.error });
+  }
+
+  const { data, totalAmount } = validated;
+  const pdfData = String(req.body?.pdfData || '').trim() || null;
+
+  const duplicate = await db
+    .prepare(`SELECT id FROM invoices WHERE user_id = ? AND invoice_number = ?`)
+    .get(req.user.id, data.invoiceNumber);
+  if (duplicate) {
+    return res.status(409).json({
+      error: `You already submitted invoice ${data.invoiceNumber}.`,
+    });
+  }
+
+  let result;
+  try {
+    result = await db
+      .prepare(
+        `INSERT INTO invoices
+           (user_id, invoice_number, invoice_date, billing_period, consultant, total_amount, data_json, pdf_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        req.user.id,
+        data.invoiceNumber,
+        data.invoiceDate,
+        data.billingPeriod,
+        data.consultant,
+        totalAmount,
+        JSON.stringify(data),
+        pdfData
+      );
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(409).json({
+        error: `You already submitted invoice ${data.invoiceNumber}.`,
+      });
+    }
+    throw err;
+  }
+
+  const invoice = mapInvoice(
+    await db.prepare(`${INVOICE_SELECT} WHERE i.id = ?`).get(result.lastInsertRowid)
+  );
+
+  const hrUsers = await db
+    .prepare(`SELECT id FROM users WHERE role = 'hr' AND active = 1`)
+    .all();
+  for (const hr of hrUsers) {
+    await notifyUser({
+      userId: hr.id,
+      leaveId: null,
+      type: 'invoice_submitted',
+      title: 'New invoice submitted',
+      message: `${req.user.name} submitted invoice ${data.invoiceNumber} for ${data.billingPeriod}.`,
+    });
+  }
+
+  res.status(201).json({ invoice });
+});
+
+router.get('/invoices/mine', authRequired, async (req, res) => {
+  const rows = (await db
+    .prepare(`${INVOICE_SELECT} WHERE i.user_id = ? ORDER BY i.created_at DESC`)
+    .all(req.user.id))
+    .map(mapInvoice);
+  res.json({ invoices: rows });
+});
+
+router.get('/invoices/submitters', authRequired, hrRequired, async (_req, res) => {
+  const rows = (await db
+    .prepare(
+      `SELECT DISTINCT u.id, u.name, u.email, u.employee_number, u.role
+       FROM invoices i
+       JOIN users u ON u.id = i.user_id
+       ORDER BY u.name COLLATE NOCASE`
+    )
+    .all())
+    .map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      employeeNumber: u.employee_number,
+      role: u.role,
+    }));
+  res.json({ users: rows });
+});
+
+router.get('/invoices', authRequired, hrRequired, async (req, res) => {
+  const { billingPeriod, userId } = req.query;
+  const clauses = ['1=1'];
+  const params = [];
+
+  if (billingPeriod) {
+    clauses.push('i.billing_period = ?');
+    params.push(String(billingPeriod));
+  }
+  if (userId) {
+    const id = Number(userId);
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid employee filter' });
+    }
+    clauses.push('i.user_id = ?');
+    params.push(id);
+  }
+
+  const rows = (await db
+    .prepare(
+      `${INVOICE_SELECT} WHERE ${clauses.join(' AND ')} ORDER BY i.created_at DESC`
+    )
+    .all(...params))
+    .map(mapInvoice);
+
+  res.json({ invoices: rows });
+});
+
+router.get('/invoices/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db.prepare(`${INVOICE_SELECT} WHERE i.id = ?`).get(id);
+  if (!row) return res.status(404).json({ error: 'Invoice not found' });
+
+  if (req.user.role !== 'hr' && row.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Not allowed' });
+  }
+
+  res.json({ invoice: mapInvoice(row) });
+});
+
+router.get('/invoices/:id/pdf', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db
+    .prepare(`SELECT user_id, invoice_number, pdf_data FROM invoices WHERE id = ?`)
+    .get(id);
+  if (!row) return res.status(404).json({ error: 'Invoice not found' });
+
+  if (req.user.role !== 'hr' && row.user_id !== req.user.id) {
+    return res.status(403).json({ error: 'Not allowed' });
+  }
+
+  if (!row.pdf_data) {
+    return res.status(404).json({ error: 'PDF not stored for this invoice' });
+  }
+
+  const base64 = row.pdf_data.replace(/^data:application\/pdf;base64,/, '');
+  const buffer = Buffer.from(base64, 'base64');
+  const filename = `${row.invoice_number || 'invoice'}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buffer);
 });
 
 export default router;

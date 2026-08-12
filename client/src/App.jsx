@@ -17,6 +17,7 @@ import {
 } from './pages/ManagerPages';
 import { UserApply, UserCalendar, UserHistory, UserHome } from './pages/UserPages';
 import { UserRatings, ManagerRatings, HrRatings } from './pages/RatingsPages';
+import { EmployeeInvoices, ManagerInvoices, HrInvoices } from './pages/InvoicePages';
 import { homePathForRole } from './utils';
 
 function Protected({ role, children }) {
@@ -97,6 +98,15 @@ export default function App() {
           />
 
           <Route
+            path="/hr/invoices"
+            element={
+              <Protected role="hr">
+                <HrInvoices />
+              </Protected>
+            }
+          />
+
+          <Route
             path="/manager"
             element={
               <Protected role="manager">
@@ -133,6 +143,14 @@ export default function App() {
             element={
               <Protected role="manager">
                 <ManagerRatings />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/invoices"
+            element={
+              <Protected role="manager">
+                <ManagerInvoices />
               </Protected>
             }
           />
@@ -174,6 +192,14 @@ export default function App() {
             element={
               <Protected role="user">
                 <UserRatings />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/invoices"
+            element={
+              <Protected role="user">
+                <EmployeeInvoices />
               </Protected>
             }
           />

@@ -13,7 +13,8 @@ import { REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpa
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
-  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/nav-team.png' },
+  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
 ];
