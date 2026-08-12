@@ -71,9 +71,6 @@ export default function LoginPage() {
             <button className="btn primary full" type="submit" disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
-            <p className="hint">
-              HR: <code>hr@ultrix.com</code> / <code>hr123</code>
-            </p>
           </form>
         </div>
 

@@ -86,7 +86,7 @@ cd server
 DATABASE_URL='postgresql://...' npm run seed
 ```
 
-Login: `hr@ultrix.com` / `hr123` — change this password immediately.
+Login: `hr@ultrix.co` — change the default password immediately after first sign-in.
 
 Render’s free web service sleeps after idle time. The first request after sleep can take 30–60s.
 

@@ -4,14 +4,21 @@ import db from './db.js';
 import { hashPassword } from './auth.js';
 import { isPostgres } from './sqlDialect.js';
 
+const HR_EMAIL = 'hr@ultrix.co';
+
 await db.ready;
 
 if (isPostgres) {
   const existing = await db
-    .prepare(`SELECT id FROM users WHERE email = ?`)
-    .get('hr@ultrix.com');
-  if (existing) {
+    .prepare(`SELECT id, email FROM users WHERE email = ? OR email = ?`)
+    .get(HR_EMAIL, 'hr@ultrix.com');
+  if (existing?.email === HR_EMAIL) {
     console.log('Supabase already has HR user — skipping seed.');
+    process.exit(0);
+  }
+  if (existing) {
+    await db.prepare(`UPDATE users SET email = ? WHERE id = ?`).run(HR_EMAIL, existing.id);
+    console.log(`Updated HR email to ${HR_EMAIL}`);
     process.exit(0);
   }
 } else {
@@ -35,7 +42,7 @@ const insertBal = db.prepare(
 await db.transaction(async () => {
   const hr = await insertUser.run(
     'Portal HR',
-    'hr@ultrix.com',
+    HR_EMAIL,
     hashPassword('hr123'),
     'hr',
     null
@@ -44,4 +51,4 @@ await db.transaction(async () => {
 });
 
 console.log('Database ready — HR login:');
-console.log('  HR: hr@ultrix.com / hr123');
+console.log(`  HR: ${HR_EMAIL}`);

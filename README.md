@@ -32,5 +32,5 @@ npm run dev:client   # :5173
 |----------|----------------------|-------------|
 | Employee | ada@ultrix.com       | user123     |
 | Manager  | manager@ultrix.com   | manager123  |
-| HR       | hr@ultrix.com        | hr123       |
+| HR       | hr@ultrix.co        | hr123       |
 | HR (alt) | admin@ultrix.com     | admin123    |
