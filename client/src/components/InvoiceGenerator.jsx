@@ -211,6 +211,8 @@ export default function InvoiceGenerator() {
   const { user } = useAuth();
   const previewRef = useRef(null);
   const signatureUploadRef = useRef(null);
+  const invoiceUploadRef = useRef(null);
+  const [mode, setMode] = useState(null); // null | 'generate' | 'upload'
   const [form, setForm] = useState(() => defaultInvoiceForm(user?.name || ''));
   const [formKey, setFormKey] = useState(0);
   const [openSections, setOpenSections] = useState(OPEN_SECTIONS_DEFAULT);
@@ -222,6 +224,10 @@ export default function InvoiceGenerator() {
   const [success, setSuccess] = useState('');
   const [submitPopup, setSubmitPopup] = useState(null);
   const [submitted, setSubmitted] = useState([]);
+  const [uploadForm, setUploadForm] = useState(() => ({
+    pdfData: '',
+    fileName: '',
+  }));
 
   const loadMine = useCallback(() => {
     api('/invoices/mine')
@@ -232,6 +238,10 @@ export default function InvoiceGenerator() {
   useEffect(() => {
     loadMine();
   }, [loadMine]);
+
+  useEffect(() => {
+    setForm((f) => ({ ...f, consultant: f.consultant || user?.name || '' }));
+  }, [user?.name]);
 
   function updateField(key, value) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -378,6 +388,7 @@ export default function InvoiceGenerator() {
         method: 'POST',
         body: {
           ...form,
+          source: 'generated',
           lineItems: form.lineItems.map(({ description, amount }) => ({
             description,
             amount: Number(amount) || 0,
@@ -394,6 +405,79 @@ export default function InvoiceGenerator() {
       setSuccess('');
       loadMine();
       applyEmptyForm();
+      setMode(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleInvoiceFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !String(file.name).toLowerCase().endsWith('.pdf')) {
+      setError('Please upload a PDF file');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > 6_000_000) {
+      setError('PDF must be under 6 MB');
+      e.target.value = '';
+      return;
+    }
+    setError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setUploadForm({
+        pdfData: String(reader.result || ''),
+        fileName: file.name,
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function submitUploadedInvoice() {
+    setError('');
+    setSuccess('');
+    if (!uploadForm.pdfData) {
+      setError('Please choose an invoice PDF to upload');
+      return;
+    }
+
+    const today = new Date();
+    const invoiceDate = today.toISOString().slice(0, 10);
+    const billingPeriod = today.toISOString().slice(0, 7);
+    const fromName = String(uploadForm.fileName || '')
+      .replace(/\.pdf$/i, '')
+      .replace(/[^\w.-]+/g, '-')
+      .slice(0, 36);
+    const invoiceNumber =
+      fromName || `UP-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}-${Date.now().toString(36).slice(-4)}`;
+
+    setBusy(true);
+    try {
+      await api('/invoices', {
+        method: 'POST',
+        body: {
+          source: 'upload',
+          consultant: user?.name || 'Employee',
+          invoiceNumber,
+          invoiceDate,
+          billingPeriod,
+          totalAmount: 0,
+          description: uploadForm.fileName || 'Uploaded invoice',
+          pdfData: uploadForm.pdfData,
+        },
+      });
+      setSubmitPopup({
+        message: 'Invoice submitted',
+        detail: `${invoiceNumber} has been sent to HR.`,
+      });
+      setUploadForm({ pdfData: '', fileName: '' });
+      if (invoiceUploadRef.current) invoiceUploadRef.current.value = '';
+      loadMine();
+      setMode(null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -441,11 +525,110 @@ export default function InvoiceGenerator() {
         durationMs={3200}
       />
       <InvoiceRetentionNotice />
+
+      {!mode && (
+        <section className="panel invoice-mode-panel">
+          <h2>Invoices</h2>
+          <p className="muted slim">Choose how you want to send your invoice to HR.</p>
+          <div className="invoice-mode-grid">
+            <button
+              type="button"
+              className="invoice-mode-card"
+              onClick={() => {
+                setError('');
+                setMode('generate');
+              }}
+            >
+              <img src="/assets/sheets.png" alt="" />
+              <strong>Generate invoice</strong>
+              <span>Build an invoice in the portal, preview it, then submit to HR.</span>
+            </button>
+            <button
+              type="button"
+              className="invoice-mode-card"
+              onClick={() => {
+                setError('');
+                setMode('upload');
+              }}
+            >
+              <img src="/assets/document.png" alt="" />
+              <strong>Upload invoice</strong>
+              <span>Upload an existing PDF and submit it directly to HR.</span>
+            </button>
+          </div>
+          {error && <p className="form-error">{error}</p>}
+          {success && <p className="form-ok">{success}</p>}
+        </section>
+      )}
+
+      {mode === 'upload' && (
+        <section className="panel invoice-upload-panel">
+          <div className="row-between">
+            <div>
+              <h2>Upload invoice</h2>
+              <p className="muted slim">Choose a PDF, then submit it to HR.</p>
+            </div>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => {
+                setError('');
+                setMode(null);
+              }}
+            >
+              Back
+            </button>
+          </div>
+          <form
+            className="invoice-upload-simple"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitUploadedInvoice();
+            }}
+          >
+            <label className="invoice-upload-drop">
+              <span className="invoice-upload-drop-title">
+                {uploadForm.fileName ? 'PDF selected' : 'Choose PDF file'}
+              </span>
+              <span className="invoice-upload-drop-hint">
+                {uploadForm.fileName || 'PDF only · max 6 MB'}
+              </span>
+              <input
+                ref={invoiceUploadRef}
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={handleInvoiceFile}
+                required={!uploadForm.pdfData}
+              />
+            </label>
+            {error && <p className="form-error">{error}</p>}
+            <button className="btn primary" type="submit" disabled={busy || !uploadForm.pdfData}>
+              {busy ? 'Submitting…' : 'Submit to HR'}
+            </button>
+          </form>
+        </section>
+      )}
+
+      {mode === 'generate' && (
       <div className="invoice-studio-layout">
         <aside className="invoice-studio-panel panel">
           <header className="invoice-studio-header">
-            <h2>Invoice Generator</h2>
-            <p className="muted">Fill in details, preview, then submit to HR.</p>
+            <div className="row-between">
+              <div>
+                <h2>Invoice Generator</h2>
+                <p className="muted">Fill in details, preview, then submit to HR.</p>
+              </div>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setError('');
+                  setMode(null);
+                }}
+              >
+                Back
+              </button>
+            </div>
           </header>
 
           <div key={`invoice-form-${formKey}`} className="invoice-form stack">
@@ -673,8 +856,16 @@ export default function InvoiceGenerator() {
           </div>
 
           <div className="invoice-studio-actions">
-            <button type="button" className="btn secondary" onClick={downloadPdf} disabled={busy}>
-              Download PDF
+            <button
+              type="button"
+              className={`download-icon-btn ${busy ? 'is-busy' : ''}`}
+              onClick={downloadPdf}
+              disabled={busy}
+              aria-label="Download PDF"
+              title="Download PDF"
+            >
+              <img src="/assets/download-pdf.png" alt="" />
+              <span className="download-icon-tip">Download PDF</span>
             </button>
             <button type="button" className="btn ghost" onClick={handleClearAll} disabled={busy}>
               Clear all
@@ -698,6 +889,7 @@ export default function InvoiceGenerator() {
           </div>
         </div>
       </div>
+      )}
 
       {submitted.length > 0 && (
         <section className="panel invoice-submitted-list">
@@ -726,19 +918,22 @@ export default function InvoiceGenerator() {
                       {inv.hasPdf && (
                         <button
                           type="button"
-                          className="btn ghost small"
+                          className="download-icon-btn sm"
+                          aria-label={`Download PDF ${inv.invoiceNumber}`}
+                          title="Download PDF"
                           onClick={() =>
                             downloadInvoicePdf(inv.id, `${inv.invoiceNumber}.pdf`).catch(
                               (err) => setError(err.message)
                             )
                           }
                         >
-                          PDF
+                          <img src="/assets/download-pdf.png" alt="" />
+                          <span className="download-icon-tip">Download PDF</span>
                         </button>
                       )}
                       <button
                         type="button"
-                        className="btn ghost small invoice-delete-btn"
+                        className="btn ghost-danger"
                         disabled={busy}
                         onClick={() => deleteSubmittedInvoice(inv)}
                       >

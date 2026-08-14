@@ -8,12 +8,32 @@ import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveExportPanel, LeaveReportSection, UpcomingLeaveList } from '../components/LeaveReports';
-import { LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
+import EmployeeOnboardingForm, {
+  ASSET_CATEGORY_OPTIONS,
+  EMPTY_ASSET,
+  EMPTY_ONBOARDING_FORM,
+  EMPLOYMENT_STATUS_OPTIONS,
+  EMPLOYMENT_TYPE_OPTIONS,
+  GENDER_OPTIONS,
+  MARITAL_STATUS_OPTIONS,
+  WORK_MODE_OPTIONS,
+  profileToForm,
+} from '../components/EmployeeOnboardingForm';
+import {
+  DetailList,
+  SALARY_SENSITIVE_FIELDS,
+  formatPayrollValue,
+  payStructureKind,
+  payrollFieldsFor,
+} from '../components/SalaryComponentsView';
+import { LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
+import * as XLSX from 'xlsx';
 
 const NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
-  { to: '/hr/users', label: 'Users', icon: '/assets/nav-team.png' },
+  { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
+  { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
@@ -158,7 +178,7 @@ export function HrApprovals() {
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {!loading && data?.length === 0 && <p className="empty">No requests awaiting HR.</p>}
-      <div className="stack" style={{ gap: 14 }}>
+      <div className="stack tight">
         {(data || []).map((leave) => (
           <section key={leave.id} className="panel">
             <div className="row-between">
@@ -286,24 +306,545 @@ export function HrApprovals() {
   );
 }
 
+export function HrOnboarding() {
+  const { data: profiles, error, loading, reload } = useLoad(() =>
+    api('/onboarding').then((d) => d.profiles)
+  );
+  const { data: managers } = useLoad(() => api('/managers').then((d) => d.managers));
+  const [form, setForm] = useState(() => ({
+    ...EMPTY_ONBOARDING_FORM,
+    assets: [{ ...EMPTY_ASSET }],
+  }));
+  const [showForm, setShowForm] = useState(false);
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [createdNotice, setCreatedNotice] = useState(null);
+
+  function blankForm() {
+    return { ...EMPTY_ONBOARDING_FORM, assets: [{ ...EMPTY_ASSET }] };
+  }
+
+  async function deleteProfile(profile) {
+    const name = profile?.name || 'this employee';
+    const ok = window.confirm(
+      `Delete ${name}? Their profile, leave history, balances, and notifications will be removed permanently.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    setMsg('');
+    setErr('');
+    try {
+      await api(`/users/${profile.userId}`, { method: 'DELETE' });
+      setMsg(`${name} deleted.`);
+      setSelected(null);
+      setShowForm(false);
+      setEditingUserId(null);
+      reload();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveProfile(e) {
+    e.preventDefault();
+    setBusy(true);
+    setMsg('');
+    setErr('');
+    try {
+      const body = {
+        ...form,
+        managerId: form.managerId ? Number(form.managerId) : null,
+        assets: form.assets || [],
+      };
+      if (editingUserId) {
+        if (!body.password) delete body.password;
+        const { profile } = await api(`/onboarding/${editingUserId}`, {
+          method: 'PATCH',
+          body,
+        });
+        setSelected(profile);
+        setMsg('Employee profile updated.');
+      } else {
+        const { profile, credentials } = await api('/onboarding', {
+          method: 'POST',
+          body,
+        });
+        setCreatedNotice({
+          name: profile?.name || form.name || 'Employee',
+          email: credentials?.email || profile?.email || '',
+          password: credentials?.password || '',
+          emailGenerated: Boolean(credentials?.emailGenerated),
+          passwordGenerated: Boolean(credentials?.passwordGenerated),
+        });
+        setMsg('Employee profile created.');
+      }
+      setForm(blankForm());
+      setShowForm(false);
+      setEditingUserId(null);
+      reload();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openCreate() {
+    setErr('');
+    setMsg('');
+    setEditingUserId(null);
+    setForm(blankForm());
+    setShowForm(true);
+  }
+
+  function openEdit(profile) {
+    setErr('');
+    setMsg('');
+    setSelected(null);
+    setEditingUserId(profile.userId);
+    setForm(profileToForm(profile));
+    setShowForm(true);
+  }
+
+  function labelFrom(options, value) {
+    return options.find((o) => o.value === value)?.label || value || '—';
+  }
+
+  return (
+    <AppShell title="Onboarding" nav={NAV}>
+      <StatusCelebration
+        show={Boolean(createdNotice)}
+        onDone={() => setCreatedNotice(null)}
+        message="Employee created!"
+        detail={
+          createdNotice?.email
+            ? `${createdNotice.name} can log in with the credentials below.`
+            : createdNotice?.name
+              ? `${createdNotice.name} has been added to the portal.`
+              : ''
+        }
+        credentials={
+          createdNotice?.email
+            ? {
+                email: createdNotice.email,
+                password: createdNotice.password,
+                emailGenerated: createdNotice.emailGenerated,
+                passwordGenerated: createdNotice.passwordGenerated,
+              }
+            : null
+        }
+        imageSrc="/assets/leave-approved.gif"
+        durationMs={createdNotice?.password ? 12000 : 2800}
+      />
+      <div className="page-actions">
+        <p className="lede">
+          Create and edit employee profiles including personal, employment, IT/asset, and payroll
+          details.
+        </p>
+        <button type="button" className="btn primary" onClick={openCreate}>
+          + Create employee profile
+        </button>
+      </div>
+      {(msg || err) && !showForm && (
+        <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>
+      )}
+      {loading && <p className="muted">Loading…</p>}
+      {error && <p className="form-error">{error}</p>}
+
+      <section className="panel">
+        <h2>Employee &amp; manager profiles</h2>
+        <p className="muted slim">
+          Employees and managers can each view their own salary in the portal. Edit payroll
+          here to keep their Salary page up to date.
+        </p>
+        {!loading && !profiles?.length && (
+          <p className="empty">No onboarded employees yet. Create a profile to get started.</p>
+        )}
+        {!!profiles?.length && (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Role</th>
+                  <th>Emp ID</th>
+                  <th>Department</th>
+                  <th>Designation</th>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Manager</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((p) => (
+                  <tr key={p.userId}>
+                    <td>
+                      <div className="onboarding-row-identity">
+                        <img
+                          className="onboarding-avatar"
+                          src={avatarSrc(p.personal.profilePhoto)}
+                          alt=""
+                        />
+                        <div>
+                          <strong className="employee-name">{p.name}</strong>
+                          <div className="sub">{p.email}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="badge">
+                        {p.role === 'manager' ? 'Manager' : 'Employee'}
+                      </span>
+                    </td>
+                    <td>{p.employeeNumber || '—'}</td>
+                    <td>{p.employment.department || '—'}</td>
+                    <td>{p.employment.designation || '—'}</td>
+                    <td>{labelFrom(EMPLOYMENT_TYPE_OPTIONS, p.employment.employmentType)}</td>
+                    <td>
+                      <span
+                        className={`badge status-${p.employment.employmentStatus || 'active'}`}
+                      >
+                        {labelFrom(EMPLOYMENT_STATUS_OPTIONS, p.employment.employmentStatus)}
+                      </span>
+                    </td>
+                    <td>{p.role === 'manager' ? '—' : p.managerName || '—'}</td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className={`btn ghost ${selected?.userId === p.userId && !showForm ? 'is-selected' : ''}`}
+                          onClick={() => setSelected(p)}
+                        >
+                          View
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn ghost ${editingUserId === p.userId && showForm ? 'is-selected' : ''}`}
+                          onClick={() => openEdit(p)}
+                        >
+                          Edit
+                        </button>
+                        {p.role !== 'manager' && (
+                          <button
+                            type="button"
+                            className="btn ghost-danger"
+                            onClick={() => deleteProfile(p)}
+                            disabled={busy}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {showForm && (
+        <div className="modal-backdrop modal-backdrop-static">
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="onboarding-title"
+          >
+            <div className="row-between">
+              <h2 id="onboarding-title">
+                {editingUserId ? 'Edit employee profile' : 'Create employee profile'}
+              </h2>
+              <div className="row-actions">
+                {editingUserId && (
+                  <button
+                    type="button"
+                    className="btn ghost-danger"
+                    onClick={() => {
+                      const profile = (profiles || []).find((p) => p.userId === editingUserId);
+                      if (profile) deleteProfile(profile);
+                    }}
+                    disabled={busy}
+                  >
+                    Delete
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => {
+                    setShowForm(false);
+                    setEditingUserId(null);
+                  }}
+                  disabled={busy}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            {err && <p className="form-error">{err}</p>}
+            <EmployeeOnboardingForm
+              form={form}
+              setForm={setForm}
+              managers={managers}
+              onSubmit={saveProfile}
+              busy={busy}
+              submitLabel={editingUserId ? 'Save changes' : 'Create employee profile'}
+            />
+          </div>
+        </div>
+      )}
+
+      {selected && (
+        <div className="modal-backdrop" onClick={() => setSelected(null)}>
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row-between">
+              <h2>{selected.name}</h2>
+              <div className="row-actions">
+                <button type="button" className="btn primary is-selected" onClick={() => openEdit(selected)}>
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost-danger"
+                  onClick={() => deleteProfile(selected)}
+                  disabled={busy}
+                >
+                  Delete
+                </button>
+                <button type="button" className="btn ghost" onClick={() => setSelected(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="onboarding-detail-grid">
+              <section>
+                <h3>Personal</h3>
+                <img
+                  className="onboarding-detail-photo"
+                  src={avatarSrc(selected.personal.profilePhoto)}
+                  alt=""
+                />
+                <dl className="detail-list">
+                  <div>
+                    <dt>Employee ID</dt>
+                    <dd>{selected.employeeNumber || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Date of birth</dt>
+                    <dd>
+                      {selected.personal.dateOfBirth
+                        ? formatDate(selected.personal.dateOfBirth)
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Gender</dt>
+                    <dd>{labelFrom(GENDER_OPTIONS, selected.personal.gender)}</dd>
+                  </div>
+                  <div>
+                    <dt>Personal email</dt>
+                    <dd>{selected.personal.personalEmail || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Mobile</dt>
+                    <dd>{selected.personal.personalMobile || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Address</dt>
+                    <dd>{selected.personal.address || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Emergency contact</dt>
+                    <dd>{selected.personal.emergencyContact || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Nationality</dt>
+                    <dd>{selected.personal.nationality || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Marital status</dt>
+                    <dd>{labelFrom(MARITAL_STATUS_OPTIONS, selected.personal.maritalStatus)}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section>
+                <h3>Employment</h3>
+                <dl className="detail-list">
+                  <div>
+                    <dt>Date of joining</dt>
+                    <dd>
+                      {selected.employment.dateOfJoining
+                        ? formatDate(selected.employment.dateOfJoining)
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Employment type</dt>
+                    <dd>
+                      {labelFrom(EMPLOYMENT_TYPE_OPTIONS, selected.employment.employmentType)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Department</dt>
+                    <dd>{selected.employment.department || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Designation</dt>
+                    <dd>{selected.employment.designation || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Job level</dt>
+                    <dd>{selected.employment.jobLevel || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Reporting manager</dt>
+                    <dd>{selected.managerName || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Location</dt>
+                    <dd>{selected.employment.location || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Work mode</dt>
+                    <dd>{labelFrom(WORK_MODE_OPTIONS, selected.employment.workMode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>
+                      {labelFrom(EMPLOYMENT_STATUS_OPTIONS, selected.employment.employmentStatus)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Probation</dt>
+                    <dd>{selected.employment.probationPeriod || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Confirmation date</dt>
+                    <dd>
+                      {selected.employment.confirmationDate
+                        ? formatDate(selected.employment.confirmationDate)
+                        : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Work email</dt>
+                    <dd>{selected.email || '—'}</dd>
+                  </div>
+                </dl>
+              </section>
+              <section className="full">
+                <h3>IT / Asset</h3>
+                {!selected.assets?.length && !selected.it?.assetId && !selected.it?.laptopDesktopAssigned ? (
+                  <p className="empty">No assets tagged.</p>
+                ) : (
+                  <div className="asset-detail-list">
+                    {(selected.assets?.length
+                      ? selected.assets
+                      : [
+                          {
+                            assetCategory: 'laptop_desktop',
+                            deviceAssigned: selected.it?.laptopDesktopAssigned,
+                            assetId: selected.it?.assetId,
+                            mobileNumber: selected.it?.companyMobile,
+                            accessCard: selected.it?.accessCard,
+                            issueDate: selected.it?.equipmentIssueDate,
+                            returnDate: selected.it?.equipmentReturnDate,
+                            softwareAccess: selected.it?.softwareAccessProvisioning,
+                            companyEmail: selected.it?.companyEmailAccount,
+                          },
+                        ]
+                    ).map((asset, idx) => (
+                      <div className="asset-detail-card" key={asset.id || idx}>
+                        <h4>
+                          {ASSET_CATEGORY_OPTIONS.find((o) => o.value === asset.assetCategory)
+                            ?.label || 'Asset'}{' '}
+                          {selected.assets?.length > 1 ? `#${idx + 1}` : ''}
+                        </h4>
+                        <DetailList
+                          items={[
+                            { label: 'Device / item', value: asset.deviceAssigned || '—' },
+                            { label: 'Asset ID', value: asset.assetId || '—' },
+                            { label: 'Mobile number', value: asset.mobileNumber || '—' },
+                            { label: 'Access card', value: asset.accessCard || '—' },
+                            {
+                              label: 'Issue date',
+                              value: asset.issueDate ? formatDate(asset.issueDate) : '—',
+                            },
+                            {
+                              label: 'Return date',
+                              value: asset.returnDate ? formatDate(asset.returnDate) : '—',
+                            },
+                            {
+                              label: 'Software / access',
+                              value: asset.softwareAccess || '—',
+                            },
+                            {
+                              label: 'Company email / account',
+                              value: asset.companyEmail || '—',
+                            },
+                          ]}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+              <section>
+                <h3>Payroll &amp; salary</h3>
+                <DetailList
+                  items={[
+                    ...payrollFieldsFor(selected.employment?.employmentType).map((f) => ({
+                      label: f.label,
+                      value: formatPayrollValue(f, selected.payroll),
+                    })),
+                    ...(payStructureKind(selected.employment?.employmentType) === 'employee'
+                      ? SALARY_SENSITIVE_FIELDS.map((f) => ({
+                          label: f.label,
+                          value: selected.payroll?.[f.key] || '—',
+                        }))
+                      : []),
+                  ]}
+                />
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppShell>
+  );
+}
+
 export function HrUsers() {
   const { data, error, loading, reload } = useLoad(() =>
     api('/users').then((d) => d.users)
   );
-  const { data: managers } = useLoad(() =>
-    api('/managers').then((d) => d.managers)
-  );
+  const {
+    data: managers,
+    error: managersError,
+    loading: managersLoading,
+    reload: reloadManagers,
+  } = useLoad(() => api('/managers').then((d) => d.managers));
   const {
     data: creditLog,
     reload: reloadCredits,
   } = useLoad(() => api('/balances/credits').then((d) => d.credits));
-  const [showAddUser, setShowAddUser] = useState(false);
-  const [createForm, setCreateForm] = useState({
+  const [managerForm, setManagerForm] = useState({
     name: '',
     email: '',
     password: '',
-    role: 'user',
-    managerId: '',
     employeeNumber: '',
   });
   const [creditForm, setCreditForm] = useState({
@@ -315,33 +856,35 @@ export function HrUsers() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [creditPopup, setCreditPopup] = useState(null);
+  const [managerNotice, setManagerNotice] = useState(null);
+  const [managerBusy, setManagerBusy] = useState(false);
 
-  async function createUser(e) {
+  async function createManager(e) {
     e.preventDefault();
     setMsg('');
     setErr('');
+    setManagerBusy(true);
     try {
-      await api('/users', {
-        method: 'POST',
-        body: {
-          ...createForm,
-          employeeNumber: createForm.employeeNumber.trim(),
-          managerId: createForm.role === 'user' ? Number(createForm.managerId) : null,
-        },
+      const body = {
+        name: managerForm.name.trim(),
+        email: managerForm.email.trim(),
+        password: managerForm.password,
+        role: 'manager',
+        employeeNumber: managerForm.employeeNumber.trim() || undefined,
+      };
+      const { user } = await api('/users', { method: 'POST', body });
+      setManagerNotice({
+        name: user?.name || body.name,
+        email: user?.email || body.email,
+        password: body.password,
       });
-      setCreateForm({
-        name: '',
-        email: '',
-        password: '',
-        role: 'user',
-        managerId: '',
-        employeeNumber: '',
-      });
-      setShowAddUser(false);
-      setMsg('User added.');
-      reload();
+      setMsg(`${user?.name || body.name} added as manager.`);
+      setManagerForm({ name: '', email: '', password: '', employeeNumber: '' });
+      reloadManagers();
     } catch (error) {
       setErr(error.message);
+    } finally {
+      setManagerBusy(false);
     }
   }
 
@@ -369,6 +912,7 @@ export function HrUsers() {
         }'s account.`,
       });
       setMsg('Balance credited.');
+      setCreditForm((f) => ({ ...f, amount: 1, note: '' }));
       reload();
       reloadCredits();
     } catch (error) {
@@ -383,6 +927,7 @@ export function HrUsers() {
         body: { active: !user.active },
       });
       reload();
+      reloadManagers();
     } catch (error) {
       setErr(error.message);
     }
@@ -407,14 +952,8 @@ export function HrUsers() {
     }
   }
 
-  function openAddUser() {
-    setErr('');
-    setMsg('');
-    setShowAddUser(true);
-  }
-
   return (
-    <AppShell title="Users" nav={NAV}>
+    <AppShell title="Leave Management" nav={NAV}>
       <StatusCelebration
         show={Boolean(creditPopup)}
         onDone={() => setCreditPopup(null)}
@@ -423,45 +962,232 @@ export function HrUsers() {
         imageSrc="/assets/balance-credited.gif"
         durationMs={3200}
       />
-      <div className="page-actions">
-        <p className="lede">Add employees (with manager) or managers. Credit leave balances.</p>
-        <button type="button" className="btn primary" onClick={openAddUser}>
-          + Add user
-        </button>
-      </div>
+      <StatusCelebration
+        show={Boolean(managerNotice)}
+        onDone={() => setManagerNotice(null)}
+        message="Manager created!"
+        detail={
+          managerNotice?.email
+            ? `${managerNotice.name} can log in with the credentials below.`
+            : `${managerNotice?.name || 'Manager'} has been added.`
+        }
+        credentials={
+          managerNotice?.email
+            ? {
+                email: managerNotice.email,
+                password: managerNotice.password,
+              }
+            : null
+        }
+        imageSrc="/assets/leave-approved.gif"
+        durationMs={managerNotice?.password ? 12000 : 2800}
+      />
+      <p className="lede">
+        Add managers, credit leave balances, and manage employees. Create employees in{' '}
+        <Link to="/hr/onboarding">Onboarding</Link>.
+      </p>
       {(msg || err) && <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
+      {managersError && <p className="form-error">{managersError}</p>}
 
-      <div className="split">
-        <section className="panel">
-          <h2>Employees</h2>
+      <div className="leave-mgmt-stack">
+      <section className="panel leave-mgmt-managers">
+        <h2>Add manager</h2>
+        <p className="muted slim">
+          Managers approve team leave before HR. They sign in with the email and password you set.
+        </p>
+        <form className="manager-create-form" onSubmit={createManager}>
+          <label>
+            Name
+            <input
+              value={managerForm.name}
+              onChange={(e) => setManagerForm((f) => ({ ...f, name: e.target.value }))}
+              required
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            Work email
+            <input
+              type="email"
+              value={managerForm.email}
+              onChange={(e) => setManagerForm((f) => ({ ...f, email: e.target.value }))}
+              required
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            Temp password
+            <input
+              type="text"
+              value={managerForm.password}
+              onChange={(e) => setManagerForm((f) => ({ ...f, password: e.target.value }))}
+              minLength={6}
+              required
+              autoComplete="new-password"
+              placeholder="Min 6 characters"
+            />
+          </label>
+          <label>
+            Emp ID (optional)
+            <input
+              value={managerForm.employeeNumber}
+              onChange={(e) => setManagerForm((f) => ({ ...f, employeeNumber: e.target.value }))}
+              autoComplete="off"
+            />
+          </label>
+          <div className="leave-credit-actions">
+            <button className="btn primary" type="submit" disabled={managerBusy}>
+              {managerBusy ? 'Adding…' : 'Add manager'}
+            </button>
+          </div>
+        </form>
+
+        <h3 className="leave-mgmt-subhead">Managers</h3>
+        {managersLoading && <p className="muted">Loading managers…</p>}
+        {!managersLoading && !managers?.length && (
+          <p className="empty">No managers yet. Add one above.</p>
+        )}
+        {!!managers?.length && (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Emp #</th>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {managers.map((mgr) => (
+                  <tr key={mgr.id} className={mgr.active ? '' : 'is-inactive'}>
+                    <td>
+                      <strong className="employee-name">{mgr.name}</strong>
+                    </td>
+                    <td>{mgr.email}</td>
+                    <td>
+                      <span className={`badge ${mgr.active ? 'status-active' : 'status-inactive'}`}>
+                        {mgr.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button type="button" className="btn ghost" onClick={() => toggleActive(mgr)}>
+                          {mgr.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel leave-mgmt-credit">
+        <h2>Credit leave balance</h2>
+        <form className="leave-credit-form" onSubmit={creditBalance}>
+          <label>
+            Employee
+            <select
+              value={creditForm.userId}
+              onChange={(e) => setCreditForm((f) => ({ ...f, userId: e.target.value }))}
+              required
+            >
+              <option value="">Select…</option>
+              {(data || []).map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                  {u.active ? '' : ' (inactive)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Type
+            <select
+              value={creditForm.leaveType}
+              onChange={(e) => setCreditForm((f) => ({ ...f, leaveType: e.target.value }))}
+            >
+              {Object.entries(LEAVE_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Days
+            <input
+              type="number"
+              min="0.5"
+              step="0.5"
+              value={creditForm.amount}
+              onChange={(e) => setCreditForm((f) => ({ ...f, amount: e.target.value }))}
+              required
+            />
+          </label>
+          <label className="leave-credit-note">
+            Note (optional)
+            <input
+              value={creditForm.note}
+              onChange={(e) => setCreditForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="Reason for credit"
+            />
+          </label>
+          <div className="leave-credit-actions">
+            <button className="btn primary" type="submit">
+              Credit balance
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel">
+        <h2>Employee leave balances</h2>
+        {!loading && !data?.length && (
+          <p className="empty">
+            No employees yet. Add them from <Link to="/hr/onboarding">Onboarding</Link>.
+          </p>
+        )}
+        {!!data?.length && (
+          <div className="table-wrap">
+            <table className="leave-balances-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Emp ID</th>
                   <th>Manager</th>
-                  <th className="leave-type-heading">Casual</th>
-                  <th className="leave-type-heading">Earned</th>
-                  <th className="leave-type-heading">Sick</th>
+                  <th>Status</th>
+                  <th className="leave-type-heading">Casual Leave</th>
+                  <th className="leave-type-heading">Earned Leave</th>
+                  <th className="leave-type-heading">Sick Leave</th>
+                  <th className="leave-type-heading">Compensation</th>
                   <th className="leave-type-heading">WFH</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {(data || []).map((user) => (
-                  <tr key={user.id}>
+                {data.map((user) => (
+                  <tr key={user.id} className={user.active ? '' : 'is-inactive'}>
                     <td>
                       <strong className="employee-name">{user.name}</strong>
                       <div className="sub">{user.email}</div>
                     </td>
                     <td>{user.employeeNumber || '—'}</td>
                     <td>{user.managerName || '—'}</td>
+                    <td>
+                      <span className={`badge ${user.active ? 'status-active' : 'status-inactive'}`}>
+                        {user.active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
                     <td>{user.balances.casual}</td>
                     <td>{user.balances.earned}</td>
                     <td>{user.balances.sick}</td>
+                    <td>{user.balances.compensation ?? 0}</td>
                     <td>{user.wfhDays ?? 0}</td>
                     <td>
                       <div className="row-actions">
@@ -470,7 +1196,7 @@ export function HrUsers() {
                         </button>
                         <button
                           type="button"
-                          className="btn danger ghost-danger"
+                          className="btn ghost-danger"
                           onClick={() => deleteEmployee(user)}
                         >
                           Delete
@@ -482,68 +1208,12 @@ export function HrUsers() {
               </tbody>
             </table>
           </div>
-        </section>
+        )}
+      </section>
 
-        <section className="panel">
-          <h2>Credit leave balance</h2>
-          <form className="stack-form" onSubmit={creditBalance}>
-            <label>
-              Employee
-              <select
-                value={creditForm.userId}
-                onChange={(e) => setCreditForm((f) => ({ ...f, userId: e.target.value }))}
-                required
-              >
-                <option value="">Select…</option>
-                {(data || []).map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Type
-              <select
-                value={creditForm.leaveType}
-                onChange={(e) => setCreditForm((f) => ({ ...f, leaveType: e.target.value }))}
-              >
-                {Object.entries(LEAVE_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Days
-              <input
-                type="number"
-                min="0.5"
-                step="0.5"
-                value={creditForm.amount}
-                onChange={(e) => setCreditForm((f) => ({ ...f, amount: e.target.value }))}
-                required
-              />
-            </label>
-            <label>
-              Note (optional)
-              <input
-                value={creditForm.note}
-                onChange={(e) => setCreditForm((f) => ({ ...f, note: e.target.value }))}
-                placeholder="Reason for credit"
-              />
-            </label>
-            <button className="btn primary" type="submit">
-              Credit balance
-            </button>
-          </form>
-        </section>
-      </div>
-
-      <section className="panel" style={{ marginTop: 16 }}>
+      <section className="panel">
         <h2>Credit history</h2>
-        <p className="lede">Log of leave balances credited by HR, with date and time.</p>
+        <p className="muted slim">Leave balances credited by HR, with date and time.</p>
         {!creditLog?.length && <p className="empty">No credits recorded yet.</p>}
         {!!creditLog?.length && (
           <div className="table-wrap">
@@ -581,94 +1251,7 @@ export function HrUsers() {
           </div>
         )}
       </section>
-
-      {showAddUser && (
-        <div className="modal-backdrop modal-backdrop-static">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="add-user-title">
-            <h2 id="add-user-title">Add user</h2>
-            <form className="stack-form" onSubmit={createUser}>
-              <label>
-                Full name
-                <input
-                  value={createForm.name}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
-                  required
-                  autoFocus
-                />
-              </label>
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={createForm.email}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
-                  required
-                />
-              </label>
-              {createForm.role === 'user' && (
-                <label>
-                  Employee number
-                  <input
-                    value={createForm.employeeNumber}
-                    onChange={(e) =>
-                      setCreateForm((f) => ({ ...f, employeeNumber: e.target.value }))
-                    }
-                    required
-                    maxLength={40}
-                    placeholder="e.g. EMP001"
-                  />
-                </label>
-              )}
-              <label>
-                Temporary password
-                <input
-                  type="text"
-                  value={createForm.password}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))}
-                  minLength={6}
-                  required
-                />
-              </label>
-              <label>
-                Role
-                <select
-                  value={createForm.role}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value }))}
-                >
-                  <option value="user">Employee</option>
-                  <option value="manager">Manager</option>
-                </select>
-              </label>
-              {createForm.role === 'user' && (
-                <label>
-                  Manager
-                  <select
-                    value={createForm.managerId}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, managerId: e.target.value }))}
-                    required
-                  >
-                    <option value="">Select manager…</option>
-                    {(managers || []).map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {err && <p className="form-error">{err}</p>}
-              <div className="modal-actions">
-                <button type="button" className="btn ghost" onClick={() => setShowAddUser(false)}>
-                  Cancel
-                </button>
-                <button className="btn primary" type="submit">
-                  Add user
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      </div>
     </AppShell>
   );
 }
@@ -677,30 +1260,288 @@ export function HrCalendar() {
   const now = appToday();
   const from = format(startOfMonth(now), 'yyyy-MM-dd');
   const to = format(endOfMonth(addMonthsSafe(now, 2)), 'yyyy-MM-dd');
-  const { data, error, loading } = useLoad(
+  const { data, error, loading, reload } = useLoad(
     () =>
       Promise.all([
         api(`/leaves/calendar?from=${from}&to=${to}`).then((d) => d.leaves),
         api('/users').then((d) => d.users),
       ]).then(([leaves, users]) => ({
         leaves,
+        users,
         balancesByUserId: Object.fromEntries(
-          users.map((u) => [u.id, u.balances || { casual: 0, earned: 0, sick: 0 }])
+          users.map((u) => [
+            u.id,
+            u.balances || { casual: 0, earned: 0, sick: 0, compensation: 0 },
+          ])
         ),
       })),
     [from, to]
   );
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState('');
+  const [mandatoryForm, setMandatoryForm] = useState({
+    title: '',
+    startDate: '',
+    endDate: '',
+    note: '',
+  });
+  const [mandatoryBusy, setMandatoryBusy] = useState(false);
+  const [mandatoryMsg, setMandatoryMsg] = useState('');
+  const [uploadBusy, setUploadBusy] = useState(false);
+
+  async function createLeave(body) {
+    await api('/leaves/admin', { method: 'POST', body });
+    reload();
+  }
+
+  async function deleteLeave(leave) {
+    setBusyId(leave.id);
+    setErr('');
+    try {
+      if (leave.isMandatory) {
+        await api(`/mandatory-leaves/${leave.mandatoryId}`, { method: 'DELETE' });
+      } else {
+        await api(`/leaves/${leave.id}`, { method: 'DELETE' });
+      }
+      reload();
+      return true;
+    } catch (error) {
+      setErr(error.message);
+      return false;
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function submitMandatory(e) {
+    e.preventDefault();
+    setMandatoryBusy(true);
+    setMandatoryMsg('');
+    setErr('');
+    try {
+      await api('/mandatory-leaves', {
+        method: 'POST',
+        body: {
+          title: mandatoryForm.title,
+          startDate: mandatoryForm.startDate,
+          endDate: mandatoryForm.endDate || mandatoryForm.startDate,
+          note: mandatoryForm.note,
+        },
+      });
+      setMandatoryForm({ title: '', startDate: '', endDate: '', note: '' });
+      setMandatoryMsg('Mandatory leave added to all calendars.');
+      reload();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setMandatoryBusy(false);
+    }
+  }
+
+  function excelCellToYmd(value) {
+    if (value == null || value === '') return '';
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return format(value, 'yyyy-MM-dd');
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const parsed = XLSX.SSF.parse_date_code(value);
+      if (parsed) {
+        return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+      }
+    }
+    const text = String(value).trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+    const dmy = text.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
+    if (dmy) {
+      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    return text;
+  }
+
+  function cellText(value) {
+    if (value == null) return '';
+    if (value instanceof Date) return format(value, 'yyyy-MM-dd');
+    return String(value).trim();
+  }
+
+  function pickField(row, names) {
+    const entries = Object.entries(row || {});
+    for (const name of names) {
+      const want = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const hit = entries.find(([k]) => String(k).toLowerCase().replace(/[^a-z0-9]+/g, '') === want);
+      if (hit) return hit[1];
+    }
+    return undefined;
+  }
+
+  async function parseMandatoryExcel(file) {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) return [];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      defval: '',
+      raw: true,
+    });
+    return rows
+      .map((row) => {
+        const title =
+          cellText(pickField(row, ['title', 'name', 'leave', 'leave title'])) ||
+          'Mandatory leave';
+        const startRaw = pickField(row, ['start_date', 'start', 'date', 'from']);
+        const endRaw = pickField(row, ['end_date', 'end', 'to']);
+        const startDate = excelCellToYmd(startRaw);
+        const endDate = excelCellToYmd(endRaw) || startDate;
+        const note = cellText(pickField(row, ['note', 'notes', 'reason', 'description']));
+        return { title, startDate, endDate, note };
+      })
+      .filter((r) => r.startDate);
+  }
+
+  async function onMandatoryFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadBusy(true);
+    setMandatoryMsg('');
+    setErr('');
+    try {
+      const leaves = await parseMandatoryExcel(file);
+      if (!leaves.length) {
+        throw new Error(
+          'No valid rows found. Use columns: title, start_date, end_date, note (Excel .xlsx)'
+        );
+      }
+      const result = await api('/mandatory-leaves/upload', {
+        method: 'POST',
+        body: { leaves },
+      });
+      const errCount = result.errors?.length || 0;
+      setMandatoryMsg(
+        errCount
+          ? `Uploaded ${result.created} mandatory leave(s); ${errCount} row(s) skipped.`
+          : `Uploaded ${result.created} mandatory leave(s) to all calendars.`
+      );
+      reload();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
+  const mandatoryOnCalendar = (data?.leaves || []).filter((l) => l.isMandatory);
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
-      <p className="lede">Hover a person to see available leave balances.</p>
+      <p className="lede">
+        Filter by employee to review overlapping leave. Use + to add leave, or open a chip to delete.
+        Upload mandatory leaves below so they appear on everyone’s calendar.
+      </p>
+
+      <section className="panel mandatory-leave-panel">
+        <h2>Mandatory leaves</h2>
+        <p className="muted slim">
+          Company-wide days (festivals, shutdowns, etc.). They show on all calendars and do not
+          deduct employee leave balance.
+        </p>
+        <form className="mandatory-leave-form" onSubmit={submitMandatory}>
+          <label>
+            Title
+            <input
+              required
+              value={mandatoryForm.title}
+              onChange={(e) => setMandatoryForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="e.g. Diwali holiday"
+            />
+          </label>
+          <label>
+            Start
+            <input
+              required
+              type="date"
+              value={mandatoryForm.startDate}
+              onChange={(e) =>
+                setMandatoryForm((f) => ({
+                  ...f,
+                  startDate: e.target.value,
+                  endDate: f.endDate || e.target.value,
+                }))
+              }
+            />
+          </label>
+          <label>
+            End
+            <input
+              type="date"
+              value={mandatoryForm.endDate}
+              min={mandatoryForm.startDate || undefined}
+              onChange={(e) => setMandatoryForm((f) => ({ ...f, endDate: e.target.value }))}
+            />
+          </label>
+          <label className="mandatory-leave-note">
+            Note
+            <input
+              value={mandatoryForm.note}
+              onChange={(e) => setMandatoryForm((f) => ({ ...f, note: e.target.value }))}
+              placeholder="Optional"
+            />
+          </label>
+          <div className="mandatory-leave-actions">
+            <button type="submit" className="btn primary" disabled={mandatoryBusy}>
+              {mandatoryBusy ? 'Saving…' : 'Add to calendar'}
+            </button>
+            <label className="btn secondary mandatory-upload-btn">
+              {uploadBusy ? 'Uploading…' : 'Upload Excel'}
+              <input
+                type="file"
+                accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                hidden
+                disabled={uploadBusy}
+                onChange={onMandatoryFile}
+              />
+            </label>
+          </div>
+        </form>
+        <p className="muted slim">
+          Excel columns: <code>title, start_date, end_date, note</code> (dates as YYYY-MM-DD or
+          Excel dates).
+        </p>
+        {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
+        {!!mandatoryOnCalendar.length && (
+          <ul className="mandatory-leave-list">
+            {mandatoryOnCalendar.map((leave) => (
+              <li key={leave.id}>
+                <span>
+                  <strong>{leave.userName}</strong> · {formatLeaveSpan(leave)}
+                  {leave.reason ? ` · ${leave.reason}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="btn ghost-danger"
+                  disabled={busyId === leave.id}
+                  onClick={() => deleteLeave(leave)}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
+      {(error || err) && <p className="form-error">{error || err}</p>}
       {data && (
         <LeaveCalendar
           leaves={data.leaves}
           showNames
           balancesByUserId={data.balancesByUserId}
+          employees={data.users}
+          canManage
+          busyId={busyId}
+          onCreateLeave={createLeave}
+          onDeleteLeave={deleteLeave}
         />
       )}
     </AppShell>
@@ -745,7 +1586,7 @@ export function HrHistory() {
       </div>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
-      <div className="stack" style={{ gap: 12 }}>
+      <div className="stack tight">
         {(data || []).map((leave) => (
           <section key={leave.id} className="panel">
             <div className="row-between">

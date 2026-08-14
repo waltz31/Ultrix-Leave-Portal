@@ -4,7 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import db from './db.js';
 import routes from './routes.js';
-import { slackStatus } from './slack.js';
+import { slackStatus, handleSlackInteraction } from './slack.js';
 import { purgeExpiredInvoices } from './invoiceCleanup.js';
 
 const app = express();
@@ -33,6 +33,28 @@ app.use(
     },
   })
 );
+
+// Slack interactivity (Approve/Reject buttons) — needs raw body for signature verify
+app.post(
+  '/api/slack/interactions',
+  express.urlencoded({
+    extended: true,
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+  async (req, res, next) => {
+    if (!dbReady) {
+      return res.status(503).send('starting');
+    }
+    try {
+      await handleSlackInteraction(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -76,7 +98,9 @@ app.listen(PORT, () => {
   console.log(`Leave Portal API running on port ${PORT} (IST, ${db.dialect})`);
   console.log(
     slack.configured
-      ? `Slack: ${slack.mode} → ${slack.channel || 'webhook'}`
+      ? `Slack: ${slack.mode} → ${slack.channel || 'webhook'}${
+          slack.interactions ? ' (Approve/Reject on)' : ' (set SLACK_SIGNING_SECRET for buttons)'
+        }`
       : 'Slack: off (missing SLACK_BOT_TOKEN / SLACK_LEAVE_CHANNEL)'
   );
 });

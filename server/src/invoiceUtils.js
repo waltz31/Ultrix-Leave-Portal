@@ -62,6 +62,7 @@ export function validateInvoicePayload(body) {
   const invoiceNumber = String(body.invoiceNumber || '').trim();
   const invoiceDate = String(body.invoiceDate || '').trim();
   const billingPeriod = String(body.billingPeriod || '').trim();
+  const isUpload = String(body.source || '').toLowerCase() === 'upload';
 
   if (!consultant) return { error: 'Consultant name is required' };
   if (!invoiceNumber) return { error: 'Invoice number is required' };
@@ -70,21 +71,35 @@ export function validateInvoicePayload(body) {
     return { error: 'Billing period (month) is required' };
   }
 
-  const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
-  if (lineItems.length === 0) {
-    return { error: 'At least one line item is required' };
+  let normalizedItems;
+  let totalAmount;
+
+  if (isUpload) {
+    const amount = Number(body.totalAmount);
+    totalAmount = Number.isFinite(amount) && amount >= 0 ? amount : 0;
+    normalizedItems = [
+      {
+        description: String(body.description || '').trim() || 'Uploaded invoice',
+        amount: totalAmount,
+      },
+    ];
+  } else {
+    const lineItems = Array.isArray(body.lineItems) ? body.lineItems : [];
+    if (lineItems.length === 0) {
+      return { error: 'At least one line item is required' };
+    }
+
+    normalizedItems = lineItems.map((item) => ({
+      description: String(item.description || '').trim(),
+      amount: Number(item.amount) || 0,
+    }));
+
+    if (normalizedItems.every((item) => !item.description)) {
+      return { error: 'Line item descriptions are required' };
+    }
+
+    totalAmount = normalizedItems.reduce((sum, item) => sum + item.amount, 0);
   }
-
-  const normalizedItems = lineItems.map((item) => ({
-    description: String(item.description || '').trim(),
-    amount: Number(item.amount) || 0,
-  }));
-
-  if (normalizedItems.every((item) => !item.description)) {
-    return { error: 'Line item descriptions are required' };
-  }
-
-  const totalAmount = normalizedItems.reduce((sum, item) => sum + item.amount, 0);
 
   const data = {
     consultant,
@@ -101,6 +116,7 @@ export function validateInvoicePayload(body) {
     swift: String(body.swift || '').trim(),
     bank: String(body.bank || '').trim(),
     branch: String(body.branch || '').trim(),
+    source: isUpload ? 'upload' : 'generated',
     // Keep signatures out of JSON storage — they live in the PDF (and can be huge).
     signatureDataUrl: null,
   };

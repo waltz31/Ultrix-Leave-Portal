@@ -18,6 +18,7 @@ const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -26,7 +27,8 @@ const MANAGER_NAV = [
 const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
-  { to: '/hr/users', label: 'Users', icon: '/assets/nav-team.png' },
+  { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
+  { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
@@ -110,7 +112,7 @@ export function HrInvoices() {
   return (
     <AppShell title={`Invoices · ${user?.name || ''}`} nav={HR_NAV}>
       <InvoiceRetentionNotice className="invoice-retention-notice-hr" />
-      <section className="panel employee-ratings-section">
+      <section className="panel employee-ratings-section employee-invoices-panel">
         <header className="employee-ratings-header">
           <div>
             <h2>Employee invoices</h2>
@@ -120,38 +122,40 @@ export function HrInvoices() {
           </div>
         </header>
 
-        <div className="export-filters employee-ratings-filters employee-ratings-filters-simple">
-          <label>
-            Month
-            <select value={month} onChange={(e) => setMonth(e.target.value)}>
-              {PERIOD_MONTHS.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Year
-            <select value={year} onChange={(e) => setYear(e.target.value)}>
-              {periodYears.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Employee
-            <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-              <option value="">All employees</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                  {e.employeeNumber ? ` · ${e.employeeNumber}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="invoice-filters-toolbar">
+          <div className="export-filters employee-ratings-filters employee-ratings-filters-simple">
+            <label>
+              Month
+              <select value={month} onChange={(e) => setMonth(e.target.value)}>
+                {PERIOD_MONTHS.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Year
+              <select value={year} onChange={(e) => setYear(e.target.value)}>
+                {periodYears.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Employee
+              <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+                <option value="">All employees</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                    {e.employeeNumber ? ` · ${e.employeeNumber}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
-        <p className="muted">
+        <p className="muted employee-invoices-meta">
           Showing {invoices.length} invoice{invoices.length === 1 ? '' : 's'}
           {billingPeriod ? ` for ${formatBillingPeriod(billingPeriod)}` : ''}
         </p>
@@ -175,7 +179,7 @@ export function HrInvoices() {
                   <th>Total (INR)</th>
                   <th>Submitted</th>
                   <th>Deletes on</th>
-                  <th></th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -198,22 +202,25 @@ export function HrInvoices() {
                       {inv.hasPdf ? (
                         <button
                           type="button"
-                          className="btn ghost small"
+                          className="download-icon-btn sm"
                           disabled={busyId === inv.id}
+                          aria-label={`Download PDF ${inv.invoiceNumber}`}
+                          title="Download PDF"
                           onClick={() =>
                             downloadInvoicePdf(inv.id, `${inv.invoiceNumber}.pdf`).catch(
                               (err) => setError(err.message)
                             )
                           }
                         >
-                          Download PDF
+                          <img src="/assets/download-pdf.png" alt="" />
+                          <span className="download-icon-tip">Download PDF</span>
                         </button>
                       ) : (
                         <span className="muted">—</span>
                       )}
                       <button
                         type="button"
-                        className="btn ghost small invoice-delete-btn"
+                        className="btn ghost-danger"
                         disabled={busyId === inv.id}
                         onClick={() => deleteInvoice(inv)}
                       >

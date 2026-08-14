@@ -10,14 +10,14 @@ const STEPS = [
   {
     key: 'manager',
     label: 'Manager',
-    icon: '/assets/icon-manager.png',
+    icon: '/assets/icon-manager-approved.gif',
     doneIcon: '/assets/icon-manager-approved.gif',
     doneLabel: 'Manager approved',
   },
   {
     key: 'hr',
     label: 'HR',
-    icon: '/assets/icon-hr.png',
+    icon: '/assets/icon-hr-approved.gif',
     doneIcon: '/assets/icon-hr-approved.gif',
     doneLabel: 'HR approved',
   },
@@ -115,9 +115,7 @@ export default function ApprovalProgress({ leave, compact = false }) {
                     key={`${leave.id}-${step.key}-${state}-${src}`}
                     src={src}
                     alt=""
-                    className={`step-icon${
-                      step.key === 'hr' && !String(src).endsWith('.gif') ? ' dark-bg' : ''
-                    }${isGif ? ' approved-gif' : ''}`}
+                    className={`step-icon${isGif ? ' approved-gif' : ''}`}
                   />
                 </span>
                 <span className="label">

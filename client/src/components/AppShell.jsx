@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { THEME_PRESETS, useTheme } from '../theme';
-import { formatDateTime } from '../utils';
+import { avatarSrc, formatDateTime } from '../utils';
 import ApprovedCelebration from './ApprovedCelebration';
 import StatusCelebration from './StatusCelebration';
 
@@ -13,6 +13,7 @@ const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
   { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
+  { to: '/app/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/app/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/app/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/app/history', label: 'History', icon: '/assets/nav-history.png' },
@@ -391,16 +392,11 @@ function SettingsMenu() {
           type="button"
           className="bell-btn settings-btn"
           onClick={toggle}
-          aria-label="Settings"
-          title="Settings"
+          aria-label="Account menu"
+          title={user?.name || 'Account'}
           aria-expanded={open}
         >
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.03 7.03 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.64.22l2.39-.96c.5.39 1.04.71 1.63.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.55 1.63-.94l2.39.96c.24.1.5 0 .64-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-            />
-          </svg>
+          <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
           <span className="theme-swatch" style={{ background: bgColor }} />
         </button>
 
@@ -490,7 +486,7 @@ function PageTitle({ title }) {
     const name = title.slice('Welcome '.length).trim();
     return (
       <h1 className="welcome-title">
-        <img src="/assets/welcome-cool.png" alt="" className="welcome-icon" />
+        <img src="/assets/welcome-wave.webp" alt="" className="welcome-icon" />
         <span className="welcome-label">Welcome</span>
         <span className="welcome-name">{name}</span>
       </h1>
@@ -502,12 +498,48 @@ function PageTitle({ title }) {
 export default function AppShell({ title, nav, children }) {
   const { user } = useAuth();
   const { mode, shellStyle } = useTheme();
+  const location = useLocation();
   const [celebrate, setCelebrate] = useState(false);
   const [managerCelebrate, setManagerCelebrate] = useState(false);
   const [creditNotice, setCreditNotice] = useState(null);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
   const roleIsUser = user?.role === 'user';
   const sidebarNav = roleIsUser ? USER_ICONS : nav;
   const hasIcons = sidebarNav.some((item) => item.icon);
+
+  useEffect(() => {
+    if (user?.role !== 'manager' && user?.role !== 'hr') {
+      setPendingApprovals(0);
+      return undefined;
+    }
+    let cancelled = false;
+    async function loadPending() {
+      try {
+        const stats = await api('/dashboard/stats');
+        if (cancelled) return;
+        const count =
+          user.role === 'manager'
+            ? Number(stats.pendingManager || 0)
+            : Number(stats.pendingHr || 0);
+        setPendingApprovals(count);
+      } catch {
+        // ignore
+      }
+    }
+    loadPending();
+    const timer = setInterval(loadPending, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [user?.role, location.pathname]);
+
+  function navBadgeFor(item) {
+    if (!pendingApprovals) return null;
+    if (user?.role === 'manager' && item.to === '/manager/approvals') return pendingApprovals;
+    if (user?.role === 'hr' && item.to === '/hr/approvals') return pendingApprovals;
+    return null;
+  }
 
   return (
     <div className="shell" data-theme={mode} style={shellStyle}>
@@ -537,18 +569,35 @@ export default function AppShell({ title, nav, children }) {
           <img className="brand-logo" src="/assets/yupnup.svg" alt="YupNup" />
         </div>
         <nav className={hasIcons ? 'sidebar-icon-nav' : undefined}>
-          {sidebarNav.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} title={item.label}>
-              {item.icon ? (
-                <>
-                  <img src={item.icon} alt="" className="nav-icon" />
-                  <span>{item.label}</span>
-                </>
-              ) : (
-                item.label
-              )}
-            </NavLink>
-          ))}
+          {sidebarNav.map((item) => {
+            const badge = navBadgeFor(item);
+            return (
+              <NavLink key={item.to} to={item.to} end={item.end} title={item.label}>
+                {item.icon ? (
+                  <>
+                    <img src={item.icon} alt="" className="nav-icon" />
+                    <span className="nav-label-with-badge">
+                      {item.label}
+                      {badge != null && (
+                        <span className="nav-count-badge" aria-label={`${badge} pending`}>
+                          {badge > 99 ? '99+' : badge}
+                        </span>
+                      )}
+                    </span>
+                  </>
+                ) : (
+                  <span className="nav-label-with-badge">
+                    {item.label}
+                    {badge != null && (
+                      <span className="nav-count-badge" aria-label={`${badge} pending`}>
+                        {badge > 99 ? '99+' : badge}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </NavLink>
+            );
+          })}
         </nav>
       </aside>
       <main className="main">

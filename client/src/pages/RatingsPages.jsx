@@ -43,6 +43,7 @@ const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
 ];
@@ -50,7 +51,8 @@ const MANAGER_NAV = [
 const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
-  { to: '/hr/users', label: 'Users', icon: '/assets/nav-team.png' },
+  { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
+  { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
@@ -61,6 +63,7 @@ const USER_NAV = [
   { to: '/app', label: 'Home', end: true },
   { to: '/app/apply', label: 'Apply' },
   { to: '/app/calendar', label: 'My calendar' },
+  { to: '/app/salary', label: 'Salary' },
   { to: '/app/ratings', label: 'My ratings' },
   { to: '/app/history', label: 'History' },
 ];
@@ -660,19 +663,25 @@ export function HrRatings() {
         <div className="export-actions">
           <button
             type="button"
-            className="btn secondary"
+            className={`download-icon-btn ${busy ? 'is-busy' : ''}`}
             disabled={busy || loading}
             onClick={() => handleDownload('csv')}
+            aria-label="Download CSV"
+            title="Download CSV"
           >
-            Download CSV
+            <img src="/assets/document.png" alt="" />
+            <span className="download-icon-tip">Download CSV</span>
           </button>
           <button
             type="button"
-            className="btn secondary"
+            className={`download-icon-btn ${busy ? 'is-busy' : ''}`}
             disabled={busy || loading}
             onClick={() => handleDownload('pdf')}
+            aria-label="Download PDF"
+            title="Download PDF"
           >
-            Download PDF
+            <img src="/assets/download-pdf.png" alt="" />
+            <span className="download-icon-tip">Download PDF</span>
           </button>
         </div>
         {exportError && <p className="form-error">{exportError}</p>}

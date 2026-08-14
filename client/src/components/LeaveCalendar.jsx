@@ -26,7 +26,7 @@ import {
 } from '../utils';
 
 function BalanceTooltip({ leave, balances }) {
-  const bal = balances || { casual: 0, earned: 0, sick: 0 };
+  const bal = balances || { casual: 0, earned: 0, sick: 0, compensation: 0 };
 
   return (
     <div className="cal-tooltip" role="tooltip">
@@ -69,19 +69,66 @@ function primaryLeaveType(items) {
   return types.length === 1 ? types[0] : items[0].leaveType;
 }
 
+function shortTypeLabel(type) {
+  if (type === 'wfh') return 'WFH';
+  if (type === 'casual') return 'CL';
+  if (type === 'earned') return 'EL';
+  if (type === 'sick') return 'SL';
+  if (type === 'compensation') return 'Comp';
+  if (type === 'mandatory') return 'ML';
+  return REQUEST_LABELS[type] || type;
+}
+
 export default function LeaveCalendar({
   leaves,
   showNames = false,
   balancesByUserId = null,
   onCancel = null,
   busyId = null,
+  employees = null,
+  canManage = false,
+  onCreateLeave = null,
+  onDeleteLeave = null,
 }) {
   const [cursor, setCursor] = useState(() => startOfMonth(appToday()));
   const [selected, setSelected] = useState(null); // { id, day }
+  const [employeeFilter, setEmployeeFilter] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    userId: '',
+    leaveType: 'casual',
+    startDate: '',
+    endDate: '',
+    session: 'full',
+    reason: '',
+  });
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createErr, setCreateErr] = useState('');
   const popoverRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
+  const canDelete = canManage && typeof onDeleteLeave === 'function';
+  const canCreate = canManage && typeof onCreateLeave === 'function';
   const today = appToday();
+
+  const employeeOptions = useMemo(() => {
+    if (employees?.length) return employees;
+    const map = new Map();
+    for (const leave of leaves || []) {
+      if (leave.userId && !map.has(leave.userId)) {
+        map.set(leave.userId, { id: leave.userId, name: leave.userName || `User ${leave.userId}` });
+      }
+    }
+    return [...map.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }, [employees, leaves]);
+
+  const filteredLeaves = useMemo(() => {
+    const all = leaves || [];
+    if (!employeeFilter) return all;
+    return all.filter(
+      (l) => l.isMandatory || String(l.userId) === String(employeeFilter)
+    );
+  }, [leaves, employeeFilter]);
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -90,8 +137,8 @@ export default function LeaveCalendar({
   }, [cursor]);
 
   const selectedLeave = useMemo(
-    () => (selected ? leaves.find((l) => l.id === selected.id) || null : null),
-    [leaves, selected]
+    () => (selected ? filteredLeaves.find((l) => l.id === selected.id) || null : null),
+    [filteredLeaves, selected]
   );
 
   const multiDay =
@@ -120,7 +167,7 @@ export default function LeaveCalendar({
   }, [selected]);
 
   function leavesOn(day) {
-    return leaves.filter((leave) => {
+    return filteredLeaves.filter((leave) => {
       const start = parseISO(leave.startDate);
       const end = parseISO(leave.endDate);
       return isWithinInterval(day, { start, end });
@@ -130,6 +177,49 @@ export default function LeaveCalendar({
   async function handleCancel(leave, opts = {}) {
     const done = await onCancel(leave, opts);
     if (done !== false) setSelected(null);
+  }
+
+  async function handleDelete(leave) {
+    const ok = window.confirm(
+      leave.isMandatory
+        ? `Remove mandatory leave “${leave.userName}” (${formatLeaveSpan(leave)}) from all calendars?`
+        : `Delete ${REQUEST_LABELS[leave.leaveType] || leave.leaveType} for ${leave.userName}? This cannot be undone.`
+    );
+    if (!ok) return;
+    const done = await onDeleteLeave(leave);
+    if (done !== false) setSelected(null);
+  }
+
+  function openCreate(dayKey = '') {
+    setCreateErr('');
+    setCreateForm({
+      userId: employeeFilter || (employeeOptions[0] ? String(employeeOptions[0].id) : ''),
+      leaveType: 'casual',
+      startDate: dayKey,
+      endDate: dayKey,
+      session: 'full',
+      reason: '',
+    });
+    setShowCreate(true);
+  }
+
+  async function submitCreate(e) {
+    e.preventDefault();
+    setCreateBusy(true);
+    setCreateErr('');
+    try {
+      const body = {
+        ...createForm,
+        userId: Number(createForm.userId),
+        endDate: createForm.session !== 'full' ? createForm.startDate : createForm.endDate,
+      };
+      await onCreateLeave(body);
+      setShowCreate(false);
+    } catch (err) {
+      setCreateErr(err.message || 'Could not create leave');
+    } finally {
+      setCreateBusy(false);
+    }
   }
 
   return (
@@ -154,33 +244,62 @@ export default function LeaveCalendar({
             ›
           </button>
         </div>
-        <button
-          type="button"
-          className="btn secondary calendar-today-btn"
-          onClick={() => setCursor(startOfMonth(today))}
-        >
-          Today
-        </button>
+        <div className="calendar-toolbar-actions">
+          {(showNames || canManage) && (
+            <label className="calendar-employee-filter">
+              <span className="sr-only">Employee</span>
+              <select
+                value={employeeFilter}
+                onChange={(e) => setEmployeeFilter(e.target.value)}
+                aria-label="Filter by employee"
+              >
+                <option value="">All employees</option>
+                {employeeOptions.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {canCreate && (
+            <button
+              type="button"
+              className="btn primary calendar-add-btn"
+              onClick={() => openCreate()}
+              aria-label="Add leave"
+              title="Add leave for an employee"
+            >
+              +
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn secondary calendar-today-btn"
+            onClick={() => setCursor(startOfMonth(today))}
+          >
+            Today
+          </button>
+        </div>
       </div>
 
       <div className="calendar-legend" aria-hidden="true">
-        <span className="legend-item">
-          <i className="legend-dot type-casual" /> Casual
-        </span>
-        <span className="legend-item">
-          <i className="legend-dot type-earned" /> Earned
-        </span>
-        <span className="legend-item">
-          <i className="legend-dot type-sick" /> Sick
-        </span>
-        <span className="legend-item">
-          <i className="legend-dot type-wfh" /> WFH
-        </span>
+        {Object.entries(REQUEST_LABELS).map(([key, label]) => (
+          <span key={key} className="legend-item">
+            <i className={`legend-swatch type-${key}`} /> {label}
+          </span>
+        ))}
       </div>
 
       {canCancelLeaves && (
         <p className="calendar-hint muted">
           Tap a leave day to cancel that day only, or cancel the full request.
+        </p>
+      )}
+      {canManage && (
+        <p className="calendar-hint muted">
+          Use the employee dropdown to focus one person. Tap + to add leave, or open a chip to delete.
+          Mandatory leaves stay visible for every employee filter.
         </p>
       )}
 
@@ -218,43 +337,58 @@ export default function LeaveCalendar({
                 <span className={`day-num${isToday ? ' is-today' : ''}`}>
                   {format(day, 'd')}
                 </span>
-                {items.length > 0 && (
-                  <span className="day-count">{items.length}</span>
-                )}
+                <div className="day-head-actions">
+                  {items.length > 0 && <span className="day-count">{items.length}</span>}
+                  {canCreate && !outside && (
+                    <button
+                      type="button"
+                      className="calendar-day-add"
+                      aria-label={`Add leave on ${dayKey}`}
+                      title="Add leave on this day"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openCreate(dayKey);
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="leave-chips">
                 {items.slice(0, 3).map((leave) => {
-                  const cancellable = canCancelLeaves && canUserCancel(leave.status);
-                  const ChipTag = cancellable ? 'button' : 'span';
+                  const cancellable =
+                    canCancelLeaves && !leave.isMandatory && canUserCancel(leave.status);
+                  const interactive = cancellable || canDelete || (showBalances && !leave.isMandatory);
+                  const ChipTag = interactive ? 'button' : 'span';
                   const isSelected =
                     selected?.id === leave.id && selected?.day === dayKey;
                   return (
                     <ChipTag
                       key={`${leave.id}-${dayKey}`}
-                      type={cancellable ? 'button' : undefined}
+                      type={interactive ? 'button' : undefined}
                       className={[
                         'chip',
+                        'leave-chip',
                         `type-${leave.leaveType}`,
-                        showBalances ? 'has-tip' : '',
-                        cancellable ? 'chip-cancellable' : '',
+                        showBalances && !leave.isMandatory ? 'has-tip' : '',
+                        cancellable || canDelete ? 'chip-cancellable' : '',
                         leave.status && leave.status !== 'approved' ? 'chip-pending' : '',
                         isSelected ? 'is-selected' : '',
                       ]
                         .filter(Boolean)
                         .join(' ')}
                       title={
-                        showBalances
+                        showBalances && !leave.isMandatory
                           ? undefined
-                          : `${showNames ? leave.userName + ' · ' : ''}${REQUEST_LABELS[leave.leaveType]}${
+                          : `${showNames || leave.isMandatory ? leave.userName + ' · ' : ''}${REQUEST_LABELS[leave.leaveType]}${
                               leave.session && leave.session !== 'full'
                                 ? ` · ${SESSION_LABELS[leave.session]}`
                                 : ''
-                            }${leave.status && leave.status !== 'approved' ? ` · ${STATUS_LABELS[leave.status] || leave.status}` : ''}${
-                              cancellable ? ' · Click to cancel' : ''
-                            }`
+                            }${leave.status && leave.status !== 'approved' ? ` · ${STATUS_LABELS[leave.status] || leave.status}` : ''}`
                       }
                       onClick={
-                        cancellable
+                        cancellable || canDelete
                           ? (e) => {
                               e.stopPropagation();
                               setSelected((cur) =>
@@ -266,9 +400,16 @@ export default function LeaveCalendar({
                           : undefined
                       }
                     >
-                      {showNames ? leave.userName.split(' ')[0] : REQUEST_LABELS[leave.leaveType]}
-                      {sessionSuffix(leave.session)}
-                      {showBalances && (
+                      <span className="leave-chip-main">
+                        {showNames || leave.isMandatory
+                          ? String(leave.userName || 'Mandatory').split(' ')[0]
+                          : shortTypeLabel(leave.leaveType)}
+                        {sessionSuffix(leave.session)}
+                      </span>
+                      {(showNames || leave.isMandatory) && (
+                        <span className="leave-chip-sub">{shortTypeLabel(leave.leaveType)}</span>
+                      )}
+                      {showBalances && !leave.isMandatory && (
                         <BalanceTooltip
                           leave={leave}
                           balances={balancesByUserId[leave.userId]}
@@ -286,15 +427,17 @@ export default function LeaveCalendar({
         })}
       </div>
 
-      {selectedLeave && selected && canCancelLeaves && (
+      {selectedLeave && selected && (canCancelLeaves || canDelete) && (
         <div className="cal-leave-popover" ref={popoverRef} role="dialog" aria-label="Leave details">
           <div className="cal-leave-popover-head">
             <span className={`badge type-${selectedLeave.leaveType}`}>
               {REQUEST_LABELS[selectedLeave.leaveType]}
             </span>
-            <span className={`status-pill status-${selectedLeave.status}`}>
-              {STATUS_LABELS[selectedLeave.status] || selectedLeave.status}
-            </span>
+            {!selectedLeave.isMandatory && (
+              <span className={`status-pill status-${selectedLeave.status}`}>
+                {STATUS_LABELS[selectedLeave.status] || selectedLeave.status}
+              </span>
+            )}
             <button
               type="button"
               className="btn ghost cal-leave-close"
@@ -304,6 +447,9 @@ export default function LeaveCalendar({
               ×
             </button>
           </div>
+          {(showNames || selectedLeave.isMandatory) && (
+            <p className="cal-leave-person"><strong>{selectedLeave.userName}</strong></p>
+          )}
           <p className="cal-leave-span">{formatLeaveSpan(selectedLeave)}</p>
           <p className="cal-leave-day">
             Selected day: <strong>{formatDate(selected.day)}</strong>
@@ -311,9 +457,9 @@ export default function LeaveCalendar({
           {selectedLeave.reason && (
             <p className="cal-leave-reason muted">{selectedLeave.reason}</p>
           )}
-          {canUserCancel(selectedLeave.status) && (
-            <div className="cal-leave-actions">
-              {multiDay ? (
+          <div className="cal-leave-actions">
+            {canCancelLeaves && !selectedLeave.isMandatory && canUserCancel(selectedLeave.status) && (
+              multiDay ? (
                 <>
                   <button
                     type="button"
@@ -341,9 +487,127 @@ export default function LeaveCalendar({
                 >
                   {busyId === selectedLeave.id ? 'Cancelling…' : 'Cancel leave'}
                 </button>
-              )}
+              )
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                className="btn ghost-danger"
+                disabled={busyId === selectedLeave.id}
+                onClick={() => handleDelete(selectedLeave)}
+              >
+                {busyId === selectedLeave.id
+                  ? 'Deleting…'
+                  : selectedLeave.isMandatory
+                    ? 'Remove mandatory leave'
+                    : 'Delete leave'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showCreate && (
+        <div className="modal-backdrop modal-backdrop-static">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="cal-create-title">
+            <div className="row-between">
+              <h2 id="cal-create-title">Add leave</h2>
+              <button type="button" className="btn ghost" onClick={() => setShowCreate(false)}>
+                Close
+              </button>
             </div>
-          )}
+            <form className="stack-form" onSubmit={submitCreate}>
+              <label>
+                Employee
+                <select
+                  value={createForm.userId}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, userId: e.target.value }))}
+                  required
+                >
+                  <option value="">Select…</option>
+                  {employeeOptions.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Leave type
+                <select
+                  value={createForm.leaveType}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, leaveType: e.target.value }))}
+                >
+                  {Object.entries(REQUEST_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Session
+                <select
+                  value={createForm.session}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      session: e.target.value,
+                      endDate: e.target.value !== 'full' ? f.startDate : f.endDate,
+                    }))
+                  }
+                >
+                  {Object.entries(SESSION_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {createForm.session !== 'full' ? 'Date' : 'Start date'}
+                <input
+                  type="date"
+                  value={createForm.startDate}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      startDate: e.target.value,
+                      endDate: f.session !== 'full' ? e.target.value : f.endDate || e.target.value,
+                    }))
+                  }
+                  required
+                />
+              </label>
+              {createForm.session === 'full' && (
+                <label>
+                  End date
+                  <input
+                    type="date"
+                    value={createForm.endDate}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, endDate: e.target.value }))}
+                    required
+                  />
+                </label>
+              )}
+              <label>
+                Reason (optional)
+                <input
+                  value={createForm.reason}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, reason: e.target.value }))}
+                />
+              </label>
+              {createErr && <p className="form-error">{createErr}</p>}
+              <div className="modal-actions">
+                <button type="button" className="btn ghost" onClick={() => setShowCreate(false)}>
+                  Cancel
+                </button>
+                <button className="btn primary" type="submit" disabled={createBusy}>
+                  {createBusy ? 'Saving…' : 'Add leave'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

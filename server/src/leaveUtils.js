@@ -98,11 +98,60 @@ export function sessionsOverlap(a, b) {
   return true;
 }
 
-export const LEAVE_TYPES = ['casual', 'earned', 'sick'];
+export const LEAVE_TYPES = ['casual', 'earned', 'sick', 'compensation'];
 export const REQUEST_TYPES = [...LEAVE_TYPES, 'wfh'];
 
 export function isBalanceType(type) {
   return LEAVE_TYPES.includes(type);
+}
+
+export function leaveTypeLabel(type) {
+  const labels = {
+    casual: 'Casual Leave',
+    earned: 'Earned Leave',
+    sick: 'Sick Leave',
+    compensation: 'Compensation Leave',
+    wfh: 'Work from Home',
+    mandatory: 'Mandatory Leave',
+  };
+  return labels[type] || type;
+}
+
+export function mapMandatoryLeave(row) {
+  if (!row) return null;
+  let days = 0;
+  try {
+    days = countWeekdays(row.start_date, row.end_date);
+  } catch {
+    days = 0;
+  }
+  return {
+    id: `mandatory-${row.id}`,
+    mandatoryId: row.id,
+    isMandatory: true,
+    userId: null,
+    userName: row.title,
+    userEmail: null,
+    employeeNumber: null,
+    leaveType: 'mandatory',
+    startDate: row.start_date,
+    endDate: row.end_date,
+    days,
+    session: 'full',
+    reason: row.note || null,
+    status: 'approved',
+    managerNote: null,
+    managerId: null,
+    managerName: null,
+    managerReviewedAt: null,
+    hrNote: null,
+    hrId: row.created_by ?? null,
+    hrName: row.created_by_name || null,
+    hrReviewedAt: null,
+    adminNote: row.note || null,
+    createdAt: row.created_at,
+    updatedAt: row.created_at,
+  };
 }
 
 export function publicUser(row) {
@@ -117,6 +166,7 @@ export function publicUser(row) {
     employeeNumber: row.employee_number ?? null,
     active: Boolean(row.active),
     createdAt: row.created_at,
+    profilePhoto: row.profile_photo || null,
   };
 }
 
@@ -152,12 +202,13 @@ export function mapLeave(row) {
 
 export function mapBalance(row) {
   if (!row) {
-    return { casual: 0, earned: 0, sick: 0 };
+    return { casual: 0, earned: 0, sick: 0, compensation: 0 };
   }
   return {
-    casual: row.casual,
-    earned: row.earned,
-    sick: row.sick,
+    casual: row.casual ?? 0,
+    earned: row.earned ?? 0,
+    sick: row.sick ?? 0,
+    compensation: row.compensation ?? 0,
     updatedAt: row.updated_at,
   };
 }

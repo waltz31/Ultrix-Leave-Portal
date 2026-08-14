@@ -18,11 +18,13 @@ import {
   isWfh,
   canUserCancel,
 } from '../utils';
+import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/app', label: 'Home', end: true },
   { to: '/app/apply', label: 'Apply' },
   { to: '/app/calendar', label: 'My calendar' },
+  { to: '/app/salary', label: 'Salary' },
   { to: '/app/ratings', label: 'My ratings' },
   { to: '/app/history', label: 'History' },
 ];
@@ -110,19 +112,13 @@ export function UserHome() {
       {error && <p className="form-error">{error}</p>}
       {cancelErr && <p className="form-error">{cancelErr}</p>}
       {balances && (
-        <div className="stat-row">
-          <div className="stat">
-            <span>Casual</span>
-            <strong>{balances.casual}</strong>
-          </div>
-          <div className="stat">
-            <span>Earned</span>
-            <strong>{balances.earned}</strong>
-          </div>
-          <div className="stat">
-            <span>Sick</span>
-            <strong>{balances.sick}</strong>
-          </div>
+        <div className="stat-row four">
+          {Object.entries(LEAVE_LABELS).map(([key, label]) => (
+            <div key={key} className="stat">
+              <span>{label}</span>
+              <strong>{balances[key] ?? 0}</strong>
+            </div>
+          ))}
         </div>
       )}
 
@@ -134,7 +130,7 @@ export function UserHome() {
         <section className="panel">
           <h2>Active requests</h2>
           {!active.length && <p className="empty">No active requests.</p>}
-          <div className="stack" style={{ gap: 12 }}>
+          <div className="stack tight">
             {active.slice(0, 4).map((leave) => (
               <div key={leave.id} className="request-card">
                 <div className="row-between">
@@ -202,13 +198,13 @@ export function UserApply() {
       };
       await api('/leaves', { method: 'POST', body });
       setSubmittedPopup({
-        message: wfh ? 'WFH submitted' : 'Leave submitted',
+        message: wfh ? 'Work from Home submitted' : 'Leave submitted',
         detail: 'Your request is waiting for manager approval, then HR.',
       });
       setMsg(
         wfh
-          ? 'WFH submitted — waiting for manager, then HR.'
-          : 'Leave submitted — waiting for manager, then HR.'
+          ? 'Work from Home submitted — waiting for manager, then HR.'
+          : `${REQUEST_LABELS[form.leaveType] || 'Leave'} submitted — waiting for manager, then HR.`
       );
       setForm({
         leaveType: form.leaveType,
@@ -237,139 +233,123 @@ export function UserApply() {
       />
       <div className="apply-layout">
         <div className="apply-main">
-          <div className="seg-tabs" role="tablist" aria-label="Request type">
-            <button
-              type="button"
-              role="tab"
-              className={!wfh ? 'active' : ''}
-              aria-selected={!wfh}
-              onClick={() => setForm((f) => ({ ...f, leaveType: 'casual' }))}
-            >
-              Leave
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className={wfh ? 'active' : ''}
-              aria-selected={wfh}
-              onClick={() => setForm((f) => ({ ...f, leaveType: 'wfh' }))}
-            >
-              WFH
-            </button>
-          </div>
-
           <section className="panel apply-form-panel">
-            <h2>{wfh ? 'Work from home' : 'Leave request'}</h2>
-            <p className="muted slim">
-              {wfh
-                ? 'WFH does not use leave balance. Choose full day or a half-day session.'
-                : 'Select leave type, full day or morning/afternoon session. Needs Manager, then HR.'}
-            </p>
-            <form className="stack-form" onSubmit={onSubmit}>
-              {!wfh && (
+            <h2>Apply</h2>
+            <p className="muted slim">Pick a type, dates, and submit. Manager then HR approve.</p>
+            <form className="stack-form apply-form" onSubmit={onSubmit}>
+              <div className="apply-field">
+                <span className="apply-label" id="apply-type-label">
+                  Type
+                </span>
+                <div
+                  className="apply-type-pills"
+                  role="radiogroup"
+                  aria-labelledby="apply-type-label"
+                >
+                  {Object.entries(REQUEST_LABELS).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="radio"
+                      aria-checked={form.leaveType === key}
+                      className={`apply-type-pill type-${key}${form.leaveType === key ? ' is-selected' : ''}`}
+                      onClick={() => setForm((f) => ({ ...f, leaveType: key }))}
+                    >
+                      <span className={`apply-type-swatch type-${key}`} aria-hidden />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="apply-dates">
                 <label>
-                  Leave type
+                  Session
                   <select
-                    value={form.leaveType}
-                    onChange={(e) => setForm((f) => ({ ...f, leaveType: e.target.value }))}
+                    value={form.session}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        session: e.target.value,
+                        endDate:
+                          e.target.value !== 'full' ? f.startDate || f.endDate : f.endDate,
+                      }))
+                    }
                   >
-                    {Object.entries(LEAVE_LABELS).map(([k, v]) => (
+                    {Object.entries(SESSION_LABELS).map(([k, v]) => (
                       <option key={k} value={k}>
                         {v}
                       </option>
                     ))}
                   </select>
                 </label>
-              )}
-              <label>
-                Session
-                <select
-                  value={form.session}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      session: e.target.value,
-                      endDate:
-                        e.target.value !== 'full' ? f.startDate || f.endDate : f.endDate,
-                    }))
-                  }
-                >
-                  {Object.entries(SESSION_LABELS).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                {halfDay ? 'Date' : 'Start date'}
-                <input
-                  type="date"
-                  value={form.startDate}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      startDate: e.target.value,
-                      endDate: halfDay ? e.target.value : f.endDate,
-                    }))
-                  }
-                  required
-                />
-              </label>
-              {!halfDay && (
                 <label>
-                  End date
+                  {halfDay ? 'Date' : 'Start date'}
                   <input
                     type="date"
-                    value={form.endDate}
-                    onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))}
+                    value={form.startDate}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        startDate: e.target.value,
+                        endDate: halfDay ? e.target.value : f.endDate || e.target.value,
+                      }))
+                    }
                     required
                   />
                 </label>
-              )}
-              {halfDay && (
-                <p className="muted slim">Half-day session counts as 0.5 day.</p>
-              )}
+                {!halfDay && (
+                  <label>
+                    End date
+                    <input
+                      type="date"
+                      value={form.endDate}
+                      min={form.startDate || undefined}
+                      onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))}
+                      required
+                    />
+                  </label>
+                )}
+              </div>
+              {halfDay && <p className="muted slim apply-hint">Half day counts as 0.5.</p>}
+
               <label>
-                Reason
+                Notes
                 <textarea
                   rows={3}
                   value={form.reason}
                   onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
-                  placeholder="Optional"
+                  placeholder="Optional — reason for this request"
                 />
               </label>
+
               {msg && <p className="form-ok">{msg}</p>}
               {err && <p className="form-error">{err}</p>}
-              <button className="btn primary" type="submit" disabled={busy}>
-                {busy ? 'Submitting…' : wfh ? 'Submit WFH' : 'Submit leave'}
+              <button className="btn primary apply-submit" type="submit" disabled={busy}>
+                {busy
+                  ? 'Submitting…'
+                  : `Submit ${REQUEST_LABELS[form.leaveType] || 'request'}`}
               </button>
             </form>
           </section>
         </div>
 
         <aside className="panel balance-side">
-          <h2>Leave balances</h2>
+          <h2>Balances</h2>
           {balances ? (
             <ul className="balance-list">
-              <li>
-                <span>Casual</span>
-                <strong>{balances.casual}</strong>
-              </li>
-              <li>
-                <span>Earned</span>
-                <strong>{balances.earned}</strong>
-              </li>
-              <li>
-                <span>Sick</span>
-                <strong>{balances.sick}</strong>
-              </li>
+              {Object.entries(LEAVE_LABELS).map(([key, label]) => (
+                <li key={key}>
+                  <span>{label}</span>
+                  <strong>{balances[key] ?? 0}</strong>
+                </li>
+              ))}
             </ul>
           ) : (
-            <p className="muted">Loading balances…</p>
+            <p className="muted">Loading…</p>
           )}
           {wfh && (
-            <p className="balance-note">WFH requests do not deduct from these balances.</p>
+            <p className="balance-note">Work from Home does not use leave balance.</p>
           )}
         </aside>
       </div>
@@ -408,8 +388,8 @@ export function UserCalendar() {
   return (
     <AppShell title="My calendar" nav={NAV}>
       <p className="lede">
-        Your active leave appears here, colored by leave type. Tap a day to cancel just that
-        day, or cancel the full multi-day request.
+        Your active leave appears here, colored by leave type. Company mandatory leaves also show
+        here. Tap a day to cancel just that day, or cancel the full multi-day request.
       </p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
@@ -461,14 +441,14 @@ export function UserHistory() {
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {cancelErr && <p className="form-error">{cancelErr}</p>}
-      <div className="stack" style={{ gap: 12 }}>
+      <div className="stack tight">
         {(data || []).map((leave) => (
           <section key={leave.id} className="panel">
             <div className="row-between">
               <div>
                 {REQUEST_LABELS[leave.leaveType]} · {formatLeaveSpan(leave)}
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="row-actions">
                 <span className={`badge status-${leave.status}`}>
                   {STATUS_LABELS[leave.status]}
                 </span>
@@ -488,6 +468,31 @@ export function UserHistory() {
           </section>
         ))}
       </div>
+    </AppShell>
+  );
+}
+
+export function UserSalary() {
+  const { data, error, loading } = useLoad(() =>
+    api('/profiles/me').then((d) => d.profile)
+  );
+
+  return (
+    <AppShell title="My salary" nav={NAV}>
+      <p className="lede">Your salary components (view only). Contact HR for changes.</p>
+      {loading && <p className="muted">Loading…</p>}
+      {error && <p className="form-error">{error}</p>}
+      {!loading && !data && !error && (
+        <p className="empty">No salary profile on file yet. Ask HR to add your details in Onboarding.</p>
+      )}
+      {data && (
+        <SalaryComponentsView
+          payroll={data.payroll}
+          employmentType={data.employment?.employmentType}
+          showSensitive
+          title={`${data.name} · salary components`}
+        />
+      )}
     </AppShell>
   );
 }

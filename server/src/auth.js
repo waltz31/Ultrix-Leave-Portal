@@ -32,7 +32,7 @@ export async function authRequired(req, res, next) {
         `SELECT id, name, email, role, manager_id, active FROM users WHERE id = ?`
       )
       .get(payload.id);
-    if (!user || !user.active) {
+    if (!user || !(user.active === true || user.active === 1 || user.active === '1')) {
       return res.status(401).json({ error: 'Invalid or inactive account' });
     }
     req.user = user;

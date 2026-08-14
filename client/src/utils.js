@@ -1,12 +1,14 @@
 export const LEAVE_LABELS = {
-  casual: 'Casual',
-  earned: 'Earned',
-  sick: 'Sick',
+  casual: 'Casual Leave',
+  earned: 'Earned Leave',
+  sick: 'Sick Leave',
+  compensation: 'Compensation Leave',
 };
 
 export const REQUEST_LABELS = {
   ...LEAVE_LABELS,
-  wfh: 'WFH',
+  wfh: 'Work from Home',
+  mandatory: 'Mandatory Leave',
 };
 
 export const SESSION_LABELS = {
@@ -135,5 +137,11 @@ export function appYear() {
       year: 'numeric',
     }).format(new Date())
   );
+}
+
+export const DEFAULT_AVATAR_SRC = '/assets/default-avatar.png';
+
+export function avatarSrc(photo) {
+  return photo || DEFAULT_AVATAR_SRC;
 }
 

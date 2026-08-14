@@ -9,11 +9,13 @@ import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection, UpcomingLeaveList } from '../components/LeaveReports';
 import { REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
+import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -153,7 +155,7 @@ export function ManagerApprovals() {
       {!loading && data?.length === 0 && (
         <p className="empty">No team requests awaiting your approval.</p>
       )}
-      <div className="stack" style={{ gap: 14 }}>
+      <div className="stack tight">
         {(data || []).map((leave) => (
           <section key={leave.id} className="panel">
             <div className="row-between">
@@ -293,8 +295,12 @@ export function ManagerCalendar() {
         api('/users').then((d) => d.users),
       ]).then(([leaves, users]) => ({
         leaves,
+        users,
         balancesByUserId: Object.fromEntries(
-          users.map((u) => [u.id, u.balances || { casual: 0, earned: 0, sick: 0 }])
+          users.map((u) => [
+            u.id,
+            u.balances || { casual: 0, earned: 0, sick: 0, compensation: 0 },
+          ])
         ),
       })),
     [from, to]
@@ -302,7 +308,7 @@ export function ManagerCalendar() {
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
-      <p className="lede">Approved leave/WFH for your team. Hover for balances.</p>
+      <p className="lede">Approved leave for your team. Use the employee dropdown to focus one person.</p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {data && (
@@ -310,6 +316,7 @@ export function ManagerCalendar() {
           leaves={data.leaves}
           showNames
           balancesByUserId={data.balancesByUserId}
+          employees={data.users}
         />
       )}
     </AppShell>
@@ -340,7 +347,7 @@ export function ManagerHistory() {
       </div>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
-      <div className="stack" style={{ gap: 12 }}>
+      <div className="stack tight">
         {(data || []).map((leave) => (
           <section key={leave.id} className="panel">
             <div className="row-between">
@@ -356,6 +363,31 @@ export function ManagerHistory() {
           </section>
         ))}
       </div>
+    </AppShell>
+  );
+}
+
+export function ManagerSalary() {
+  const { data, error, loading } = useLoad(() =>
+    api('/profiles/me').then((d) => d.profile)
+  );
+
+  return (
+    <AppShell title="My salary" nav={NAV}>
+      <p className="lede">Your salary components (view only). Contact HR for changes.</p>
+      {loading && <p className="muted">Loading…</p>}
+      {error && <p className="form-error">{error}</p>}
+      {!loading && !data && !error && (
+        <p className="empty">No salary profile on file yet. Ask HR to add your details in Onboarding.</p>
+      )}
+      {data && (
+        <SalaryComponentsView
+          payroll={data.payroll}
+          employmentType={data.employment?.employmentType}
+          showSensitive
+          title={`${data.name} · salary components`}
+        />
+      )}
     </AppShell>
   );
 }

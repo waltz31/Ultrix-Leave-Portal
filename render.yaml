@@ -30,3 +30,5 @@ services:
         sync: false
       - key: SLACK_LEAVE_CHANNEL
         sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false

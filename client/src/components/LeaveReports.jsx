@@ -24,6 +24,7 @@ const TYPE_COLORS = {
   casual: '#7ec8ff',
   earned: '#64c5c1',
   sick: '#e0b3ff',
+  compensation: '#ff9b7a',
   wfh: '#ffd27a',
 };
 
@@ -338,10 +339,11 @@ export function LeaveExportPanel() {
           Type of leave
           <select value={leaveType} onChange={(e) => setLeaveType(e.target.value)}>
             <option value="all">All types</option>
-            <option value="casual">Casual</option>
-            <option value="earned">Earned</option>
-            <option value="sick">Sick</option>
-            <option value="wfh">WFH</option>
+            <option value="casual">Casual Leave</option>
+            <option value="earned">Earned Leave</option>
+            <option value="sick">Sick Leave</option>
+            <option value="compensation">Compensation Leave</option>
+            <option value="wfh">Work from Home</option>
           </select>
         </label>
       </div>
@@ -349,19 +351,25 @@ export function LeaveExportPanel() {
       <div className="export-actions">
         <button
           type="button"
-          className="btn secondary"
+          className={`download-icon-btn ${busy ? 'is-busy' : ''}`}
           disabled={busy}
           onClick={() => handleDownload('csv')}
+          aria-label={busy ? 'Preparing CSV' : 'Download CSV'}
+          title="Download CSV"
         >
-          {busy ? 'Preparing…' : 'Download CSV'}
+          <img src="/assets/document.png" alt="" />
+          <span className="download-icon-tip">{busy ? 'Preparing…' : 'Download CSV'}</span>
         </button>
         <button
           type="button"
-          className="btn primary"
+          className={`download-icon-btn ${busy ? 'is-busy' : ''}`}
           disabled={busy}
           onClick={() => handleDownload('pdf')}
+          aria-label={busy ? 'Preparing PDF' : 'Download PDF'}
+          title="Download PDF"
         >
-          {busy ? 'Preparing…' : 'Download PDF'}
+          <img src="/assets/download-pdf.png" alt="" />
+          <span className="download-icon-tip">{busy ? 'Preparing…' : 'Download PDF'}</span>
         </button>
         {count !== null && (
           <span className="muted export-count">

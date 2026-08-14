@@ -6,6 +6,7 @@ export default function StatusCelebration({
   message = 'Done!',
   imageSrc = '/assets/leave-approved.gif',
   detail = '',
+  credentials = null,
   durationMs = 3000,
 }) {
   useEffect(() => {
@@ -27,6 +28,27 @@ export default function StatusCelebration({
         />
         <strong>{message}</strong>
         {detail ? <p className="approved-celebration-detail">{detail}</p> : null}
+        {credentials?.email ? (
+          <div className="credential-box">
+            <div>
+              <span className="credential-label">Login email</span>
+              <code>{credentials.email}</code>
+              {credentials.emailGenerated ? (
+                <span className="credential-note">auto-generated</span>
+              ) : null}
+            </div>
+            {credentials.password ? (
+              <div>
+                <span className="credential-label">Temporary password</span>
+                <code>{credentials.password}</code>
+                {credentials.passwordGenerated ? (
+                  <span className="credential-note">auto-generated — copy now</span>
+                ) : null}
+              </div>
+            ) : null}
+            <p className="credential-hint">Use work email (not personal email) to sign in.</p>
+          </div>
+        ) : null}
       </div>
     </div>
   );

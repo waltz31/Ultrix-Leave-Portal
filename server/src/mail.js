@@ -220,6 +220,7 @@ async function sendTemplatedMailToUsers({ toUserIds, templateKey, ctxBuilder, ct
 export async function mailLeaveApplied({
   employeeId,
   managerId,
+  hrUserIds,
   employeeName,
   managerName,
   leaveType,
@@ -231,7 +232,7 @@ export async function mailLeaveApplied({
 }) {
   const base = {
     employeeName,
-    managerName,
+    managerName: managerName || 'HR (no manager assigned)',
     leaveType,
     startDate,
     endDate,
@@ -246,11 +247,23 @@ export async function mailLeaveApplied({
     ctx: { ...base, recipientName: employeeName },
   });
 
-  return sendTemplatedMail({
-    toUserIds: [managerId],
-    templateKey: 'leaveAppliedManager',
-    ctx: { ...base, recipientName: managerName },
-  });
+  if (managerId) {
+    return sendTemplatedMail({
+      toUserIds: [managerId],
+      templateKey: 'leaveAppliedManager',
+      ctx: { ...base, recipientName: managerName },
+    });
+  }
+
+  if (hrUserIds?.length) {
+    return sendTemplatedMail({
+      toUserIds: hrUserIds,
+      templateKey: 'leaveAppliedManager',
+      ctx: { ...base, recipientName: 'HR' },
+    });
+  }
+
+  return { skipped: true };
 }
 
 /** Employee + HR when manager approves. */

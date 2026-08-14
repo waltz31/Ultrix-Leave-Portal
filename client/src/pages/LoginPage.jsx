@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -33,20 +34,23 @@ export default function LoginPage() {
       </div>
 
       <div className="login-content">
-        <img
-          className="login-logo"
-          src="/assets/yupnup.svg"
-          alt="YupNup"
-          width={380}
-          height={140}
-        />
+        <div className="login-brand">
+          <img
+            className="login-logo"
+            src="/assets/yupnup.svg"
+            alt="YupNup"
+            width={380}
+            height={140}
+          />
+          <p className="login-product">Ultrix Leave Portal</p>
+        </div>
 
         <div className="login-panel glass">
           <form className="login-form" onSubmit={onSubmit}>
             <h1 className="login-title">Sign in</h1>
-            <p className="login-sub">Ultrix Leave Portal</p>
+            <p className="login-sub">Use your work email and password</p>
             <label>
-              Email
+              Work email
               <input
                 type="email"
                 value={email}
@@ -54,18 +58,29 @@ export default function LoginPage() {
                 required
                 autoComplete="username"
                 placeholder="you@company.com"
+                spellCheck={false}
               />
             </label>
             <label>
               Password
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                placeholder="Enter your password"
-              />
+              <div className="login-password-row">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  placeholder="Enter your password"
+                />
+                <button
+                  type="button"
+                  className="login-password-toggle"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
             </label>
             {error && <p className="form-error">{error}</p>}
             <button className="btn primary full" type="submit" disabled={busy}>

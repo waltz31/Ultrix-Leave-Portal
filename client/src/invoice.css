@@ -5,6 +5,133 @@
   gap: 1.5rem;
 }
 
+.invoice-mode-panel h2,
+.invoice-upload-panel h2 {
+  margin: 0 0 6px;
+}
+
+.invoice-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.invoice-mode-card {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  text-align: left;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+
+.invoice-mode-card img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.invoice-mode-card strong {
+  font-size: 1rem;
+}
+
+.invoice-mode-card span {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.invoice-mode-card:hover {
+  border-color: rgba(100, 197, 193, 0.55);
+  background: rgba(100, 197, 193, 0.12);
+}
+
+.invoice-upload-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.invoice-upload-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.invoice-upload-form .full {
+  grid-column: 1 / -1;
+}
+
+.invoice-upload-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.invoice-upload-simple {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  max-width: 420px;
+}
+
+.invoice-upload-drop {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding: 28px 18px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  text-align: center;
+}
+
+.invoice-upload-drop input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.invoice-upload-drop-title {
+  font-weight: 700;
+  color: #fff;
+}
+
+.invoice-upload-drop-hint {
+  font-size: 0.86rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.shell[data-theme='light'] .invoice-upload-drop {
+  border-color: rgba(21, 32, 51, 0.2);
+  background: rgba(21, 32, 51, 0.03);
+}
+
+.shell[data-theme='light'] .invoice-upload-drop-title {
+  color: #152033;
+}
+
+.shell[data-theme='light'] .invoice-mode-card {
+  border-color: rgba(21, 32, 51, 0.12);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+@media (max-width: 720px) {
+  .invoice-mode-grid,
+  .invoice-upload-form {
+    grid-template-columns: 1fr;
+  }
+}
+
 .invoice-studio-layout {
   display: grid;
   grid-template-columns: minmax(380px, 460px) minmax(0, 1fr);
@@ -764,12 +891,17 @@ body[data-theme="dark"] .invoice {
 }
 
 .invoice-studio-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.4fr;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.65rem;
   margin-top: 0.25rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--border);
+}
+
+.invoice-studio-actions .btn.primary {
+  margin-left: auto;
 }
 
 .invoice-line-items {
