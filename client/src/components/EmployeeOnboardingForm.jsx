@@ -612,22 +612,6 @@ export default function EmployeeOnboardingForm({
             <input {...field('jobLevel')} />
           </label>
           <label>
-            Reporting manager
-            <select {...field('managerId')}>
-              <option value="">No reporting manager</option>
-              {(managers || [])
-                .filter(
-                  (m) =>
-                    String(m.id) !== String(editingUserId || '') && m.active !== false
-                )
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.email ? `${m.name} (${m.email})` : m.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label>
             Location
             <input {...field('location')} />
           </label>
@@ -669,7 +653,7 @@ export default function EmployeeOnboardingForm({
         title="Portal access"
         open={openSections.portal}
         onToggle={toggleSection}
-        hint="Work email + temporary password are used to log in. Personal email above is not for login."
+        hint="Work email + temporary password are used to log in. Personal email above is not for login. Employees and managers can both report to a manager."
       >
         <div className="form-grid">
           <label>
@@ -689,6 +673,22 @@ export default function EmployeeOnboardingForm({
                   {o.label}
                 </option>
               ))}
+            </select>
+          </label>
+          <label>
+            Reporting to
+            <select {...field('managerId')}>
+              <option value="">No reporting manager</option>
+              {(managers || [])
+                .filter(
+                  (m) =>
+                    String(m.id) !== String(editingUserId || '') && m.active !== false
+                )
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.email ? `${m.name} (${m.email})` : m.name}
+                  </option>
+                ))}
             </select>
           </label>
           <label>

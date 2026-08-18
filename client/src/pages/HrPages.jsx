@@ -366,20 +366,21 @@ export function HrOnboarding() {
           body,
         });
         setSelected(profile);
-        setMsg('Employee profile updated.');
+        setMsg(form.role === 'manager' ? 'Manager profile updated.' : 'Employee profile updated.');
       } else {
         const { profile, credentials } = await api('/onboarding', {
           method: 'POST',
           body,
         });
         setCreatedNotice({
-          name: profile?.name || form.name || 'Employee',
+          name: profile?.name || form.name || (form.role === 'manager' ? 'Manager' : 'Employee'),
           email: credentials?.email || profile?.email || '',
           password: credentials?.password || '',
           emailGenerated: Boolean(credentials?.emailGenerated),
           passwordGenerated: Boolean(credentials?.passwordGenerated),
+          role: form.role,
         });
-        setMsg('Employee profile created.');
+        setMsg(form.role === 'manager' ? 'Manager profile created.' : 'Employee profile created.');
       }
       setForm(blankForm());
       setShowForm(false);
@@ -451,13 +452,44 @@ export function HrOnboarding() {
     }
   }
 
-  function openCreate() {
+  function openCreate(role = 'user') {
     setErr('');
     setMsg('');
     setBulkResult(null);
     setEditingUserId(null);
-    setForm(blankForm());
+    setForm({
+      ...blankForm(),
+      role: role === 'manager' ? 'manager' : 'user',
+    });
     setShowForm(true);
+  }
+
+  async function assignReportingTo(profile, managerIdValue) {
+    setBusy(true);
+    setMsg('');
+    setErr('');
+    try {
+      const { user } = await api(`/users/${profile.userId}`, {
+        method: 'PATCH',
+        body: { managerId: managerIdValue ? Number(managerIdValue) : null },
+      });
+      setMsg(`Reporting to updated for ${profile.name}.`);
+      setSelected((current) =>
+        current?.userId === profile.userId
+          ? {
+              ...current,
+              managerId: user?.managerId ?? null,
+              managerName: user?.managerName ?? null,
+              managerEmail: user?.managerEmail ?? null,
+            }
+          : current
+      );
+      reload();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openEdit(profile) {
@@ -478,7 +510,7 @@ export function HrOnboarding() {
       <StatusCelebration
         show={Boolean(createdNotice)}
         onDone={() => setCreatedNotice(null)}
-        message="Employee created!"
+        message={createdNotice?.role === 'manager' ? 'Manager created!' : 'Employee created!'}
         detail={
           createdNotice?.email
             ? `${createdNotice.name} can log in with the credentials below.`
@@ -501,12 +533,18 @@ export function HrOnboarding() {
       />
       <div className="page-actions">
         <p className="lede">
-          Create and edit employee profiles including personal, employment, IT/asset, and payroll
-          details.
+          Create and edit employee and manager profiles including personal, employment, IT/asset,
+          and payroll details. Assign who each person reports to — managers can report to another
+          manager.
         </p>
-        <button type="button" className="btn primary" onClick={openCreate}>
-          + Create employee profile
-        </button>
+        <div className="page-actions-buttons">
+          <button type="button" className="btn secondary" onClick={() => openCreate('manager')}>
+            + Add manager
+          </button>
+          <button type="button" className="btn primary" onClick={() => openCreate('user')}>
+            + Create employee profile
+          </button>
+        </div>
       </div>
       {(msg || err) && !showForm && (
         <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>
@@ -584,8 +622,9 @@ export function HrOnboarding() {
       <section className="panel">
         <h2>Employee &amp; manager profiles</h2>
         <p className="muted slim">
-          Employees and managers can each view their own salary in the portal. Edit payroll
-          here to keep their Salary page up to date.
+          Employees and managers can each view their own salary in the portal. Assign reporting
+          to here, including a manager for managers. Edit payroll to keep their Salary page up to
+          date.
         </p>
         {!loading && !profiles?.length && (
           <p className="empty">No onboarded employees yet. Create a profile to get started.</p>
@@ -602,7 +641,7 @@ export function HrOnboarding() {
                   <th>Designation</th>
                   <th>Type</th>
                   <th>Status</th>
-                  <th>Manager</th>
+                  <th>Reporting To</th>
                   <th />
                 </tr>
               </thead>
@@ -639,14 +678,25 @@ export function HrOnboarding() {
                       </span>
                     </td>
                     <td>
-                      {p.managerEmail || p.managerName ? (
-                        <div>
-                          {p.managerName ? <div>{p.managerName}</div> : null}
-                          {p.managerEmail ? <div className="sub">{p.managerEmail}</div> : null}
-                        </div>
-                      ) : (
-                        '—'
-                      )}
+                      <select
+                        className="reporting-to-select"
+                        aria-label={`Reporting to for ${p.name}`}
+                        value={p.managerId || ''}
+                        disabled={busy}
+                        onChange={(e) => assignReportingTo(p, e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {(managers || [])
+                          .filter(
+                            (m) =>
+                              String(m.id) !== String(p.userId) && m.active !== false
+                          )
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                      </select>
                     </td>
                     <td>
                       <div className="row-actions">
@@ -694,7 +744,13 @@ export function HrOnboarding() {
           >
             <div className="row-between">
               <h2 id="onboarding-title">
-                {editingUserId ? 'Edit employee profile' : 'Create employee profile'}
+                {editingUserId
+                  ? form.role === 'manager'
+                    ? 'Edit manager profile'
+                    : 'Edit employee profile'
+                  : form.role === 'manager'
+                    ? 'Create manager profile'
+                    : 'Create employee profile'}
               </h2>
               <div className="row-actions">
                 {editingUserId && (
@@ -732,7 +788,13 @@ export function HrOnboarding() {
               onBulkImport={editingUserId ? undefined : bulkImportEmployees}
               editingUserId={editingUserId}
               busy={busy}
-              submitLabel={editingUserId ? 'Save changes' : 'Create employee profile'}
+              submitLabel={
+                editingUserId
+                  ? 'Save changes'
+                  : form.role === 'manager'
+                    ? 'Create manager profile'
+                    : 'Create employee profile'
+              }
             />
           </div>
         </div>
@@ -850,7 +912,7 @@ export function HrOnboarding() {
                     <dd>{labelFrom(PORTAL_ROLE_OPTIONS, selected.role)}</dd>
                   </div>
                   <div>
-                    <dt>Reporting manager</dt>
+                    <dt>Reporting to</dt>
                     <dd>
                       {selected.managerName || selected.managerEmail ? (
                         <>
@@ -1034,6 +1096,7 @@ export function HrUsers() {
       setMsg(`${user?.name || body.name} added as manager.`);
       setManagerForm({ name: '', email: '', password: '', employeeNumber: '', managerId: '' });
       reloadManagers();
+      reload();
     } catch (error) {
       setErr(error.message);
     } finally {
@@ -1068,6 +1131,22 @@ export function HrUsers() {
       setCreditForm((f) => ({ ...f, amount: 1, note: '' }));
       reload();
       reloadCredits();
+    } catch (error) {
+      setErr(error.message);
+    }
+  }
+
+  async function assignManagerReportingTo(mgr, managerIdValue) {
+    setMsg('');
+    setErr('');
+    try {
+      await api(`/users/${mgr.id}`, {
+        method: 'PATCH',
+        body: { managerId: managerIdValue ? Number(managerIdValue) : null },
+      });
+      setMsg(`Reporting to updated for ${mgr.name}.`);
+      reloadManagers();
+      reload();
     } catch (error) {
       setErr(error.message);
     }
@@ -1149,6 +1228,7 @@ export function HrUsers() {
         <h2>Add manager</h2>
         <p className="muted slim">
           Managers approve team leave before HR. They sign in with the email and password you set.
+          Assign who each manager reports to — another manager can be their reporting manager.
         </p>
         <form className="manager-create-form" onSubmit={createManager}>
           <label>
@@ -1191,7 +1271,7 @@ export function HrUsers() {
             />
           </label>
           <label>
-            Reporting manager
+            Reporting to
             <select
               value={managerForm.managerId}
               onChange={(e) => setManagerForm((f) => ({ ...f, managerId: e.target.value }))}
@@ -1225,7 +1305,7 @@ export function HrUsers() {
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
-                  <th>Reports to</th>
+                  <th>Reporting To</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -1237,7 +1317,23 @@ export function HrUsers() {
                       <strong className="employee-name">{mgr.name}</strong>
                     </td>
                     <td>{mgr.email}</td>
-                    <td>{mgr.managerEmail || mgr.managerName || '—'}</td>
+                    <td>
+                      <select
+                        className="reporting-to-select"
+                        aria-label={`Reporting to for ${mgr.name}`}
+                        value={mgr.managerId || ''}
+                        onChange={(e) => assignManagerReportingTo(mgr, e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {(managers || [])
+                          .filter((m) => String(m.id) !== String(mgr.id) && m.active !== false)
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name}
+                            </option>
+                          ))}
+                      </select>
+                    </td>
                     <td>
                       <span className={`badge ${mgr.active ? 'status-active' : 'status-inactive'}`}>
                         {mgr.active ? 'Active' : 'Inactive'}
@@ -1332,7 +1428,7 @@ export function HrUsers() {
                 <tr>
                   <th>Employee</th>
                   <th>Emp ID</th>
-                  <th>Manager</th>
+                  <th>Reporting To</th>
                   <th>Status</th>
                   <th className="leave-type-heading">Casual Leave</th>
                   <th className="leave-type-heading">Earned Leave</th>

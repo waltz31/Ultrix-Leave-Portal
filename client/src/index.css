@@ -1321,6 +1321,20 @@ textarea:focus {
   min-width: 0;
 }
 
+.page-actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.reporting-to-select {
+  min-width: 148px;
+  max-width: 220px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
 .type-tabs {
   display: inline-flex;
   gap: 4px;
@@ -1420,7 +1434,7 @@ textarea:focus {
 
 .manager-create-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
   gap: var(--space-sm) var(--space-md);
   align-items: end;
   margin-top: var(--space-sm);
@@ -4444,6 +4458,14 @@ th.leave-type-heading {
   .page-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .page-actions-buttons {
+    width: 100%;
+  }
+
+  .page-actions-buttons .btn {
+    flex: 1;
   }
 
   .main {
