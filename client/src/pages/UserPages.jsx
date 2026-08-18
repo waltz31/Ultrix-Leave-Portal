@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { format, endOfMonth, startOfMonth } from 'date-fns';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
@@ -8,6 +7,7 @@ import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportCharts, UpcomingLeaveList } from '../components/LeaveReports';
 import {
+  APPLY_LABELS,
   LEAVE_LABELS,
   REQUEST_LABELS,
   SESSION_LABELS,
@@ -183,8 +183,12 @@ export function UserApply() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [submittedPopup, setSubmittedPopup] = useState(null);
+  const { data: holidayData, reload: reloadHolidays } = useLoad(() =>
+    api(`/holidays?year=${appToday().getFullYear()}`)
+  );
   const wfh = isWfh(form.leaveType);
-  const halfDay = form.session !== 'full';
+  const restricted = form.leaveType === 'restricted';
+  const halfDay = !restricted && form.session !== 'full';
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -194,11 +198,16 @@ export function UserApply() {
     try {
       const body = {
         ...form,
-        endDate: halfDay ? form.startDate : form.endDate,
+        session: restricted ? 'full' : form.session,
+        endDate: restricted || halfDay ? form.startDate : form.endDate,
       };
       await api('/leaves', { method: 'POST', body });
       setSubmittedPopup({
-        message: wfh ? 'Work from Home submitted' : 'Leave submitted',
+        message: restricted
+          ? 'Restricted holiday submitted'
+          : wfh
+            ? 'Work from Home submitted'
+            : 'Leave submitted',
         detail: 'Your request is waiting for manager approval, then HR.',
       });
       setMsg(
@@ -214,6 +223,7 @@ export function UserApply() {
         reason: '',
       });
       reload();
+      reloadHolidays();
     } catch (error) {
       setErr(error.message);
     } finally {
@@ -246,14 +256,21 @@ export function UserApply() {
                   role="radiogroup"
                   aria-labelledby="apply-type-label"
                 >
-                  {Object.entries(REQUEST_LABELS).map(([key, label]) => (
+                  {Object.entries(APPLY_LABELS).map(([key, label]) => (
                     <button
                       key={key}
                       type="button"
                       role="radio"
                       aria-checked={form.leaveType === key}
                       className={`apply-type-pill type-${key}${form.leaveType === key ? ' is-selected' : ''}`}
-                      onClick={() => setForm((f) => ({ ...f, leaveType: key }))}
+                      onClick={() =>
+                        setForm((f) => ({
+                          ...f,
+                          leaveType: key,
+                          session: key === 'restricted' ? 'full' : f.session,
+                          endDate: key === 'restricted' ? f.startDate : f.endDate,
+                        }))
+                      }
                     >
                       <span className={`apply-type-swatch type-${key}`} aria-hidden />
                       {label}
@@ -262,6 +279,36 @@ export function UserApply() {
                 </div>
               </div>
 
+              {restricted ? (
+                <div className="apply-dates">
+                  <label className="full">
+                    Restricted holiday
+                    <select
+                      value={form.startDate}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          startDate: e.target.value,
+                          endDate: e.target.value,
+                          session: 'full',
+                        }))
+                      }
+                      required
+                    >
+                      <option value="">Select from the list…</option>
+                      {(holidayData?.restricted || []).map((h) => (
+                        <option key={h.id} value={h.startDate}>
+                          {formatDate(h.startDate)} — {h.userName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="muted slim apply-hint">
+                    You can take {holidayData?.restrictedLimit || 2} restricted holidays per year.
+                    Used: {holidayData?.restrictedUsed ?? 0}.
+                  </p>
+                </div>
+              ) : (
               <div className="apply-dates">
                 <label>
                   Session
@@ -311,6 +358,7 @@ export function UserApply() {
                   </label>
                 )}
               </div>
+              )}
               {halfDay && <p className="muted slim apply-hint">Half day counts as 0.5.</p>}
 
               <label>
@@ -348,6 +396,9 @@ export function UserApply() {
           ) : (
             <p className="muted">Loading…</p>
           )}
+          {restricted && (
+            <p className="balance-note">Restricted holidays do not use casual/earned/sick balance. Limit 2 per year.</p>
+          )}
           {wfh && (
             <p className="balance-note">Work from Home does not use leave balance.</p>
           )}
@@ -359,10 +410,9 @@ export function UserApply() {
 
 export function UserCalendar() {
   const now = appToday();
-  const from = format(startOfMonth(now), 'yyyy-MM-dd');
-  const toEnd = new Date(now);
-  toEnd.setMonth(toEnd.getMonth() + 2);
-  const to = format(endOfMonth(toEnd), 'yyyy-MM-dd');
+  const year = now.getFullYear();
+  const from = `${year}-01-01`;
+  const to = `${year}-12-31`;
   const { data, error, loading, reload } = useLoad(
     () => api(`/leaves/calendar?from=${from}&to=${to}`).then((d) => d.leaves),
     [from, to]
@@ -388,8 +438,9 @@ export function UserCalendar() {
   return (
     <AppShell title="My calendar" nav={NAV}>
       <p className="lede">
-        Your active leave appears here, colored by leave type. Company mandatory leaves also show
-        here. Tap a day to cancel just that day, or cancel the full multi-day request.
+        Your active leave appears here, colored by leave type. Company general holidays (blue) and
+        restricted holidays (pink) also show. Saturdays and Sundays are grey. Tap a day to cancel
+        just that day, or cancel the full multi-day request.
       </p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}

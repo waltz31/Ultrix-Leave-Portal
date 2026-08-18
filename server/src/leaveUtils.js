@@ -52,7 +52,7 @@ export function contiguousRanges(dates) {
 }
 
 /** Count weekdays (Mon–Fri) between two YYYY-MM-DD dates inclusive. */
-export function countWeekdays(startDate, endDate) {
+export function countWeekdays(startDate, endDate, excludeDates = new Set()) {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
@@ -64,7 +64,8 @@ export function countWeekdays(startDate, endDate) {
   const cur = new Date(start);
   while (cur <= end) {
     const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) days += 1;
+    const ymd = formatYmd(cur);
+    if (dow !== 0 && dow !== 6 && !excludeDates.has(ymd)) days += 1;
     cur.setDate(cur.getDate() + 1);
   }
   return days;
@@ -73,19 +74,19 @@ export function countWeekdays(startDate, endDate) {
 export const SESSIONS = ['full', 'morning', 'afternoon'];
 
 /** Full-day weekday count, or 0.5 for morning/afternoon on a single weekday. */
-export function countLeaveDays(startDate, endDate, session = 'full') {
+export function countLeaveDays(startDate, endDate, session = 'full', excludeDates = new Set()) {
   const sess = SESSIONS.includes(session) ? session : 'full';
   if (sess !== 'full') {
     if (startDate !== endDate) {
       throw new Error('Morning/afternoon leave must be for a single day');
     }
-    const weekdays = countWeekdays(startDate, endDate);
+    const weekdays = countWeekdays(startDate, endDate, excludeDates);
     if (weekdays <= 0) {
-      throw new Error('Session leave must fall on a weekday');
+      throw new Error('Session leave must fall on a working day');
     }
     return 0.5;
   }
-  return countWeekdays(startDate, endDate);
+  return countWeekdays(startDate, endDate, excludeDates);
 }
 
 export function sessionsOverlap(a, b) {
@@ -99,7 +100,7 @@ export function sessionsOverlap(a, b) {
 }
 
 export const LEAVE_TYPES = ['casual', 'earned', 'sick', 'compensation'];
-export const REQUEST_TYPES = [...LEAVE_TYPES, 'wfh'];
+export const REQUEST_TYPES = [...LEAVE_TYPES, 'wfh', 'restricted'];
 
 export function isBalanceType(type) {
   return LEAVE_TYPES.includes(type);
@@ -112,13 +113,16 @@ export function leaveTypeLabel(type) {
     sick: 'Sick Leave',
     compensation: 'Compensation Leave',
     wfh: 'Work from Home',
-    mandatory: 'Mandatory Leave',
+    restricted: 'Restricted Holiday',
+    general: 'General Holiday',
+    mandatory: 'Company Holiday',
   };
   return labels[type] || type;
 }
 
 export function mapMandatoryLeave(row) {
   if (!row) return null;
+  const holidayType = row.holiday_type === 'restricted' ? 'restricted' : 'general';
   let days = 0;
   try {
     days = countWeekdays(row.start_date, row.end_date);
@@ -129,11 +133,12 @@ export function mapMandatoryLeave(row) {
     id: `mandatory-${row.id}`,
     mandatoryId: row.id,
     isMandatory: true,
+    holidayType,
     userId: null,
     userName: row.title,
     userEmail: null,
     employeeNumber: null,
-    leaveType: 'mandatory',
+    leaveType: holidayType,
     startDate: row.start_date,
     endDate: row.end_date,
     days,
@@ -144,7 +149,7 @@ export function mapMandatoryLeave(row) {
     managerId: null,
     managerName: null,
     managerReviewedAt: null,
-    hrNote: null,
+    hrNote: row.note || null,
     hrId: row.created_by ?? null,
     hrName: row.created_by_name || null,
     hrReviewedAt: null,

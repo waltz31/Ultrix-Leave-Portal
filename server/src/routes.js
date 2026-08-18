@@ -26,6 +26,7 @@ import {
   eachCalendarDay,
   contiguousRanges,
 } from './leaveUtils.js';
+import { parseHolidayType, RESTRICTED_HOLIDAYS_PER_YEAR } from './holidays.js';
 import { notifyLeaveApplied } from './slack.js';
 import { LeaveReviewError, reviewLeaveRequest } from './leaveReview.js';
 import {
@@ -154,7 +155,70 @@ function leaveLabel(type) {
   if (type === 'earned') return 'Earned Leave';
   if (type === 'sick') return 'Sick Leave';
   if (type === 'compensation') return 'Compensation Leave';
+  if (type === 'restricted') return 'Restricted Holiday';
+  if (type === 'general') return 'General Holiday';
   return `${type} leave`;
+}
+
+async function generalHolidayDatesBetween(startDate, endDate) {
+  const rows = await db
+    .prepare(
+      `SELECT start_date, end_date FROM mandatory_leaves
+       WHERE COALESCE(holiday_type, 'general') = 'general'
+         AND end_date >= ? AND start_date <= ?`
+    )
+    .all(startDate, endDate);
+  const dates = new Set();
+  for (const row of rows) {
+    for (const day of eachCalendarDay(row.start_date, row.end_date)) dates.add(day);
+  }
+  return dates;
+}
+
+async function restrictedUsedDays(userId, year) {
+  const row = await db
+    .prepare(
+      `SELECT COALESCE(SUM(days), 0) AS days FROM leave_requests
+       WHERE user_id = ?
+         AND leave_type = 'restricted'
+         AND status IN ('pending_manager', 'pending_hr', 'approved')
+         AND start_date >= ? AND start_date <= ?`
+    )
+    .get(userId, `${year}-01-01`, `${year}-12-31`);
+  return Number(row?.days) || 0;
+}
+
+async function findRestrictedHoliday(ymd) {
+  return db
+    .prepare(
+      `SELECT id, title FROM mandatory_leaves
+       WHERE COALESCE(holiday_type, 'general') = 'restricted'
+         AND start_date <= ? AND end_date >= ?`
+    )
+    .get(ymd, ymd);
+}
+
+async function assertRestrictedHolidayRequest(userId, startDate, endDate, session) {
+  if (session !== 'full' || startDate !== endDate) {
+    throw Object.assign(new Error('Restricted holidays are a single full day from the holiday list'), {
+      status: 400,
+    });
+  }
+  const holiday = await findRestrictedHoliday(startDate);
+  if (!holiday) {
+    throw Object.assign(new Error('That date is not a restricted holiday'), { status: 400 });
+  }
+  const year = Number(startDate.slice(0, 4));
+  const used = await restrictedUsedDays(userId, year);
+  if (used + 1 > RESTRICTED_HOLIDAYS_PER_YEAR) {
+    throw Object.assign(
+      new Error(
+        `Only ${RESTRICTED_HOLIDAYS_PER_YEAR} restricted holidays can be taken per year (${used} already used in ${year})`
+      ),
+      { status: 400 }
+    );
+  }
+  return { days: 1, title: holiday.title };
 }
 
 async function publicUserWithPhoto(user) {
@@ -1155,8 +1219,8 @@ router.get('/leaves/calendar', authRequired, async (req, res) => {
     clauses.push('lr.user_id = ?');
     params.push(req.user.id);
   } else if (req.user.role === 'manager') {
-    clauses.push('u.manager_id = ?');
-    params.push(req.user.id);
+    clauses.push('(u.manager_id = ? OR lr.user_id = ?)');
+    params.push(req.user.id, req.user.id);
   }
 
   const rows = (await db
@@ -1205,21 +1269,52 @@ router.get('/mandatory-leaves', authRequired, hrRequired, async (req, res) => {
   res.json({ leaves: rows.map(mapMandatoryLeave) });
 });
 
+router.get('/holidays', authRequired, async (req, res) => {
+  const year = Number(req.query.year) || Number(String(req.query.year || '').slice(0, 4));
+  const resolvedYear = Number.isFinite(year) && year > 2000 ? year : new Date().getFullYear();
+  const rows = await db
+    .prepare(
+      `SELECT ml.*, u.name AS created_by_name
+       FROM mandatory_leaves ml
+       LEFT JOIN users u ON u.id = ml.created_by
+       WHERE ml.start_date >= ? AND ml.start_date <= ?
+       ORDER BY ml.start_date ASC`
+    )
+    .all(`${resolvedYear}-01-01`, `${resolvedYear}-12-31`);
+  const holidays = rows.map(mapMandatoryLeave);
+  const used =
+    req.user.role === 'user' || req.user.role === 'manager'
+      ? await restrictedUsedDays(req.user.id, resolvedYear)
+      : 0;
+  res.json({
+    year: resolvedYear,
+    restrictedLimit: RESTRICTED_HOLIDAYS_PER_YEAR,
+    restrictedUsed: used,
+    holidays,
+    general: holidays.filter((h) => h.holidayType === 'general'),
+    restricted: holidays.filter((h) => h.holidayType === 'restricted'),
+  });
+});
+
 function normalizeMandatoryEntry(entry) {
-  const title = String(entry?.title || '').trim();
-  const startDate = String(entry?.startDate || entry?.start_date || '').trim();
+  const title = String(entry?.title || entry?.holiday || entry?.name || '').trim();
+  const startDate = String(entry?.startDate || entry?.start_date || entry?.date || '').trim();
   const endDate = String(entry?.endDate || entry?.end_date || startDate).trim();
   const note = String(entry?.note || '').trim() || null;
-  return { title, startDate, endDate, note };
+  const holidayType = parseHolidayType(
+    entry?.holidayType || entry?.holiday_type || entry?.type || entry?.holidayTypeLabel
+  );
+  return { title, startDate, endDate, note, holidayType };
 }
 
-async function insertMandatoryLeave({ title, startDate, endDate, note, createdBy }) {
+async function insertMandatoryLeave({ title, startDate, endDate, note, holidayType, createdBy }) {
   if (!title || !startDate || !endDate) {
     throw Object.assign(new Error('title, startDate, and endDate are required'), { status: 400 });
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
     throw Object.assign(new Error('Dates must be YYYY-MM-DD'), { status: 400 });
   }
+  const kind = holidayType === 'restricted' ? 'restricted' : 'general';
   let days;
   try {
     days = countWeekdays(startDate, endDate);
@@ -1230,20 +1325,35 @@ async function insertMandatoryLeave({ title, startDate, endDate, note, createdBy
     throw Object.assign(new Error('End date must be on or after start date'), { status: 400 });
   }
 
-  const result = await db
+  const existing = await db
     .prepare(
-      `INSERT INTO mandatory_leaves (title, start_date, end_date, note, created_by)
-       VALUES (?, ?, ?, ?, ?)`
+      `SELECT id FROM mandatory_leaves WHERE start_date = ? AND end_date = ? AND title = ?`
     )
-    .run(title, startDate, endDate, note, createdBy);
+    .get(startDate, endDate, title);
+  if (existing) {
+    await db
+      .prepare(
+        `UPDATE mandatory_leaves
+         SET note = COALESCE(?, note), holiday_type = ?, created_by = COALESCE(?, created_by)
+         WHERE id = ?`
+      )
+      .run(note, kind, createdBy, existing.id);
+  } else {
+    await db
+      .prepare(
+        `INSERT INTO mandatory_leaves (title, start_date, end_date, note, holiday_type, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(title, startDate, endDate, note, kind, createdBy);
+  }
   const row = await db
     .prepare(
       `SELECT ml.*, u.name AS created_by_name
        FROM mandatory_leaves ml
        LEFT JOIN users u ON u.id = ml.created_by
-       WHERE ml.id = ?`
+       WHERE ml.start_date = ? AND ml.end_date = ? AND ml.title = ?`
     )
-    .get(result.lastInsertRowid);
+    .get(startDate, endDate, title);
   return mapMandatoryLeave(row);
 }
 
@@ -1309,29 +1419,47 @@ router.delete('/mandatory-leaves/:id', authRequired, hrRequired, async (req, res
 });
 
 router.post('/leaves', authRequired, async (req, res) => {
-  if (req.user.role !== 'user') {
-    return res.status(400).json({ error: 'Only employees can apply for leave/WFH' });
+  const { leaveType, startDate, endDate, reason, session } = req.body || {};
+  const isRestricted = leaveType === 'restricted';
+  if (req.user.role === 'hr') {
+    return res.status(400).json({ error: 'HR cannot apply for leave from this screen' });
+  }
+  if (req.user.role === 'manager' && !isRestricted) {
+    return res.status(400).json({ error: 'Managers can apply only for restricted holidays' });
+  }
+  if (req.user.role !== 'user' && req.user.role !== 'manager') {
+    return res.status(400).json({ error: 'Only employees and managers can apply' });
   }
 
   const employee = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
-  const { leaveType, startDate, endDate, reason, session } = req.body || {};
   if (!REQUEST_TYPES.includes(leaveType) || !startDate || !endDate) {
     return res.status(400).json({
-      error: 'leaveType (casual/earned/sick/compensation/wfh), startDate, and endDate are required',
+      error: 'leaveType (casual/earned/sick/compensation/wfh/restricted), startDate, and endDate are required',
     });
   }
-  const leaveSession = SESSIONS.includes(session) ? session : 'full';
-  const resolvedEnd = leaveSession === 'full' ? endDate : startDate;
+  const leaveSession = isRestricted ? 'full' : SESSIONS.includes(session) ? session : 'full';
+  const resolvedEnd = isRestricted || leaveSession !== 'full' ? startDate : endDate;
 
   let days;
   try {
-    days = countLeaveDays(startDate, resolvedEnd, leaveSession);
+    if (isRestricted) {
+      const rh = await assertRestrictedHolidayRequest(
+        req.user.id,
+        startDate,
+        resolvedEnd,
+        leaveSession
+      );
+      days = rh.days;
+    } else {
+      const holidays = await generalHolidayDatesBetween(startDate, resolvedEnd);
+      days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
+    }
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    return res.status(err.status || 400).json({ error: err.message });
   }
   if (days <= 0) {
-    return res.status(400).json({ error: 'Request must include at least one weekday' });
+    return res.status(400).json({ error: 'Request must include at least one working day' });
   }
 
   if (isBalanceType(leaveType)) {
@@ -1477,17 +1605,24 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
     .get(employeeId);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
 
-  const leaveSession = SESSIONS.includes(session) ? session : 'full';
-  const resolvedEnd = leaveSession === 'full' ? endDate : startDate;
+  const isRestricted = leaveType === 'restricted';
+  const leaveSession = isRestricted ? 'full' : SESSIONS.includes(session) ? session : 'full';
+  const resolvedEnd = isRestricted || leaveSession !== 'full' ? startDate : endDate;
 
   let days;
   try {
-    days = countLeaveDays(startDate, resolvedEnd, leaveSession);
+    if (isRestricted) {
+      const rh = await assertRestrictedHolidayRequest(employeeId, startDate, resolvedEnd, leaveSession);
+      days = rh.days;
+    } else {
+      const holidays = await generalHolidayDatesBetween(startDate, resolvedEnd);
+      days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
+    }
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    return res.status(err.status || 400).json({ error: err.message });
   }
   if (days <= 0) {
-    return res.status(400).json({ error: 'Request must include at least one weekday' });
+    return res.status(400).json({ error: 'Request must include at least one working day' });
   }
 
   if (isBalanceType(leaveType)) {
@@ -2045,7 +2180,7 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     });
   }
 
-  const allTypes = ['casual', 'earned', 'sick', 'compensation', 'wfh'];
+  const allTypes = ['casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'];
   const byType = allTypes.map((type) => {
     const row = byTypeRows.find((r) => r.type === type);
     return { type, days: row ? row.days : 0, count: row ? row.count : 0 };

@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
-import { isPostgres, translateSql, toPgPlaceholders } from './sqlDialect.js';
+import { seedCompanyHolidays } from './holidays.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -301,7 +301,7 @@ function createPostgres() {
         END LOOP;
         ALTER TABLE leave_requests
           ADD CONSTRAINT leave_requests_leave_type_check
-          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh'));
+          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'));
       EXCEPTION
         WHEN duplicate_object THEN NULL;
       END $$;
@@ -340,13 +340,43 @@ function createPostgres() {
         start_date TEXT NOT NULL,
         end_date TEXT NOT NULL,
         note TEXT,
+        holiday_type TEXT NOT NULL DEFAULT 'general',
         created_by INTEGER REFERENCES users(id),
         created_at TEXT NOT NULL DEFAULT to_char((now() AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD HH24:MI:SS')
       )
     `);
     await client.query(
+      `ALTER TABLE mandatory_leaves ADD COLUMN IF NOT EXISTS holiday_type TEXT DEFAULT 'general'`
+    );
+    await client.query(
+      `UPDATE mandatory_leaves SET holiday_type = 'general' WHERE holiday_type IS NULL OR holiday_type = ''`
+    );
+    await client.query(
       `CREATE INDEX IF NOT EXISTS idx_mandatory_leaves_dates ON mandatory_leaves(start_date, end_date)`
     );
+
+    await client.query(`
+      DO $$
+      DECLARE
+        con_name text;
+      BEGIN
+        FOR con_name IN
+          SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          WHERE t.relname = 'leave_requests'
+            AND c.contype = 'c'
+            AND pg_get_constraintdef(c.oid) ILIKE '%leave_type%'
+        LOOP
+          EXECUTE format('ALTER TABLE leave_requests DROP CONSTRAINT IF EXISTS %I', con_name);
+        END LOOP;
+        ALTER TABLE leave_requests
+          ADD CONSTRAINT leave_requests_leave_type_check
+          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'));
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
   }
 
   async function runBootstrapSchema(client) {
@@ -376,6 +406,7 @@ function createPostgres() {
       await migrateEmployeeAssets(client);
       await migrateCompensationLeave(client);
       await migrateMandatoryLeaves(client);
+      await seedCompanyHolidays(adapter);
       console.log('Connected to Supabase/Postgres');
       readyResolve();
     } catch (err) {

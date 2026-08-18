@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
-import { format, endOfMonth, startOfMonth } from 'date-fns';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
@@ -8,7 +7,7 @@ import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection, UpcomingLeaveList } from '../components/LeaveReports';
-import { REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
+import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatDate, formatLeaveSpan, isWfh } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
@@ -40,12 +39,6 @@ function useLoad(loader, deps = []) {
   }, [reload]);
 
   return { data, error, loading, reload };
-}
-
-function addMonthsSafe(date, n) {
-  const d = new Date(date);
-  d.setMonth(d.getMonth() + n);
-  return d;
 }
 
 export function ManagerOverview() {
@@ -196,7 +189,7 @@ export function ManagerApprovals() {
                   value={form.leaveType}
                   onChange={(e) => setForm((f) => ({ ...f, leaveType: e.target.value }))}
                 >
-                  {Object.entries(REQUEST_LABELS).map(([k, v]) => (
+                  {Object.entries(APPLY_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
                     </option>
@@ -284,11 +277,91 @@ export function ManagerApprovals() {
   );
 }
 
+function ManagerRestrictedApply({ onSubmitted }) {
+  const year = appToday().getFullYear();
+  const { data: holidayData, reload: reloadHolidays } = useLoad(
+    () => api(`/holidays?year=${year}`),
+    [year]
+  );
+  const [startDate, setStartDate] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setMsg('');
+    setErr('');
+    try {
+      await api('/leaves', {
+        method: 'POST',
+        body: {
+          leaveType: 'restricted',
+          startDate,
+          endDate: startDate,
+          session: 'full',
+          reason,
+        },
+      });
+      setMsg('Restricted holiday submitted for approval.');
+      setStartDate('');
+      setReason('');
+      reloadHolidays();
+      onSubmitted?.();
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel mandatory-leave-panel">
+      <h2>Take a restricted holiday</h2>
+      <p className="muted slim">
+        You may take {holidayData?.restrictedLimit || 2} restricted holidays per year from the
+        company list. Used: {holidayData?.restrictedUsed ?? 0}.
+      </p>
+      <form className="rh-apply-form" onSubmit={onSubmit}>
+        <label>
+          Restricted holiday
+          <select value={startDate} onChange={(e) => setStartDate(e.target.value)} required>
+            <option value="">Select from the list…</option>
+            {(holidayData?.restricted || []).map((h) => (
+              <option key={h.id} value={h.startDate}>
+                {formatDate(h.startDate)} — {h.userName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Notes
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Optional"
+          />
+        </label>
+        <div className="mandatory-leave-actions">
+          <button className="btn primary" type="submit" disabled={busy || !startDate}>
+            {busy ? 'Submitting…' : 'Submit'}
+          </button>
+        </div>
+      </form>
+      {msg && <p className="form-ok">{msg}</p>}
+      {err && <p className="form-error">{err}</p>}
+    </section>
+  );
+}
+
 export function ManagerCalendar() {
   const now = appToday();
-  const from = format(startOfMonth(now), 'yyyy-MM-dd');
-  const to = format(endOfMonth(addMonthsSafe(now, 2)), 'yyyy-MM-dd');
-  const { data, error, loading } = useLoad(
+  const year = now.getFullYear();
+  const from = `${year}-01-01`;
+  const to = `${year}-12-31`;
+  const { data, error, loading, reload } = useLoad(
     () =>
       Promise.all([
         api(`/leaves/calendar?from=${from}&to=${to}`).then((d) => d.leaves),
@@ -308,7 +381,11 @@ export function ManagerCalendar() {
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
-      <p className="lede">Approved leave for your team. Use the employee dropdown to focus one person.</p>
+      <p className="lede">
+        Approved leave for your team. General holidays are blue, restricted holidays are pink, and
+        Saturdays/Sundays are grey. You can take up to 2 restricted holidays per year.
+      </p>
+      <ManagerRestrictedApply onSubmitted={reload} />
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {data && (

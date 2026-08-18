@@ -5,10 +5,16 @@ export const LEAVE_LABELS = {
   compensation: 'Compensation Leave',
 };
 
-export const REQUEST_LABELS = {
+export const APPLY_LABELS = {
   ...LEAVE_LABELS,
   wfh: 'Work from Home',
-  mandatory: 'Mandatory Leave',
+  restricted: 'Restricted Holiday',
+};
+
+export const REQUEST_LABELS = {
+  ...APPLY_LABELS,
+  general: 'General Holiday',
+  mandatory: 'Company Holiday',
 };
 
 export const SESSION_LABELS = {

@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { SQL_NOW_IST } from './sqlDialect.js';
+import { seedCompanyHolidaysSync } from './holidays.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, '..', 'data', 'leave.db');
@@ -40,7 +41,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS leave_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh')),
+    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted')),
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     days REAL NOT NULL,
@@ -100,6 +101,7 @@ migrateInvoiceSubmitterDeleted();
 migrateEmployeeProfilesTable();
 migrateEmployeeAssetsTable();
 migrateMandatoryLeavesTable();
+migrateHolidayTypes();
 
 function migrateInvoiceSubmitterDeleted() {
   const cols = db.prepare(`PRAGMA table_info(invoices)`).all();
@@ -626,12 +628,69 @@ function migrateMandatoryLeavesTable() {
       start_date TEXT NOT NULL,
       end_date TEXT NOT NULL,
       note TEXT,
+      holiday_type TEXT NOT NULL DEFAULT 'general',
       created_by INTEGER REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
     );
     CREATE INDEX IF NOT EXISTS idx_mandatory_leaves_dates
       ON mandatory_leaves(start_date, end_date);
   `);
+}
+
+function migrateHolidayTypes() {
+  const cols = db.prepare(`PRAGMA table_info(mandatory_leaves)`).all().map((c) => c.name);
+  if (!cols.includes('holiday_type')) {
+    db.exec(
+      `ALTER TABLE mandatory_leaves ADD COLUMN holiday_type TEXT NOT NULL DEFAULT 'general'`
+    );
+  }
+
+  const leaveSql = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='leave_requests'`)
+    .get()?.sql;
+  if (leaveSql && !leaveSql.includes("'restricted'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE leave_requests_rh (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted')),
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        days REAL NOT NULL,
+        session TEXT NOT NULL CHECK(session IN ('full', 'morning', 'afternoon')) DEFAULT 'full',
+        reason TEXT,
+        status TEXT NOT NULL CHECK(status IN (
+          'pending_manager', 'pending_hr', 'approved', 'rejected', 'cancelled'
+        )) DEFAULT 'pending_manager',
+        manager_note TEXT,
+        manager_id INTEGER REFERENCES users(id),
+        manager_reviewed_at TEXT,
+        hr_note TEXT,
+        hr_id INTEGER REFERENCES users(id),
+        hr_reviewed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+        updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+      );
+      INSERT INTO leave_requests_rh (
+        id, user_id, leave_type, start_date, end_date, days, session, reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      )
+      SELECT
+        id, user_id, leave_type, start_date, end_date, days, COALESCE(session, 'full'), reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      FROM leave_requests;
+      DROP TABLE leave_requests;
+      ALTER TABLE leave_requests_rh RENAME TO leave_requests;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  seedCompanyHolidaysSync(db);
 }
 
 export default db;

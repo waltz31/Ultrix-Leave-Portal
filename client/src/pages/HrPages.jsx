@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
-import { format, endOfMonth, startOfMonth } from 'date-fns';
+import { format } from 'date-fns';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
@@ -27,7 +27,7 @@ import {
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
-import { LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
+import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
 import * as XLSX from 'xlsx';
 
 const NAV = [
@@ -60,12 +60,6 @@ function useLoad(loader, deps = []) {
   }, [reload]);
 
   return { data, error, loading, reload };
-}
-
-function addMonthsSafe(date, n) {
-  const d = new Date(date);
-  d.setMonth(d.getMonth() + n);
-  return d;
 }
 
 export function HrOverview() {
@@ -219,7 +213,7 @@ export function HrApprovals() {
                   value={form.leaveType}
                   onChange={(e) => setForm((f) => ({ ...f, leaveType: e.target.value }))}
                 >
-                  {Object.entries(REQUEST_LABELS).map(([k, v]) => (
+                  {Object.entries(APPLY_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
                     </option>
@@ -1439,8 +1433,9 @@ export function HrUsers() {
 
 export function HrCalendar() {
   const now = appToday();
-  const from = format(startOfMonth(now), 'yyyy-MM-dd');
-  const to = format(endOfMonth(addMonthsSafe(now, 2)), 'yyyy-MM-dd');
+  const year = now.getFullYear();
+  const from = `${year}-01-01`;
+  const to = `${year}-12-31`;
   const { data, error, loading, reload } = useLoad(
     () =>
       Promise.all([
@@ -1465,6 +1460,7 @@ export function HrCalendar() {
     startDate: '',
     endDate: '',
     note: '',
+    holidayType: 'general',
   });
   const [mandatoryBusy, setMandatoryBusy] = useState(false);
   const [mandatoryMsg, setMandatoryMsg] = useState('');
@@ -1507,10 +1503,11 @@ export function HrCalendar() {
           startDate: mandatoryForm.startDate,
           endDate: mandatoryForm.endDate || mandatoryForm.startDate,
           note: mandatoryForm.note,
+          holidayType: mandatoryForm.holidayType,
         },
       });
-      setMandatoryForm({ title: '', startDate: '', endDate: '', note: '' });
-      setMandatoryMsg('Mandatory leave added to all calendars.');
+      setMandatoryForm({ title: '', startDate: '', endDate: '', note: '', holidayType: 'general' });
+      setMandatoryMsg('Holiday added to all calendars.');
       reload();
     } catch (error) {
       setErr(error.message);
@@ -1535,6 +1532,18 @@ export function HrCalendar() {
     const dmy = text.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
     if (dmy) {
       return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    const named = text.match(/^(\d{1,2})\s+([A-Za-z]+)\.?[\s,]+(\d{4})$/);
+    if (named) {
+      const months = {
+        jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+        may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
+        september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+      };
+      const month = months[named[2].toLowerCase()];
+      if (month) {
+        return `${named[3]}-${String(month).padStart(2, '0')}-${named[1].padStart(2, '0')}`;
+      }
     }
     return text;
   }
@@ -1567,16 +1576,50 @@ export function HrCalendar() {
     return rows
       .map((row) => {
         const title =
-          cellText(pickField(row, ['title', 'name', 'leave', 'leave title'])) ||
-          'Mandatory leave';
-        const startRaw = pickField(row, ['start_date', 'start', 'date', 'from']);
+          cellText(pickField(row, ['holiday', 'title', 'name', 'leave', 'leave title'])) ||
+          'Company holiday';
+        const startRaw = pickField(row, ['date', 'start_date', 'start', 'from']);
         const endRaw = pickField(row, ['end_date', 'end', 'to']);
         const startDate = excelCellToYmd(startRaw);
         const endDate = excelCellToYmd(endRaw) || startDate;
         const note = cellText(pickField(row, ['note', 'notes', 'reason', 'description']));
-        return { title, startDate, endDate, note };
+        const typeRaw = cellText(
+          pickField(row, ['holiday type', 'holiday_type', 'type', 'holidayType'])
+        );
+        const holidayType = /restrict|^rh$/i.test(typeRaw.trim()) ? 'restricted' : 'general';
+        return { title, startDate, endDate, note, holidayType };
       })
-      .filter((r) => r.startDate);
+      .filter((r) => r.startDate && !/^slno|serial/i.test(r.title));
+  }
+
+  function downloadHolidayTemplate() {
+    const rows = [
+      ['Sl No.', 'Date', 'Holiday', 'Holiday Type'],
+      [1, '01 Jan 2026', 'New Year', 'General'],
+      [2, '15 Jan 2026', 'Sankranti/Ponga', 'Restricted'],
+      [3, '26 Jan 2026', 'Republic Day', 'General'],
+      [4, '04 Mar 2026', 'Holi', 'General'],
+      [5, '19 Mar 2026', 'Ugadi Festival', 'Restricted'],
+      [6, '20 Mar 2026', 'Eid-ul-Fitr', 'Restricted'],
+      [7, '03 Apr 2026', 'Good Friday', 'Restricted'],
+      [8, '14 Apr 2026', 'Tamil New Year', 'Restricted'],
+      [9, '01 May 2026', 'May Day', 'General'],
+      [10, '28 May 2026', 'Bakrid', 'Restricted'],
+      [11, '15 Aug 2026', 'Independence Day', 'General'],
+      [12, '26 Aug 2026', 'Eid e Milad', 'Restricted'],
+      [13, '28 Aug 2026', 'Rakshabandhan', 'Restricted'],
+      [14, '14 Sep 2026', 'Ganesh Chathurthi', 'Restricted'],
+      [15, '02 Oct 2026', 'Gandhi Jayanthi', 'General'],
+      [16, '21 Oct 2026', 'Vijayadasami/Dussehra', 'General'],
+      [17, '10 Nov 2026', 'Balipadyami, Deepavali', 'General'],
+      [18, '24 Nov 2026', 'Guru Nanak Chathurthi', 'Restricted'],
+      [19, '25 Dec 2026', 'Christmas', 'General'],
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols'] = [{ wch: 10 }, { wch: 16 }, { wch: 28 }, { wch: 16 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Holidays');
+    XLSX.writeFile(workbook, 'company-holidays-2026.xlsx');
   }
 
   async function onMandatoryFile(e) {
@@ -1590,7 +1633,7 @@ export function HrCalendar() {
       const leaves = await parseMandatoryExcel(file);
       if (!leaves.length) {
         throw new Error(
-          'No valid rows found. Use columns: title, start_date, end_date, note (Excel .xlsx)'
+          'No valid rows found. Use columns: Sl No., Date, Holiday, Holiday Type (General or Restricted)'
         );
       }
       const result = await api('/mandatory-leaves/upload', {
@@ -1600,8 +1643,8 @@ export function HrCalendar() {
       const errCount = result.errors?.length || 0;
       setMandatoryMsg(
         errCount
-          ? `Uploaded ${result.created} mandatory leave(s); ${errCount} row(s) skipped.`
-          : `Uploaded ${result.created} mandatory leave(s) to all calendars.`
+          ? `Uploaded ${result.created} holiday(s); ${errCount} row(s) skipped.`
+          : `Uploaded ${result.created} holiday(s) to all calendars.`
       );
       reload();
     } catch (error) {
@@ -1617,27 +1660,28 @@ export function HrCalendar() {
     <AppShell title="Team calendar" nav={NAV}>
       <p className="lede">
         Filter by employee to review overlapping leave. Use + to add leave, or open a chip to delete.
-        Upload mandatory leaves below so they appear on everyone’s calendar.
+        Upload holidays below so they appear on everyone’s calendar. Restricted holidays can be
+        taken by employees and managers — maximum 2 per year.
       </p>
 
       <section className="panel mandatory-leave-panel">
-        <h2>Mandatory leaves</h2>
+        <h2>Company holidays</h2>
         <p className="muted slim">
-          Company-wide days (festivals, shutdowns, etc.). They show on all calendars and do not
-          deduct employee leave balance.
+          General holidays are company-wide offs. Restricted holidays are optional — each employee
+          or manager may take only 2 restricted holidays per year from the list.
         </p>
         <form className="mandatory-leave-form" onSubmit={submitMandatory}>
           <label>
-            Title
+            Holiday
             <input
               required
               value={mandatoryForm.title}
               onChange={(e) => setMandatoryForm((f) => ({ ...f, title: e.target.value }))}
-              placeholder="e.g. Diwali holiday"
+              placeholder="e.g. Republic Day"
             />
           </label>
           <label>
-            Start
+            Date
             <input
               required
               type="date"
@@ -1652,13 +1696,14 @@ export function HrCalendar() {
             />
           </label>
           <label>
-            End
-            <input
-              type="date"
-              value={mandatoryForm.endDate}
-              min={mandatoryForm.startDate || undefined}
-              onChange={(e) => setMandatoryForm((f) => ({ ...f, endDate: e.target.value }))}
-            />
+            Holiday type
+            <select
+              value={mandatoryForm.holidayType}
+              onChange={(e) => setMandatoryForm((f) => ({ ...f, holidayType: e.target.value }))}
+            >
+              <option value="general">General</option>
+              <option value="restricted">Restricted</option>
+            </select>
           </label>
           <label className="mandatory-leave-note">
             Note
@@ -1671,6 +1716,9 @@ export function HrCalendar() {
           <div className="mandatory-leave-actions">
             <button type="submit" className="btn primary" disabled={mandatoryBusy}>
               {mandatoryBusy ? 'Saving…' : 'Add to calendar'}
+            </button>
+            <button type="button" className="btn secondary" onClick={downloadHolidayTemplate}>
+              Download Excel format
             </button>
             <label className="btn secondary mandatory-upload-btn">
               {uploadBusy ? 'Uploading…' : 'Upload Excel'}
@@ -1685,8 +1733,8 @@ export function HrCalendar() {
           </div>
         </form>
         <p className="muted slim">
-          Excel columns: <code>title, start_date, end_date, note</code> (dates as YYYY-MM-DD or
-          Excel dates).
+          Excel columns: <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted).
+          Dates like <code>01 Jan 2026</code> or YYYY-MM-DD.
         </p>
         {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
         {!!mandatoryOnCalendar.length && (
@@ -1694,7 +1742,7 @@ export function HrCalendar() {
             {mandatoryOnCalendar.map((leave) => (
               <li key={leave.id}>
                 <span>
-                  <strong>{leave.userName}</strong> · {formatLeaveSpan(leave)}
+                  <strong>{leave.userName}</strong> · {leave.holidayType === 'restricted' ? 'Restricted' : 'General'} · {formatLeaveSpan(leave)}
                   {leave.reason ? ` · ${leave.reason}` : ''}
                 </span>
                 <button

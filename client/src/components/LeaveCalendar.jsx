@@ -15,6 +15,7 @@ import {
   subMonths,
 } from 'date-fns';
 import {
+  APPLY_LABELS,
   LEAVE_LABELS,
   REQUEST_LABELS,
   SESSION_LABELS,
@@ -75,7 +76,9 @@ function shortTypeLabel(type) {
   if (type === 'earned') return 'EL';
   if (type === 'sick') return 'SL';
   if (type === 'compensation') return 'Comp';
-  if (type === 'mandatory') return 'ML';
+  if (type === 'restricted') return 'RH';
+  if (type === 'general') return 'GH';
+  if (type === 'mandatory') return 'GH';
   return REQUEST_LABELS[type] || type;
 }
 
@@ -208,10 +211,12 @@ export default function LeaveCalendar({
     setCreateBusy(true);
     setCreateErr('');
     try {
+      const isRestricted = createForm.leaveType === 'restricted';
       const body = {
         ...createForm,
         userId: Number(createForm.userId),
-        endDate: createForm.session !== 'full' ? createForm.startDate : createForm.endDate,
+        session: isRestricted ? 'full' : createForm.session,
+        endDate: isRestricted || createForm.session !== 'full' ? createForm.startDate : createForm.endDate,
       };
       await onCreateLeave(body);
       setShowCreate(false);
@@ -284,11 +289,17 @@ export default function LeaveCalendar({
       </div>
 
       <div className="calendar-legend" aria-hidden="true">
-        {Object.entries(REQUEST_LABELS).map(([key, label]) => (
+        {Object.entries(APPLY_LABELS).map(([key, label]) => (
           <span key={key} className="legend-item">
             <i className={`legend-swatch type-${key}`} /> {label}
           </span>
         ))}
+        <span className="legend-item">
+          <i className="legend-swatch type-general" /> General Holiday
+        </span>
+        <span className="legend-item">
+          <i className="legend-swatch type-weekend" /> Sat / Sun
+        </span>
       </div>
 
       {canCancelLeaves && (
@@ -299,13 +310,14 @@ export default function LeaveCalendar({
       {canManage && (
         <p className="calendar-hint muted">
           Use the employee dropdown to focus one person. Tap + to add leave, or open a chip to delete.
-          Mandatory leaves stay visible for every employee filter.
+          General holidays (GH, blue) and restricted holidays (RH, pink) stay visible for every employee filter.
+          Saturdays and Sundays are grey company offs.
         </p>
       )}
 
       <div className="calendar-grid head">
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-          <div key={d} className="calendar-dow">
+          <div key={d} className={`calendar-dow${d === 'Sat' || d === 'Sun' ? ' is-weekend' : ''}`}>
             {d}
           </div>
         ))}
@@ -536,15 +548,23 @@ export default function LeaveCalendar({
                 Leave type
                 <select
                   value={createForm.leaveType}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, leaveType: e.target.value }))}
+                  onChange={(e) =>
+                    setCreateForm((f) => ({
+                      ...f,
+                      leaveType: e.target.value,
+                      session: e.target.value === 'restricted' ? 'full' : f.session,
+                      endDate: e.target.value === 'restricted' ? f.startDate : f.endDate,
+                    }))
+                  }
                 >
-                  {Object.entries(REQUEST_LABELS).map(([k, v]) => (
+                  {Object.entries(APPLY_LABELS).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
                     </option>
                   ))}
                 </select>
               </label>
+              {createForm.leaveType !== 'restricted' && (
               <label>
                 Session
                 <select
@@ -564,8 +584,11 @@ export default function LeaveCalendar({
                   ))}
                 </select>
               </label>
+              )}
               <label>
-                {createForm.session !== 'full' ? 'Date' : 'Start date'}
+                {createForm.leaveType === 'restricted' || createForm.session !== 'full'
+                  ? 'Date'
+                  : 'Start date'}
                 <input
                   type="date"
                   value={createForm.startDate}
@@ -573,13 +596,16 @@ export default function LeaveCalendar({
                     setCreateForm((f) => ({
                       ...f,
                       startDate: e.target.value,
-                      endDate: f.session !== 'full' ? e.target.value : f.endDate || e.target.value,
+                      endDate:
+                        f.leaveType === 'restricted' || f.session !== 'full'
+                          ? e.target.value
+                          : f.endDate || e.target.value,
                     }))
                   }
                   required
                 />
               </label>
-              {createForm.session === 'full' && (
+              {createForm.leaveType !== 'restricted' && createForm.session === 'full' && (
                 <label>
                   End date
                   <input
@@ -589,6 +615,12 @@ export default function LeaveCalendar({
                     required
                   />
                 </label>
+              )}
+              {createForm.leaveType === 'restricted' && (
+                <p className="muted slim">
+                  Restricted holidays must be a date from the company RH list. Each employee or
+                  manager may take only 2 per year.
+                </p>
               )}
               <label>
                 Reason (optional)
