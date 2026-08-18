@@ -11,6 +11,7 @@ const DEFAULT_COLOR_INPUT = '#0b1220';
 
 const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
+  { to: '/app/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
   { to: '/app/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
@@ -95,6 +96,14 @@ function NavGlyph({ label }) {
     return (
       <svg {...common}>
         <path d="M4.5 18.5V9.5M10 18.5V5.5M15.5 18.5v-6M21 18.5V8" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('feed')) {
+    return (
+      <svg {...common}>
+        <path d="M5 8.8h9.2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H9.4L6.2 19.5v-2.7H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2Z" {...stroke} />
+        <path d="M9.6 6.4V5.6A2 2 0 0 1 11.6 3.6H17a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-.7" {...stroke} />
       </svg>
     );
   }

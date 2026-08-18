@@ -169,6 +169,20 @@ export function parseAppDateTime(value) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+export function formatRelativeTime(value) {
+  const d = parseAppDateTime(value);
+  if (!d) return value || '';
+  const mins = Math.round(Math.max(0, Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return formatDateTime(value);
+}
+
 export function formatDate(iso) {
   const d = parseLeaveDate(iso);
   if (!d) return '—';

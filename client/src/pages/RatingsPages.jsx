@@ -41,6 +41,7 @@ function formatPeriodLabel(year, month) {
 
 const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/manager/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
@@ -51,12 +52,11 @@ const MANAGER_NAV = [
 
 const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
+  { to: '/hr/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -64,6 +64,7 @@ const HR_NAV = [
 
 const USER_NAV = [
   { to: '/app', label: 'Home', end: true },
+  { to: '/app/feed', label: 'Feed' },
   { to: '/app/apply', label: 'Apply' },
   { to: '/app/calendar', label: 'My calendar' },
   { to: '/app/salary', label: 'Salary' },

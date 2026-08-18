@@ -4,23 +4,23 @@ import { ThemeProvider } from './theme';
 import LoginPage from './pages/LoginPage';
 import {
   HrApprovals,
-  HrApply,
   HrCalendar,
+  HrFeed,
   HrHistory,
   HrOnboarding,
   HrOverview,
-  HrSalary,
   HrUsers,
 } from './pages/HrPages';
 import {
   ManagerApprovals,
   ManagerApply,
   ManagerCalendar,
+  ManagerFeed,
   ManagerHistory,
   ManagerOverview,
   ManagerSalary,
 } from './pages/ManagerPages';
-import { UserApply, UserCalendar, UserHistory, UserHome, UserSalary } from './pages/UserPages';
+import { UserApply, UserCalendar, UserFeed, UserHistory, UserHome, UserSalary } from './pages/UserPages';
 import { UserRatings, ManagerRatings, HrRatings } from './pages/RatingsPages';
 import { EmployeeInvoices, ManagerInvoices, HrInvoices } from './pages/InvoicePages';
 import { homePathForRole } from './utils';
@@ -61,11 +61,13 @@ export default function App() {
               </Protected>
             }
           />
+          <Route path="/hr/apply" element={<Navigate to="/hr" replace />} />
+          <Route path="/hr/salary" element={<Navigate to="/hr" replace />} />
           <Route
-            path="/hr/apply"
+            path="/hr/feed"
             element={
               <Protected role="hr">
-                <HrApply />
+                <HrFeed />
               </Protected>
             }
           />
@@ -90,14 +92,6 @@ export default function App() {
             element={
               <Protected role="hr">
                 <HrUsers />
-              </Protected>
-            }
-          />
-          <Route
-            path="/hr/salary"
-            element={
-              <Protected role="hr">
-                <HrSalary />
               </Protected>
             }
           />
@@ -141,6 +135,14 @@ export default function App() {
             element={
               <Protected role="manager">
                 <ManagerOverview />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/feed"
+            element={
+              <Protected role="manager">
+                <ManagerFeed />
               </Protected>
             }
           />
@@ -207,6 +209,14 @@ export default function App() {
             element={
               <Protected role="user">
                 <UserHome />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/feed"
+            element={
+              <Protected role="user">
+                <UserFeed />
               </Protected>
             }
           />

@@ -37,6 +37,18 @@ import {
 } from './mail.js';
 import { todayIst } from './time.js';
 import { SQL_NOW_IST, SQL_TODAY_IST, isUniqueViolation } from './sqlDialect.js';
+import {
+  FEED_CATEGORIES,
+  MAX_COMMENT_LEN,
+  MAX_POST_LEN,
+  assembleFeed,
+  buildCelebrations,
+  countsFromRows,
+  emptyCounts,
+  groupReactionRows,
+  normalizeEmoji,
+  trendingTagsFromPosts,
+} from './feedUtils.js';
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
 import { mapInvoice, validateInvoicePayload, INVOICE_SELECT, INVOICE_RETENTION_NOTICE } from './invoiceUtils.js';
 import { purgeExpiredInvoices } from './invoiceCleanup.js';
@@ -224,9 +236,17 @@ async function assertRestrictedHolidayRequest(userId, startDate, endDate, sessio
 async function publicUserWithPhoto(user) {
   if (!user) return null;
   const row = await db
-    .prepare(`SELECT profile_photo FROM employee_profiles WHERE user_id = ?`)
+    .prepare(
+      `SELECT profile_photo, designation, department, location FROM employee_profiles WHERE user_id = ?`
+    )
     .get(user.id);
-  return publicUser({ ...user, profile_photo: row?.profile_photo || null });
+  return publicUser({
+    ...user,
+    profile_photo: row?.profile_photo || null,
+    designation: row?.designation ?? user.designation ?? null,
+    department: row?.department ?? user.department ?? null,
+    location: row?.location ?? user.location ?? null,
+  });
 }
 
 // ——— Auth ———
@@ -2706,6 +2726,258 @@ router.get('/invoices/:id/pdf', authRequired, async (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(buffer);
+});
+
+const FEED_POST_SELECT = `
+  SELECT fp.id, fp.user_id, fp.category, fp.content, fp.created_at,
+         u.name AS author_name, u.role AS author_role,
+         ep.profile_photo, ep.designation, ep.department
+  FROM feed_posts fp
+  JOIN users u ON u.id = fp.user_id
+  LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+`;
+
+const FEED_COMMENT_SELECT = `
+  SELECT fc.id, fc.post_id, fc.user_id, fc.content, fc.created_at,
+         u.name AS author_name, u.role AS author_role,
+         ep.profile_photo, ep.designation, ep.department
+  FROM feed_comments fc
+  JOIN users u ON u.id = fc.user_id
+  LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+`;
+
+function sqlIn(ids) {
+  return ids.map(() => '?').join(',');
+}
+
+async function loadReactionMap(column, ids, userId) {
+  if (!ids.length) return new Map();
+  const rows = await db
+    .prepare(
+      `SELECT ${column} AS target_id, emoji,
+              COUNT(*) AS count,
+              SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS mine
+       FROM feed_reactions
+       WHERE ${column} IN (${sqlIn(ids)})
+       GROUP BY ${column}, emoji`
+    )
+    .all(userId, ...ids);
+  return groupReactionRows(rows, 'target_id');
+}
+
+async function hydrateFeedPosts(postRows, userId) {
+  const postIds = postRows.map((row) => row.id);
+  const comments = postIds.length
+    ? await db
+        .prepare(
+          `${FEED_COMMENT_SELECT} WHERE fc.post_id IN (${sqlIn(postIds)}) ORDER BY fc.created_at ASC, fc.id ASC`
+        )
+        .all(...postIds)
+    : [];
+  const commentIds = comments.map((row) => row.id);
+  const postReactions = await loadReactionMap('post_id', postIds, userId);
+  const commentReactions = await loadReactionMap('comment_id', commentIds, userId);
+  return assembleFeed(postRows, comments, postReactions, commentReactions);
+}
+
+async function getHydratedPost(postId, userId) {
+  const row = await db.prepare(`${FEED_POST_SELECT} WHERE fp.id = ?`).get(postId);
+  if (!row) return null;
+  const [post] = await hydrateFeedPosts([row], userId);
+  return post || null;
+}
+
+async function toggleFeedReaction({ postId, commentId, userId, emoji }) {
+  const normalized = normalizeEmoji(emoji);
+  if (!normalized) return { error: 'Choose a supported emoji reaction', status: 400 };
+
+  if (postId) {
+    const post = await db.prepare(`SELECT id FROM feed_posts WHERE id = ?`).get(postId);
+    if (!post) return { error: 'Post not found', status: 404 };
+  } else {
+    const comment = await db.prepare(`SELECT id FROM feed_comments WHERE id = ?`).get(commentId);
+    if (!comment) return { error: 'Comment not found', status: 404 };
+  }
+
+  const existing = postId
+    ? await db
+        .prepare(`SELECT id FROM feed_reactions WHERE post_id = ? AND user_id = ? AND emoji = ?`)
+        .get(postId, userId, normalized)
+    : await db
+        .prepare(`SELECT id FROM feed_reactions WHERE comment_id = ? AND user_id = ? AND emoji = ?`)
+        .get(commentId, userId, normalized);
+
+  if (existing) {
+    await db.prepare(`DELETE FROM feed_reactions WHERE id = ?`).run(existing.id);
+  } else {
+    try {
+      await db
+        .prepare(
+          `INSERT INTO feed_reactions (post_id, comment_id, user_id, emoji, created_at)
+           VALUES (?, ?, ?, ?, ${SQL_NOW_IST})`
+        )
+        .run(postId || null, commentId || null, userId, normalized);
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+
+  const map = postId
+    ? await loadReactionMap('post_id', [postId], userId)
+    : await loadReactionMap('comment_id', [commentId], userId);
+  const reactions = map.get(postId || commentId) || [];
+  const like = reactions.find((row) => row.emoji === '❤️');
+  return {
+    reactions,
+    likes: like?.count || 0,
+    hasLiked: Boolean(like?.mine),
+  };
+}
+
+router.get('/feed', authRequired, async (req, res) => {
+  const category = String(req.query.category || 'all').trim();
+  const q = String(req.query.q || '').trim().toLowerCase();
+  if (category !== 'all' && !FEED_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Unknown feed channel' });
+  }
+
+  const params = [];
+  const where = [];
+  if (category !== 'all') {
+    where.push('fp.category = ?');
+    params.push(category);
+  }
+  if (q) {
+    where.push(
+      `(LOWER(u.name) LIKE ? OR LOWER(fp.content) LIKE ? OR LOWER(COALESCE(ep.designation, '')) LIKE ? OR LOWER(COALESCE(ep.department, '')) LIKE ?)`
+    );
+    const like = `%${q}%`;
+    params.push(like, like, like, like);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const postRows = await db
+    .prepare(
+      `${FEED_POST_SELECT} ${whereSql} ORDER BY fp.created_at DESC, fp.id DESC LIMIT 150`
+    )
+    .all(...params);
+
+  const countRows = await db
+    .prepare(`SELECT category, COUNT(*) AS n FROM feed_posts GROUP BY category`)
+    .all();
+  const recentForTags = await db
+    .prepare(`SELECT content FROM feed_posts ORDER BY created_at DESC, id DESC LIMIT 80`)
+    .all();
+  const people = await db
+    .prepare(
+      `SELECT u.id, u.name, ep.profile_photo, ep.designation, ep.department,
+              ep.date_of_birth, ep.date_of_joining
+       FROM users u
+       JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE u.active = 1
+         AND (
+           (ep.date_of_birth IS NOT NULL AND TRIM(ep.date_of_birth) != '')
+           OR (ep.date_of_joining IS NOT NULL AND TRIM(ep.date_of_joining) != '')
+         )`
+    )
+    .all();
+
+  res.json({
+    posts: await hydrateFeedPosts(postRows, req.user.id),
+    counts: countsFromRows(countRows) || emptyCounts(),
+    tags: trendingTagsFromPosts(recentForTags),
+    celebrations: buildCelebrations(people, todayIst()),
+  });
+});
+
+router.post('/feed/posts', authRequired, async (req, res) => {
+  const category = String(req.body?.category || 'casual').trim();
+  const content = String(req.body?.content || '').trim();
+  if (!FEED_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Choose a feed channel' });
+  }
+  if (!content) {
+    return res.status(400).json({ error: 'Write something before sharing' });
+  }
+  if (content.length > MAX_POST_LEN) {
+    return res.status(400).json({ error: `Posts can be at most ${MAX_POST_LEN} characters` });
+  }
+
+  const inserted = await db
+    .prepare(
+      `INSERT INTO feed_posts (user_id, category, content, created_at)
+       VALUES (?, ?, ?, ${SQL_NOW_IST})`
+    )
+    .run(req.user.id, category, content);
+  const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
+  res.status(201).json({ post });
+});
+
+router.delete('/feed/posts/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db.prepare(`SELECT id, user_id FROM feed_posts WHERE id = ?`).get(id);
+  if (!row) return res.status(404).json({ error: 'Post not found' });
+  if (row.user_id !== req.user.id && req.user.role !== 'hr') {
+    return res.status(403).json({ error: 'Not allowed to delete this post' });
+  }
+  await db.prepare(`DELETE FROM feed_posts WHERE id = ?`).run(id);
+  res.json({ ok: true });
+});
+
+router.post('/feed/posts/:id/comments', authRequired, async (req, res) => {
+  const postId = Number(req.params.id);
+  const content = String(req.body?.content || '').trim();
+  const post = await db.prepare(`SELECT id FROM feed_posts WHERE id = ?`).get(postId);
+  if (!post) return res.status(404).json({ error: 'Post not found' });
+  if (!content) {
+    return res.status(400).json({ error: 'Write a reply first' });
+  }
+  if (content.length > MAX_COMMENT_LEN) {
+    return res.status(400).json({ error: `Replies can be at most ${MAX_COMMENT_LEN} characters` });
+  }
+  await db
+    .prepare(
+      `INSERT INTO feed_comments (post_id, user_id, content, created_at)
+       VALUES (?, ?, ?, ${SQL_NOW_IST})`
+    )
+    .run(postId, req.user.id, content);
+  const hydrated = await getHydratedPost(postId, req.user.id);
+  res.status(201).json({ post: hydrated });
+});
+
+router.delete('/feed/comments/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db
+    .prepare(`SELECT id, post_id, user_id FROM feed_comments WHERE id = ?`)
+    .get(id);
+  if (!row) return res.status(404).json({ error: 'Comment not found' });
+  if (row.user_id !== req.user.id && req.user.role !== 'hr') {
+    return res.status(403).json({ error: 'Not allowed to delete this reply' });
+  }
+  await db.prepare(`DELETE FROM feed_comments WHERE id = ?`).run(id);
+  const post = await getHydratedPost(row.post_id, req.user.id);
+  res.json({ ok: true, post });
+});
+
+router.post('/feed/posts/:id/reactions', authRequired, async (req, res) => {
+  const result = await toggleFeedReaction({
+    postId: Number(req.params.id),
+    commentId: null,
+    userId: req.user.id,
+    emoji: req.body?.emoji,
+  });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.json(result);
+});
+
+router.post('/feed/comments/:id/reactions', authRequired, async (req, res) => {
+  const result = await toggleFeedReaction({
+    postId: null,
+    commentId: Number(req.params.id),
+    userId: req.user.id,
+    emoji: req.body?.emoji,
+  });
+  if (result.error) return res.status(result.status).json({ error: result.error });
+  res.json(result);
 });
 
 export default router;

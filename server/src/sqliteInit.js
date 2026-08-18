@@ -103,6 +103,7 @@ migrateEmployeeProfilesTable();
 migrateEmployeeAssetsTable();
 migrateMandatoryLeavesTable();
 migrateHolidayTypes();
+migrateFeedTables();
 
 function migrateInvoiceSubmitterDeleted() {
   const cols = db.prepare(`PRAGMA table_info(invoices)`).all();
@@ -801,6 +802,46 @@ function migrateHolidayTypes() {
   }
 
   seedCompanyHolidaysSync(db);
+}
+
+function migrateFeedTables() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS feed_posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE INDEX IF NOT EXISTS idx_feed_posts_created ON feed_posts(created_at);
+    CREATE INDEX IF NOT EXISTS idx_feed_posts_category ON feed_posts(category);
+
+    CREATE TABLE IF NOT EXISTS feed_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL REFERENCES feed_posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE INDEX IF NOT EXISTS idx_feed_comments_post ON feed_comments(post_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS feed_reactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER REFERENCES feed_posts(id) ON DELETE CASCADE,
+      comment_id INTEGER REFERENCES feed_comments(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      emoji TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+      CHECK (
+        (post_id IS NOT NULL AND comment_id IS NULL) OR
+        (post_id IS NULL AND comment_id IS NOT NULL)
+      )
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_reactions_post
+      ON feed_reactions(post_id, user_id, emoji) WHERE post_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_reactions_comment
+      ON feed_reactions(comment_id, user_id, emoji) WHERE comment_id IS NOT NULL;
+  `);
 }
 
 export default db;

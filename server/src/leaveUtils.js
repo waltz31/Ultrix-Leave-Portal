@@ -191,6 +191,7 @@ export function publicUser(row) {
     employeeNumber: row.employee_number ?? null,
     designation: row.designation ?? null,
     department: row.department ?? null,
+    location: row.location ?? null,
     active: Boolean(row.active),
     createdAt: row.created_at,
     profilePhoto: row.profile_photo || null,

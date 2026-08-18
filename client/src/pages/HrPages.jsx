@@ -10,6 +10,7 @@ import { LeaveExportPanel, LeaveReportSection } from '../components/LeaveReports
 import OnboardingIdCard from '../components/OnboardingIdCard';
 import OverviewPanels from '../components/OverviewPanels';
 import HrEmployeeBalanceDirectory from '../components/HrEmployeeBalanceDirectory';
+import CompanyFeed from '../components/CompanyFeed';
 import EmployeeOnboardingForm, {
   ASSET_CATEGORY_OPTIONS,
   EMPTY_ASSET,
@@ -24,24 +25,21 @@ import EmployeeOnboardingForm, {
 } from '../components/EmployeeOnboardingForm';
 import {
   SALARY_SENSITIVE_FIELDS,
-  SalaryComponentsView,
   formatPayrollValue,
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
-import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh, managerOptionLabel } from '../utils';
 import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
 import * as XLSX from 'xlsx';
 
 const NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
+  { to: '/hr/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -115,6 +113,14 @@ export function HrOverview() {
       <LeaveReportSection />
       <LeaveExportPanel />
 
+    </AppShell>
+  );
+}
+
+export function HrFeed() {
+  return (
+    <AppShell title="Feed" nav={NAV}>
+      <CompanyFeed />
     </AppShell>
   );
 }
@@ -1293,38 +1299,6 @@ export function HrUsers() {
         )}
       </section>
       </div>
-    </AppShell>
-  );
-}
-
-export function HrApply() {
-  return (
-    <AppShell title="Apply leave" nav={NAV}>
-      <LeaveBalanceDashboard />
-    </AppShell>
-  );
-}
-
-export function HrSalary() {
-  const { data, error, loading } = useLoad(() =>
-    api('/profiles/me').then((d) => d.profile)
-  );
-
-  return (
-    <AppShell title="My salary" nav={NAV}>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      {!loading && !data && !error && (
-        <p className="empty">No salary profile on file yet. Add your details in Onboarding.</p>
-      )}
-      {data && (
-        <SalaryComponentsView
-          payroll={data.payroll}
-          employmentType={data.employment?.employmentType}
-          showSensitive
-          title={`${data.name} · salary components`}
-        />
-      )}
     </AppShell>
   );
 }

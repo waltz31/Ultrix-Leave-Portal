@@ -6,6 +6,7 @@ import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
+import CompanyFeed from '../components/CompanyFeed';
 import { LeaveReportCharts } from '../components/LeaveReports';
 import {
   LEAVE_LABELS,
@@ -19,6 +20,7 @@ import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/app', label: 'Home', end: true },
+  { to: '/app/feed', label: 'Feed' },
   { to: '/app/apply', label: 'Apply' },
   { to: '/app/calendar', label: 'My calendar' },
   { to: '/app/salary', label: 'Salary' },
@@ -167,6 +169,14 @@ export function UserHome() {
           <LeaveReportCharts byType={report.byType} byMonth={report.byMonth} />
         </>
       )}
+    </AppShell>
+  );
+}
+
+export function UserFeed() {
+  return (
+    <AppShell title="Feed" nav={NAV}>
+      <CompanyFeed />
     </AppShell>
   );
 }

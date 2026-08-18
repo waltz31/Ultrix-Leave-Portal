@@ -9,11 +9,13 @@ import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection } from '../components/LeaveReports';
 import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
+import CompanyFeed from '../components/CompanyFeed';
 import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/manager/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
@@ -80,6 +82,14 @@ export function ManagerOverview() {
 
       <LeaveReportSection />
 
+    </AppShell>
+  );
+}
+
+export function ManagerFeed() {
+  return (
+    <AppShell title="Feed" nav={NAV}>
+      <CompanyFeed />
     </AppShell>
   );
 }
