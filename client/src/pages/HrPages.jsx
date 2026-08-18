@@ -322,6 +322,7 @@ export function HrOnboarding() {
   const [err, setErr] = useState('');
   const [selected, setSelected] = useState(null);
   const [createdNotice, setCreatedNotice] = useState(null);
+  const [bulkResult, setBulkResult] = useState(null);
 
   function blankForm() {
     return { ...EMPTY_ONBOARDING_FORM, assets: [{ ...EMPTY_ASSET }] };
@@ -394,9 +395,68 @@ export function HrOnboarding() {
     }
   }
 
+  async function bulkImportEmployees(forms) {
+    setBusy(true);
+    setMsg('');
+    setErr('');
+    const created = [];
+    const failed = [];
+    try {
+      for (let i = 0; i < forms.length; i += 1) {
+        const next = forms[i];
+        const rowLabel = next._excelRow || i + 2;
+        const formBody = { ...next };
+        delete formBody._excelRow;
+        try {
+          const { profile, credentials } = await api('/onboarding', {
+            method: 'POST',
+            body: {
+              ...formBody,
+              managerId: formBody.managerId ? Number(formBody.managerId) : null,
+              assets: formBody.assets || [],
+            },
+          });
+          created.push({
+            row: rowLabel,
+            name: profile?.name || formBody.name || 'Employee',
+            email: credentials?.email || profile?.email || '',
+            password: credentials?.password || '',
+            emailGenerated: Boolean(credentials?.emailGenerated),
+            passwordGenerated: Boolean(credentials?.passwordGenerated),
+          });
+        } catch (error) {
+          failed.push({
+            row: rowLabel,
+            name: formBody.name || formBody.email || `Row ${rowLabel}`,
+            error: error.message,
+          });
+        }
+      }
+      setShowForm(false);
+      setEditingUserId(null);
+      setForm(blankForm());
+      setBulkResult({ created, failed });
+      if (created.length && !failed.length) {
+        setMsg(
+          `Imported ${created.length} employee${created.length === 1 ? '' : 's'} from the spreadsheet.`
+        );
+      } else if (created.length) {
+        setMsg(
+          `Imported ${created.length} employee${created.length === 1 ? '' : 's'}. ${failed.length} row${failed.length === 1 ? '' : 's'} failed.`
+        );
+      } else {
+        setErr(failed[0]?.error || 'No employees could be imported from that spreadsheet.');
+      }
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openCreate() {
     setErr('');
     setMsg('');
+    setBulkResult(null);
     setEditingUserId(null);
     setForm(blankForm());
     setShowForm(true);
@@ -452,6 +512,73 @@ export function HrOnboarding() {
       </div>
       {(msg || err) && !showForm && (
         <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>
+      )}
+      {bulkResult && (
+        <div className="modal-backdrop" onClick={() => setBulkResult(null)}>
+          <div
+            className="modal modal-wide"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row-between">
+              <h2>Spreadsheet import</h2>
+              <button type="button" className="btn ghost" onClick={() => setBulkResult(null)}>
+                Close
+              </button>
+            </div>
+            <p className={bulkResult.failed.length ? 'form-error' : 'form-ok'}>
+              {bulkResult.created.length} created
+              {bulkResult.failed.length ? `, ${bulkResult.failed.length} failed` : ''}.
+            </p>
+            {!!bulkResult.created.length && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Row</th>
+                      <th>Name</th>
+                      <th>Login email</th>
+                      <th>Password</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkResult.created.map((row) => (
+                      <tr key={`ok-${row.row}-${row.email}`}>
+                        <td>{row.row}</td>
+                        <td>{row.name}</td>
+                        <td>{row.email || '—'}</td>
+                        <td>{row.password || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {!!bulkResult.failed.length && (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Row</th>
+                      <th>Name</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkResult.failed.map((row) => (
+                      <tr key={`fail-${row.row}-${row.name}`}>
+                        <td>{row.row}</td>
+                        <td>{row.name}</td>
+                        <td>{row.error}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       )}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
@@ -595,6 +722,7 @@ export function HrOnboarding() {
               setForm={setForm}
               managers={managers}
               onSubmit={saveProfile}
+              onBulkImport={editingUserId ? undefined : bulkImportEmployees}
               busy={busy}
               submitLabel={editingUserId ? 'Save changes' : 'Create employee profile'}
             />

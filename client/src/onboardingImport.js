@@ -86,6 +86,93 @@ const HEADER_TO_KEY = Object.fromEntries(
   ])
 );
 
+const HEADER_ALIASES = {
+  empid: 'employeeNumber',
+  empcode: 'employeeNumber',
+  employeecode: 'employeeNumber',
+  employeeid: 'employeeNumber',
+  staffid: 'employeeNumber',
+  employeename: 'name',
+  fullname: 'name',
+  candidatename: 'name',
+  dob: 'dateOfBirth',
+  birthdate: 'dateOfBirth',
+  dateofbirth: 'dateOfBirth',
+  sex: 'gender',
+  mobile: 'personalMobile',
+  phone: 'personalMobile',
+  mobileno: 'personalMobile',
+  mobilenumber: 'personalMobile',
+  personalphone: 'personalMobile',
+  contactnumber: 'personalMobile',
+  contactno: 'personalMobile',
+  phonenumber: 'personalMobile',
+  personalmail: 'personalEmail',
+  personalemailid: 'personalEmail',
+  workemail: 'email',
+  officeemail: 'email',
+  officialemail: 'email',
+  companyemail: 'email',
+  emailid: 'email',
+  officialmail: 'email',
+  tempPassword: 'password',
+  temppassword: 'password',
+  doj: 'dateOfJoining',
+  joiningdate: 'dateOfJoining',
+  dateofjoin: 'dateOfJoining',
+  emptype: 'employmentType',
+  type: 'employmentType',
+  dept: 'department',
+  role: 'designation',
+  jobtitle: 'designation',
+  title: 'designation',
+  grade: 'jobLevel',
+  level: 'jobLevel',
+  reportingmanager: 'managerEmail',
+  manager: 'managerEmail',
+  managername: 'managerEmail',
+  reportingto: 'managerEmail',
+  office: 'location',
+  city: 'location',
+  worklocation: 'location',
+  mode: 'workMode',
+  status: 'employmentStatus',
+  probation: 'probationPeriod',
+  confirmation: 'confirmationDate',
+  basicsal: 'basicSalary',
+  basic: 'basicSalary',
+  pf: 'pfEpfDetails',
+  epf: 'pfEpfDetails',
+  uan: 'pfEpfDetails',
+  pt: 'professionalTax',
+  bank: 'bankAccountDetails',
+  bankdetails: 'bankAccountDetails',
+  accountnumber: 'bankAccountDetails',
+  internstipend: 'stipend',
+};
+
+const ASSET_HEADER_SUFFIX = {
+  category: 'assetCategory',
+  device: 'deviceAssigned',
+  deviceassigned: 'deviceAssigned',
+  id: 'assetId',
+  assetid: 'assetId',
+  mobile: 'mobileNumber',
+  accesscard: 'accessCard',
+  issuedate: 'issueDate',
+  returndate: 'returnDate',
+  softwareaccess: 'softwareAccess',
+  companyemail: 'companyEmail',
+};
+
+const GENDER_ALIASES = {
+  m: 'male',
+  f: 'female',
+  male: 'male',
+  female: 'female',
+  o: 'other',
+};
+
 function normHeader(value) {
   return String(value || '')
     .trim()
@@ -93,44 +180,124 @@ function normHeader(value) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
+function headerToKey(header) {
+  const n = normHeader(header);
+  if (!n) return '';
+  if (HEADER_TO_KEY[n]) return HEADER_TO_KEY[n];
+  if (HEADER_ALIASES[n]) return HEADER_ALIASES[n];
+  const asset = n.match(
+    /^asset(\d+)(category|device|deviceassigned|id|assetid|mobile|accesscard|issuedate|returndate|softwareaccess|companyemail)$/
+  );
+  if (asset) {
+    const slot = Number(asset[1]);
+    const field = ASSET_HEADER_SUFFIX[asset[2]];
+    if (slot >= 1 && field) return `asset${slot}_${field}`;
+  }
+  return '';
+}
+
 function matchOption(options, raw) {
   const text = String(raw || '').trim();
   if (!text) return '';
-  const compact = text.toLowerCase().replace(/[\s-/]+/g, '_');
+  const lower = text.toLowerCase();
+  const compact = lower.replace(/[\s\-/]+/g, '_');
   const found = options.find(
     (o) =>
       o.value === compact ||
-      o.value === text.toLowerCase() ||
-      o.label.toLowerCase() === text.toLowerCase()
+      o.value === lower ||
+      o.label.toLowerCase() === lower ||
+      o.label.toLowerCase().replace(/[\s\-/]+/g, '_') === compact
   );
-  return found?.value || '';
+  if (found) return found.value;
+  const prefixed = options.filter(
+    (o) => o.label.toLowerCase().startsWith(lower) || o.value.startsWith(compact)
+  );
+  if (prefixed.length === 1) return prefixed[0].value;
+  return '';
+}
+
+function ymdFromParts(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return '';
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function excelSerialToYmd(value) {
+  const serial = Math.round(Number(value));
+  if (!Number.isFinite(serial)) return '';
+  const utc = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+  return ymdFromParts(utc.getUTCFullYear(), utc.getUTCMonth() + 1, utc.getUTCDate());
 }
 
 function toIsoDate(value) {
   if (value == null || value === '') return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    return ymdFromParts(value.getFullYear(), value.getMonth() + 1, value.getDate());
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const utc = Date.UTC(1899, 11, 30) + Math.round(value) * 86400000;
-    return new Date(utc).toISOString().slice(0, 10);
+    return excelSerialToYmd(value);
   }
   const text = String(value).trim();
+  if (!text) return '';
   if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
   const dmy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
     const [, d, m, y] = dmy;
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    return ymdFromParts(y, m, d);
+  }
+  const mdy = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
+  if (mdy) {
+    const a = Number(mdy[1]);
+    const b = Number(mdy[2]);
+    const y = Number(mdy[3]) + 2000;
+    if (a > 12) return ymdFromParts(y, b, a);
+    return ymdFromParts(y, a, b);
   }
   const parsed = new Date(text);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  if (!Number.isNaN(parsed.getTime())) {
+    return ymdFromParts(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+  }
   return '';
+}
+
+function isExcelDateFormat(fmt) {
+  if (!fmt) return false;
+  const z = String(fmt);
+  return /[yYdDmM]/.test(z) && !/[hHsS]/.test(z);
+}
+
+function readSheetCell(cell) {
+  if (!cell) return '';
+  if (cell.t === 'd' && cell.v instanceof Date) return cell.v;
+  if (cell.t === 'b') return cell.v ? 'TRUE' : 'FALSE';
+  if (cell.t === 'n') {
+    if (isExcelDateFormat(cell.z)) return cell.v;
+    if (cell.w != null && String(cell.w).trim() !== '') return String(cell.w).trim();
+    return cell.v;
+  }
+  if (cell.w != null && String(cell.w).trim() !== '') return String(cell.w).trim();
+  if (cell.v == null || cell.v === '') return '';
+  return cell.v;
 }
 
 function cellText(value) {
   if (value == null) return '';
   if (value instanceof Date) return toIsoDate(value);
   return String(value).trim();
+}
+
+function isTemplateExampleRow(raw) {
+  const name = cellText(raw.name).toLowerCase();
+  const email = cellText(raw.email).toLowerCase();
+  const emp = cellText(raw.employeeNumber).toLowerCase();
+  return (
+    name === 'ada lovelace' ||
+    email === 'ada@company.com' ||
+    email === 'ada@example.com' ||
+    (emp === 'emp001' && name === 'ada lovelace')
+  );
 }
 
 export function rowToForm(raw, managers = []) {
@@ -147,7 +314,12 @@ export function rowToForm(raw, managers = []) {
   set('employeeNumber', cellText(raw.employeeNumber));
   set('name', cellText(raw.name));
   set('dateOfBirth', toIsoDate(raw.dateOfBirth));
-  set('gender', matchOption(GENDER_OPTIONS, raw.gender));
+  set(
+    'gender',
+    matchOption(GENDER_OPTIONS, raw.gender) ||
+      GENDER_ALIASES[String(raw.gender || '').trim().toLowerCase()] ||
+      ''
+  );
   set('personalEmail', cellText(raw.personalEmail));
   set('personalMobile', cellText(raw.personalMobile));
   set('address', cellText(raw.address));
@@ -194,7 +366,7 @@ export function rowToForm(raw, managers = []) {
     'bonusAmount',
   ];
   for (const key of moneyKeys) {
-    const text = cellText(raw[key]).replace(/,/g, '');
+    const text = cellText(raw[key]).replace(/[,₹$]/g, '').replace(/\s/g, '');
     if (text) form[key] = text;
   }
   set('pfEpfDetails', cellText(raw.pfEpfDetails));
@@ -204,8 +376,17 @@ export function rowToForm(raw, managers = []) {
   set('esops', cellText(raw.esops));
   set('bonusFrequency', matchOption(BONUS_FREQUENCY_OPTIONS, raw.bonusFrequency) || form.bonusFrequency);
 
+  const assetSlots = Math.max(
+    ASSET_SLOTS,
+    Number(raw._maxAssetSlot) || 0,
+    ...Object.keys(raw)
+      .map((key) => {
+        const m = String(key).match(/^asset(\d+)_/);
+        return m ? Number(m[1]) : 0;
+      })
+  );
   const assets = [];
-  for (let i = 1; i <= ASSET_SLOTS; i += 1) {
+  for (let i = 1; i <= assetSlots; i += 1) {
     const asset = {
       assetCategory: matchOption(ASSET_CATEGORY_OPTIONS, raw[`asset${i}_assetCategory`]) || 'laptop_desktop',
       deviceAssigned: cellText(raw[`asset${i}_deviceAssigned`]),
@@ -226,28 +407,117 @@ export function rowToForm(raw, managers = []) {
   return form;
 }
 
+function usedRange(sheet) {
+  let minR = Infinity;
+  let minC = Infinity;
+  let maxR = -1;
+  let maxC = -1;
+  for (const key of Object.keys(sheet)) {
+    if (key[0] === '!') continue;
+    const cell = XLSX.utils.decode_cell(key);
+    minR = Math.min(minR, cell.r);
+    minC = Math.min(minC, cell.c);
+    maxR = Math.max(maxR, cell.r);
+    maxC = Math.max(maxC, cell.c);
+  }
+  if (sheet['!ref']) {
+    const ref = XLSX.utils.decode_range(sheet['!ref']);
+    minR = Math.min(minR, ref.s.r);
+    minC = Math.min(minC, ref.s.c);
+    maxR = Math.max(maxR, ref.e.r);
+    maxC = Math.max(maxC, ref.e.c);
+  }
+  if (maxR < 0) return null;
+  return { s: { r: minR, c: minC }, e: { r: maxR, c: maxC } };
+}
+
+function findHeaderRow(sheet, range) {
+  let bestRow = range.s.r;
+  let bestCount = -1;
+  const scanTo = Math.min(range.s.r + 15, range.e.r);
+  for (let r = range.s.r; r <= scanTo; r += 1) {
+    let count = 0;
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const header = cellText(readSheetCell(sheet[XLSX.utils.encode_cell({ r, c })]));
+      if (headerToKey(header)) count += 1;
+    }
+    if (count > bestCount) {
+      bestCount = count;
+      bestRow = r;
+    }
+  }
+  return { headerRow: bestRow, mappedCols: bestCount };
+}
+
 function objectsFromSheet(sheet) {
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true });
-  return rows
-    .map((row) => {
-      const mapped = {};
-      for (const [header, value] of Object.entries(row)) {
-        const key = HEADER_TO_KEY[normHeader(header)];
-        if (key) mapped[key] = value;
-      }
-      return mapped;
+  const range = usedRange(sheet);
+  if (!range) return [];
+
+  const { headerRow, mappedCols } = findHeaderRow(sheet, range);
+  if (!mappedCols) {
+    throw new Error(
+      'Could not recognize any onboarding columns. Use the downloaded template or keep headers such as Full name, Work email, Employee ID.'
+    );
+  }
+
+  const keysByCol = {};
+  for (let c = range.s.c; c <= range.e.c; c += 1) {
+    const header = cellText(readSheetCell(sheet[XLSX.utils.encode_cell({ r: headerRow, c })]));
+    const key = headerToKey(header);
+    if (key) keysByCol[c] = key;
+  }
+
+  const maxAssetSlot = Math.max(
+    ASSET_SLOTS,
+    ...Object.values(keysByCol).map((key) => {
+      const m = String(key).match(/^asset(\d+)_/);
+      return m ? Number(m[1]) : 0;
     })
-    .filter((row) => Object.values(row).some((v) => cellText(v)));
+  );
+
+  const rows = [];
+  for (let r = headerRow + 1; r <= range.e.r; r += 1) {
+    const mapped = { _excelRow: r + 1 };
+    for (let c = range.s.c; c <= range.e.c; c += 1) {
+      const key = keysByCol[c];
+      if (!key) continue;
+      const value = readSheetCell(sheet[XLSX.utils.encode_cell({ r, c })]);
+      if (mapped[key] == null || mapped[key] === '') mapped[key] = value;
+    }
+    mapped._maxAssetSlot = maxAssetSlot;
+    const hasValue = Object.entries(mapped).some(
+      ([k, v]) => k !== '_excelRow' && k !== '_maxAssetSlot' && cellText(v)
+    );
+    if (!hasValue) continue;
+    if (isTemplateExampleRow(mapped)) continue;
+    rows.push(mapped);
+  }
+  return rows;
 }
 
 export async function parseOnboardingFile(fileOrBuffer) {
-  const buffer = fileOrBuffer instanceof ArrayBuffer ? fileOrBuffer : await fileOrBuffer.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+  let buffer;
+  if (fileOrBuffer instanceof ArrayBuffer) {
+    buffer = fileOrBuffer;
+  } else if (ArrayBuffer.isView(fileOrBuffer)) {
+    buffer = fileOrBuffer.buffer.slice(
+      fileOrBuffer.byteOffset,
+      fileOrBuffer.byteOffset + fileOrBuffer.byteLength
+    );
+  } else {
+    buffer = await fileOrBuffer.arrayBuffer();
+  }
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true, cellNF: true });
+  const skip = new Set(['instructions', 'lists']);
   const sheetName =
-    workbook.SheetNames.find((n) => n.toLowerCase() === 'data') || workbook.SheetNames[0];
+    workbook.SheetNames.find((n) => n.toLowerCase() === 'data') ||
+    workbook.SheetNames.find((n) => !skip.has(n.toLowerCase())) ||
+    workbook.SheetNames[0];
   if (!sheetName) throw new Error('Spreadsheet is empty');
   const rows = objectsFromSheet(workbook.Sheets[sheetName]);
-  if (!rows.length) throw new Error('No employee rows found. Keep the header row and add data below it.');
+  if (!rows.length) {
+    throw new Error('No employee rows found. Keep the header row and add one employee per row below it.');
+  }
   return rows;
 }
 
@@ -307,14 +577,14 @@ function buildWorkbook() {
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Ultrix employee onboarding template'],
     [''],
-    ['1. Fill one employee per row on the Data sheet. All fields are optional.'],
+    ['1. Fill one employee per row on the Data sheet. All filled cells are imported.'],
     ['2. Columns with a dropdown (Gender, Employment type, Work mode, etc.) must be picked from the list.'],
     ['3. Dates must be YYYY-MM-DD (example: 2026-08-01).'],
     ['4. Intern pay: use Stipend only. Consultant pay: Fixed pay, joining/retention bonus, ESOPs, bonus + frequency.'],
     ['5. Reporting manager email must match an existing manager in the portal.'],
-    ['6. Up to 3 IT assets per employee. Leave unused asset columns blank.'],
+    ['6. Up to 3 IT assets per employee in the template. Extra Asset N columns are also imported.'],
     ['7. Do not edit the Lists sheet — it powers the dropdowns.'],
-    ['8. Save as .xlsx (keep dropdowns) or .csv, then upload it on the Create employee profile screen.'],
+    ['8. Replace the example row or add more rows below it, then upload the file. Every employee row is imported.'],
   ]);
   instructions['!cols'] = [{ wch: 110 }];
 

@@ -267,6 +267,7 @@ export default function EmployeeOnboardingForm({
   busy,
   submitLabel = 'Create employee profile',
   showPassword = true,
+  onBulkImport,
 }) {
   const [photoError, setPhotoError] = useState('');
   const [importMsg, setImportMsg] = useState('');
@@ -317,7 +318,20 @@ export default function EmployeeOnboardingForm({
       });
       setUploadProgress({ percent: 94, name: file.name, kind });
       const rows = await parseOnboardingFile(buffer);
-      const next = rowToForm(rows[0], managers);
+      const forms = rows.map((row) => rowToForm(row, managers));
+      if (forms.length > 1 && typeof onBulkImport === 'function') {
+        setUploadProgress({ percent: 97, name: file.name, kind });
+        await onBulkImport(
+          forms.map((next, i) => ({
+            ...next,
+            _excelRow: rows[i]._excelRow,
+          }))
+        );
+        setUploadProgress({ percent: 100, name: file.name, kind });
+        await new Promise((r) => setTimeout(r, 250));
+        return;
+      }
+      const next = forms[0];
       setForm(next);
       setOpenSections({
         personal: true,
@@ -329,10 +343,10 @@ export default function EmployeeOnboardingForm({
       setOpenAssets(Object.fromEntries((next.assets || [{}]).map((_, i) => [i, true])));
       setUploadProgress({ percent: 100, name: file.name, kind });
       await new Promise((r) => setTimeout(r, 350));
-      const extra = rows.length - 1;
+      const extra = forms.length - 1;
       setImportMsg(
         extra
-          ? `Loaded the first employee from ${file.name}. ${extra} more row${extra === 1 ? '' : 's'} were ignored — use one employee per file to review before saving.`
+          ? `Loaded the first of ${forms.length} employees from ${file.name}. Open Create employee profile and upload again to import every row.`
           : `Loaded employee details from ${file.name}. Review and save.`
       );
     } catch (err) {
@@ -415,8 +429,8 @@ export default function EmployeeOnboardingForm({
     <form className="onboarding-form" onSubmit={onSubmit}>
       <div className="onboarding-import">
         <p className="muted">
-          All fields are optional. Download the template, fill a row, then upload Excel or CSV to
-          auto-fill this form.
+          All fields are optional. Download the template, fill one employee per row, then upload
+          Excel or CSV. Every filled cell and every data row is imported.
         </p>
         <div className="onboarding-import-actions">
           <button

@@ -437,8 +437,8 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
       gender: normalizeEnum(body.gender, GENDERS, 'gender'),
       personalEmail: normalizeOptional(body.personalEmail, 120),
       personalMobile: normalizeOptional(body.personalMobile, 40),
-      address: normalizeOptional(body.address, 500),
-      emergencyContact: normalizeOptional(body.emergencyContact, 200),
+      address: normalizeOptional(body.address, 2000),
+      emergencyContact: normalizeOptional(body.emergencyContact, 500),
       nationality: normalizeOptional(body.nationality, 80),
       maritalStatus: normalizeEnum(body.maritalStatus, MARITAL_STATUSES, 'marital status'),
     };
@@ -608,11 +608,11 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
           : existing.personal_mobile,
       address:
         body.address !== undefined
-          ? normalizeOptional(body.address, 500)
+          ? normalizeOptional(body.address, 2000)
           : existing.address,
       emergencyContact:
         body.emergencyContact !== undefined
-          ? normalizeOptional(body.emergencyContact, 200)
+          ? normalizeOptional(body.emergencyContact, 500)
           : existing.emergency_contact,
       nationality:
         body.nationality !== undefined
