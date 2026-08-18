@@ -5,11 +5,15 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  getMonth,
+  getYear,
   isSameDay,
   isSameMonth,
   isWeekend,
   isWithinInterval,
   parseISO,
+  setMonth,
+  setYear,
   startOfMonth,
   startOfWeek,
   subMonths,
@@ -32,6 +36,64 @@ import {
   RH_ONLY_PUBLISHED_DATES,
 } from '../utils';
 import ErrorPopup from './ErrorPopup';
+
+const WEEK_STARTS_ON = 0;
+const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+const MONTH_THEMES = [
+  {
+    header: '#5b9bd5',
+    visual: 'linear-gradient(165deg, #0f3d66 0%, #5b9bd5 52%, #9ecbf0 100%)',
+  },
+  {
+    header: '#6ba3d6',
+    visual: 'linear-gradient(165deg, #1a3f5c 0%, #6ba3d6 52%, #a8d4f5 100%)',
+  },
+  {
+    header: '#c4a574',
+    visual: 'linear-gradient(165deg, #5c4a32 0%, #c4a574 52%, #e8d4b0 100%)',
+  },
+  {
+    header: '#9bc53d',
+    visual: 'linear-gradient(165deg, #3d5220 0%, #9bc53d 52%, #cfe87a 100%)',
+  },
+  {
+    header: '#56b8a4',
+    visual: 'linear-gradient(165deg, #1f4f47 0%, #56b8a4 52%, #9de5d8 100%)',
+  },
+  {
+    header: '#e8a838',
+    visual: 'linear-gradient(165deg, #6b4a12 0%, #e8a838 52%, #ffd978 100%)',
+  },
+  {
+    header: '#ef7b6a',
+    visual: 'linear-gradient(165deg, #6b2a22 0%, #ef7b6a 52%, #ffb5aa 100%)',
+  },
+  {
+    header: '#d97757',
+    visual: 'linear-gradient(165deg, #5c2d1f 0%, #d97757 52%, #f5b49a 100%)',
+  },
+  {
+    header: '#8b6fd4',
+    visual: 'linear-gradient(165deg, #3a2a66 0%, #8b6fd4 52%, #c4b0f0 100%)',
+  },
+  {
+    header: '#c97b4a',
+    visual: 'linear-gradient(165deg, #5c3518 0%, #c97b4a 52%, #f0b88a 100%)',
+  },
+  {
+    header: '#6d8fb8',
+    visual: 'linear-gradient(165deg, #2a3d58 0%, #6d8fb8 52%, #a8c4e8 100%)',
+  },
+  {
+    header: '#5a9e86',
+    visual: 'linear-gradient(165deg, #1f4038 0%, #5a9e86 52%, #98d4c2 100%)',
+  },
+];
+
+function monthTheme(date) {
+  return MONTH_THEMES[getMonth(date)] || MONTH_THEMES[0];
+}
 
 function BalanceTooltip({ leave, balances }) {
   const bal = balances || { casual: 0, earned: 0, sick: 0, restricted: 2 };
@@ -123,6 +185,7 @@ export default function LeaveCalendar({
   const [createErr, setCreateErr] = useState('');
   const [errorPopup, setErrorPopup] = useState(null);
   const popoverRef = useRef(null);
+  const monthStripRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
   const canDelete = canManage && typeof onDeleteLeave === 'function';
@@ -171,9 +234,21 @@ export default function LeaveCalendar({
   }
 
   const days = useMemo(() => {
-    const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
-    const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 1 });
+    const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: WEEK_STARTS_ON });
+    const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: WEEK_STARTS_ON });
     return eachDayOfInterval({ start, end });
+  }, [cursor]);
+
+  const monthThemeStyle = useMemo(() => monthTheme(cursor), [cursor]);
+
+  const stripMonths = useMemo(() => {
+    const year = getYear(cursor);
+    return Array.from({ length: 12 }, (_, index) => setMonth(setYear(new Date(), year), index));
+  }, [cursor]);
+
+  useEffect(() => {
+    const active = monthStripRef.current?.querySelector('.calendar-month-thumb.is-active');
+    active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
   }, [cursor]);
 
   const selectedLeave = useMemo(
@@ -301,7 +376,7 @@ export default function LeaveCalendar({
   }
 
   return (
-    <div className="calendar calendar-pro">
+    <div className="calendar calendar-pro calendar-split-view">
       <ErrorPopup
         show={Boolean(errorPopup)}
         title={errorPopup?.title}
@@ -313,7 +388,7 @@ export default function LeaveCalendar({
           <button
             type="button"
             className="btn ghost calendar-nav-btn"
-            onClick={() => setCursor((c) => subMonths(c, 1))}
+            onClick={() => setCursor((c) => startOfMonth(subMonths(c, 1)))}
             aria-label="Previous month"
           >
             ‹
@@ -322,7 +397,7 @@ export default function LeaveCalendar({
           <button
             type="button"
             className="btn ghost calendar-nav-btn"
-            onClick={() => setCursor((c) => addMonths(c, 1))}
+            onClick={() => setCursor((c) => startOfMonth(addMonths(c, 1)))}
             aria-label="Next month"
           >
             ›
@@ -395,127 +470,192 @@ export default function LeaveCalendar({
         </p>
       )}
 
-      <div className="calendar-grid head">
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-          <div key={d} className={`calendar-dow${d === 'Sat' || d === 'Sun' ? ' is-weekend' : ''}`}>
-            {d}
+      <div className="calendar-stage">
+        <div
+          className="calendar-visual-panel"
+          style={{ background: monthThemeStyle.visual }}
+          aria-hidden="true"
+        >
+          <span className="calendar-visual-label">{format(cursor, 'MMMM')}</span>
+        </div>
+
+        <div className="calendar-grid-panel">
+          <div
+            className="calendar-month-banner"
+            style={{ backgroundColor: monthThemeStyle.header }}
+          >
+            {format(cursor, 'MMMM yyyy').toUpperCase()}
           </div>
-        ))}
+
+          <div className="calendar-grid head calendar-grid-compact">
+            {DOW_LABELS.map((label, index) => (
+              <div
+                key={`${label}-${index}`}
+                className={`calendar-dow${index === 0 || index === 6 ? ' is-weekend' : ''}`}
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+
+          <div className="calendar-grid body calendar-grid-compact">
+            {days.map((day) => {
+              const items = leavesOn(day);
+              const outside = !isSameMonth(day, cursor);
+              const isToday = isSameDay(day, today);
+              const weekend = isWeekend(day);
+              const leaveType = primaryLeaveType(items);
+              const dayKey = format(day, 'yyyy-MM-dd');
+              return (
+                <div
+                  key={day.toISOString()}
+                  className={[
+                    'calendar-cell',
+                    outside ? 'muted' : '',
+                    isToday ? 'today' : '',
+                    weekend ? 'weekend' : '',
+                    items.length ? 'has-leave' : '',
+                    leaveType ? `leave-bg-${leaveType}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                >
+                  <div className="day-head">
+                    <span className={`day-num${isToday ? ' is-today' : ''}`}>
+                      {format(day, 'dd')}
+                    </span>
+                    <div className="day-head-actions">
+                      {items.length > 0 && <span className="day-count">{items.length}</span>}
+                      {canCreate && !outside && !applyBlockMessage(dayKey) && (
+                        <button
+                          type="button"
+                          className="calendar-day-add"
+                          aria-label={`Add leave on ${dayKey}`}
+                          title="Add leave on this day"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openCreate(dayKey);
+                          }}
+                        >
+                          +
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="leave-chips">
+                    {items.slice(0, 3).map((leave) => {
+                      const cancellable =
+                        canCancelLeaves && !leave.isMandatory && canUserCancel(leave.status);
+                      const interactive = cancellable || canDelete || (showBalances && !leave.isMandatory);
+                      const ChipTag = interactive ? 'button' : 'span';
+                      const isSelected =
+                        selected?.id === leave.id && selected?.day === dayKey;
+                      return (
+                        <ChipTag
+                          key={`${leave.id}-${dayKey}`}
+                          type={interactive ? 'button' : undefined}
+                          className={[
+                            'chip',
+                            'leave-chip',
+                            `type-${leave.leaveType}`,
+                            leave.isMandatory ? 'is-holiday' : '',
+                            showBalances && !leave.isMandatory ? 'has-tip' : '',
+                            cancellable || canDelete ? 'chip-cancellable' : '',
+                            leave.status && leave.status !== 'approved' ? 'chip-pending' : '',
+                            isSelected ? 'is-selected' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          title={
+                            showBalances && !leave.isMandatory
+                              ? undefined
+                              : `${showNames || leave.isMandatory ? leave.userName + ' · ' : ''}${REQUEST_LABELS[leave.leaveType]}${
+                                  leave.session && leave.session !== 'full'
+                                    ? ` · ${SESSION_LABELS[leave.session]}`
+                                    : ''
+                                }${leave.status && leave.status !== 'approved' ? ` · ${STATUS_LABELS[leave.status] || leave.status}` : ''}`
+                          }
+                          onClick={
+                            cancellable || canDelete
+                              ? (e) => {
+                                  e.stopPropagation();
+                                  setSelected((cur) =>
+                                    cur?.id === leave.id && cur?.day === dayKey
+                                      ? null
+                                      : { id: leave.id, day: dayKey }
+                                  );
+                                }
+                              : undefined
+                          }
+                        >
+                          <span className="leave-chip-main">
+                            {chipMainLabel(leave, showNames)}
+                            {!leave.isMandatory && sessionSuffix(leave.session)}
+                          </span>
+                          {(showNames || leave.isMandatory) && (
+                            <span className="leave-chip-sub">{shortTypeLabel(leave.leaveType)}</span>
+                          )}
+                          {showBalances && !leave.isMandatory && (
+                            <BalanceTooltip
+                              leave={leave}
+                              balances={balancesByUserId[leave.userId]}
+                            />
+                          )}
+                        </ChipTag>
+                      );
+                    })}
+                    {items.length > 3 && (
+                      <span className="chip more">+{items.length - 3} more</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      <div className="calendar-grid body">
-        {days.map((day) => {
-          const items = leavesOn(day);
-          const outside = !isSameMonth(day, cursor);
-          const isToday = isSameDay(day, today);
-          const weekend = isWeekend(day);
-          const leaveType = primaryLeaveType(items);
-          const dayKey = format(day, 'yyyy-MM-dd');
-          return (
-            <div
-              key={day.toISOString()}
-              className={[
-                'calendar-cell',
-                outside ? 'muted' : '',
-                isToday ? 'today' : '',
-                weekend ? 'weekend' : '',
-                items.length ? 'has-leave' : '',
-                leaveType ? `leave-bg-${leaveType}` : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              <div className="day-head">
-                <span className={`day-num${isToday ? ' is-today' : ''}`}>
-                  {format(day, 'd')}
-                </span>
-                <div className="day-head-actions">
-                  {items.length > 0 && <span className="day-count">{items.length}</span>}
-                  {canCreate && !outside && !applyBlockMessage(dayKey) && (
-                    <button
-                      type="button"
-                      className="calendar-day-add"
-                      aria-label={`Add leave on ${dayKey}`}
-                      title="Add leave on this day"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openCreate(dayKey);
-                      }}
-                    >
-                      +
-                    </button>
-                  )}
+      <div className="calendar-month-strip-wrap">
+        <button
+          type="button"
+          className="calendar-strip-nav"
+          aria-label="Previous month"
+          onClick={() => setCursor((c) => startOfMonth(subMonths(c, 1)))}
+        >
+          ‹
+        </button>
+        <div className="calendar-month-strip" ref={monthStripRef}>
+          {stripMonths.map((month) => {
+            const theme = monthTheme(month);
+            const active = isSameMonth(month, cursor);
+            return (
+              <button
+                key={format(month, 'yyyy-MM')}
+                type="button"
+                className={`calendar-month-thumb${active ? ' is-active' : ''}`}
+                aria-label={format(month, 'MMMM yyyy')}
+                aria-current={active ? 'true' : undefined}
+                onClick={() => setCursor(startOfMonth(month))}
+              >
+                <div className="calendar-month-thumb-visual" style={{ background: theme.visual }} />
+                <div
+                  className="calendar-month-thumb-header"
+                  style={{ backgroundColor: theme.header }}
+                >
+                  {format(month, 'MMM').toUpperCase()}
                 </div>
-              </div>
-              <div className="leave-chips">
-                {items.slice(0, 3).map((leave) => {
-                  const cancellable =
-                    canCancelLeaves && !leave.isMandatory && canUserCancel(leave.status);
-                  const interactive = cancellable || canDelete || (showBalances && !leave.isMandatory);
-                  const ChipTag = interactive ? 'button' : 'span';
-                  const isSelected =
-                    selected?.id === leave.id && selected?.day === dayKey;
-                  return (
-                    <ChipTag
-                      key={`${leave.id}-${dayKey}`}
-                      type={interactive ? 'button' : undefined}
-                      className={[
-                        'chip',
-                        'leave-chip',
-                        `type-${leave.leaveType}`,
-                        leave.isMandatory ? 'is-holiday' : '',
-                        showBalances && !leave.isMandatory ? 'has-tip' : '',
-                        cancellable || canDelete ? 'chip-cancellable' : '',
-                        leave.status && leave.status !== 'approved' ? 'chip-pending' : '',
-                        isSelected ? 'is-selected' : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                      title={
-                        showBalances && !leave.isMandatory
-                          ? undefined
-                          : `${showNames || leave.isMandatory ? leave.userName + ' · ' : ''}${REQUEST_LABELS[leave.leaveType]}${
-                              leave.session && leave.session !== 'full'
-                                ? ` · ${SESSION_LABELS[leave.session]}`
-                                : ''
-                            }${leave.status && leave.status !== 'approved' ? ` · ${STATUS_LABELS[leave.status] || leave.status}` : ''}`
-                      }
-                      onClick={
-                        cancellable || canDelete
-                          ? (e) => {
-                              e.stopPropagation();
-                              setSelected((cur) =>
-                                cur?.id === leave.id && cur?.day === dayKey
-                                  ? null
-                                  : { id: leave.id, day: dayKey }
-                              );
-                            }
-                          : undefined
-                      }
-                    >
-                      <span className="leave-chip-main">
-                        {chipMainLabel(leave, showNames)}
-                        {!leave.isMandatory && sessionSuffix(leave.session)}
-                      </span>
-                      {(showNames || leave.isMandatory) && (
-                        <span className="leave-chip-sub">{shortTypeLabel(leave.leaveType)}</span>
-                      )}
-                      {showBalances && !leave.isMandatory && (
-                        <BalanceTooltip
-                          leave={leave}
-                          balances={balancesByUserId[leave.userId]}
-                        />
-                      )}
-                    </ChipTag>
-                  );
-                })}
-                {items.length > 3 && (
-                  <span className="chip more">+{items.length - 3} more</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className="calendar-strip-nav"
+          aria-label="Next month"
+          onClick={() => setCursor((c) => startOfMonth(addMonths(c, 1)))}
+        >
+          ›
+        </button>
       </div>
 
       {selectedLeave && selected && (canCancelLeaves || canDelete) && (
