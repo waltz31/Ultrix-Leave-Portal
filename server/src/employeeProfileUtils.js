@@ -132,6 +132,7 @@ export function mapEmployeeProfile(row, options = {}) {
     employeeNumber: row.employee_number ?? null,
     managerId: row.manager_id ?? null,
     managerName: row.manager_name ?? null,
+    managerEmail: row.manager_email ?? null,
     active: Boolean(row.active),
     role: row.role,
     createdAt: row.user_created_at || row.created_at,

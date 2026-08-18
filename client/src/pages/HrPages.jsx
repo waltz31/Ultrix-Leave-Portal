@@ -644,7 +644,16 @@ export function HrOnboarding() {
                         {labelFrom(EMPLOYMENT_STATUS_OPTIONS, p.employment.employmentStatus)}
                       </span>
                     </td>
-                    <td>{p.role === 'manager' ? '—' : p.managerName || '—'}</td>
+                    <td>
+                      {p.managerEmail || p.managerName ? (
+                        <div>
+                          {p.managerName ? <div>{p.managerName}</div> : null}
+                          {p.managerEmail ? <div className="sub">{p.managerEmail}</div> : null}
+                        </div>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td>
                       <div className="row-actions">
                         <button
@@ -848,7 +857,18 @@ export function HrOnboarding() {
                   </div>
                   <div>
                     <dt>Reporting manager</dt>
-                    <dd>{selected.managerName || '—'}</dd>
+                    <dd>
+                      {selected.managerName || selected.managerEmail ? (
+                        <>
+                          {selected.managerName || '—'}
+                          {selected.managerEmail ? (
+                            <div className="sub">{selected.managerEmail}</div>
+                          ) : null}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </dd>
                   </div>
                   <div>
                     <dt>Location</dt>
@@ -983,6 +1003,7 @@ export function HrUsers() {
     email: '',
     password: '',
     employeeNumber: '',
+    managerId: '',
   });
   const [creditForm, setCreditForm] = useState({
     userId: '',
@@ -1008,6 +1029,7 @@ export function HrUsers() {
         password: managerForm.password,
         role: 'manager',
         employeeNumber: managerForm.employeeNumber.trim() || undefined,
+        managerId: managerForm.managerId ? Number(managerForm.managerId) : null,
       };
       const { user } = await api('/users', { method: 'POST', body });
       setManagerNotice({
@@ -1016,7 +1038,7 @@ export function HrUsers() {
         password: body.password,
       });
       setMsg(`${user?.name || body.name} added as manager.`);
-      setManagerForm({ name: '', email: '', password: '', employeeNumber: '' });
+      setManagerForm({ name: '', email: '', password: '', employeeNumber: '', managerId: '' });
       reloadManagers();
     } catch (error) {
       setErr(error.message);
@@ -1174,6 +1196,22 @@ export function HrUsers() {
               autoComplete="off"
             />
           </label>
+          <label>
+            Reporting manager
+            <select
+              value={managerForm.managerId}
+              onChange={(e) => setManagerForm((f) => ({ ...f, managerId: e.target.value }))}
+            >
+              <option value="">No reporting manager</option>
+              {(managers || [])
+                .filter((m) => m.active !== false)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.email ? `${m.name} (${m.email})` : m.name}
+                  </option>
+                ))}
+            </select>
+          </label>
           <div className="leave-credit-actions">
             <button className="btn primary" type="submit" disabled={managerBusy}>
               {managerBusy ? 'Adding…' : 'Add manager'}
@@ -1193,6 +1231,7 @@ export function HrUsers() {
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
+                  <th>Reports to</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -1204,6 +1243,7 @@ export function HrUsers() {
                       <strong className="employee-name">{mgr.name}</strong>
                     </td>
                     <td>{mgr.email}</td>
+                    <td>{mgr.managerEmail || mgr.managerName || '—'}</td>
                     <td>
                       <span className={`badge ${mgr.active ? 'status-active' : 'status-inactive'}`}>
                         {mgr.active ? 'Active' : 'Inactive'}
@@ -1315,7 +1355,7 @@ export function HrUsers() {
                       <div className="sub">{user.email}</div>
                     </td>
                     <td>{user.employeeNumber || '—'}</td>
-                    <td>{user.managerName || '—'}</td>
+                    <td>{user.managerEmail || user.managerName || '—'}</td>
                     <td>
                       <span className={`badge ${user.active ? 'status-active' : 'status-inactive'}`}>
                         {user.active ? 'Active' : 'Inactive'}

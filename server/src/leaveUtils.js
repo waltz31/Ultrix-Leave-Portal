@@ -163,6 +163,7 @@ export function publicUser(row) {
     role: row.role,
     managerId: row.manager_id ?? null,
     managerName: row.manager_name ?? null,
+    managerEmail: row.manager_email ?? null,
     employeeNumber: row.employee_number ?? null,
     active: Boolean(row.active),
     createdAt: row.created_at,

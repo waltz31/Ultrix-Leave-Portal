@@ -108,6 +108,46 @@ async function getHrIds() {
     .map((r) => r.id);
 }
 
+async function resolveReportingManagerId(candidateId, forUserId) {
+  if (candidateId === undefined) return undefined;
+  if (candidateId === null || candidateId === '') return null;
+  const id = Number(candidateId);
+  if (!id) {
+    const err = new Error('Invalid reporting manager');
+    err.status = 400;
+    throw err;
+  }
+  if (forUserId && id === Number(forUserId)) {
+    const err = new Error('A person cannot report to themselves');
+    err.status = 400;
+    throw err;
+  }
+  const mgr = await db
+    .prepare(`SELECT id, manager_id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
+    .get(id);
+  if (!mgr) {
+    const err = new Error('Invalid reporting manager');
+    err.status = 400;
+    throw err;
+  }
+  if (forUserId) {
+    let walk = mgr.manager_id;
+    const seen = new Set([id]);
+    while (walk) {
+      if (Number(walk) === Number(forUserId)) {
+        const err = new Error('That reporting line would be circular');
+        err.status = 400;
+        throw err;
+      }
+      if (seen.has(Number(walk))) break;
+      seen.add(Number(walk));
+      const parent = await db.prepare(`SELECT manager_id FROM users WHERE id = ?`).get(walk);
+      walk = parent?.manager_id ?? null;
+    }
+  }
+  return mgr.id;
+}
+
 function leaveLabel(type) {
   if (type === 'wfh') return 'Work from Home';
   if (type === 'casual') return 'Casual Leave';
@@ -187,8 +227,12 @@ router.patch('/auth/profile', authRequired, hrRequired, async (req, res) => {
 router.get('/managers', authRequired, hrRequired, async (_req, res) => {
   const managers = (await db
     .prepare(
-      `SELECT id, name, email, role, active, created_at
-       FROM users WHERE role = 'manager' ORDER BY name COLLATE NOCASE`
+      `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.manager_id, u.employee_number,
+              m.name AS manager_name, m.email AS manager_email
+       FROM users u
+       LEFT JOIN users m ON m.id = u.manager_id
+       WHERE u.role = 'manager'
+       ORDER BY u.name COLLATE NOCASE`
     )
     .all())
     .map(publicUser);
@@ -201,6 +245,7 @@ router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
     const users = (await db
       .prepare(
         `SELECT u.*, b.casual, b.earned, b.sick, b.compensation, m.name AS manager_name,
+                m.email AS manager_email,
                 COALESCE((
                   SELECT SUM(lr.days) FROM leave_requests lr
                   WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
@@ -223,6 +268,7 @@ router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
   const users = (await db
     .prepare(
       `SELECT u.*, b.casual, b.earned, b.sick, b.compensation, m.name AS manager_name,
+              m.email AS manager_email,
               COALESCE((
                 SELECT SUM(lr.days) FROM leave_requests lr
                 WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
@@ -255,6 +301,15 @@ router.post('/users', authRequired, hrRequired, async (req, res) => {
     });
   }
 
+  let nextManagerId = null;
+  try {
+    nextManagerId = await resolveReportingManagerId(managerId, null);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  if (nextManagerId === undefined) nextManagerId = null;
+
   try {
     const result = await db
       .prepare(
@@ -266,14 +321,14 @@ router.post('/users', authRequired, hrRequired, async (req, res) => {
         email.toLowerCase().trim(),
         hashPassword(password),
         'manager',
-        null,
+        nextManagerId,
         String(employeeNumber || '').trim() || null
       );
     await ensureBalanceRow(result.lastInsertRowid);
     await ensureEmployeeProfile(result.lastInsertRowid);
     const user = await db
       .prepare(
-        `SELECT u.*, m.name AS manager_name FROM users u
+        `SELECT u.*, m.name AS manager_name, m.email AS manager_email FROM users u
          LEFT JOIN users m ON m.id = u.manager_id WHERE u.id = ?`
       )
       .get(result.lastInsertRowid);
@@ -295,7 +350,7 @@ const PROFILE_SELECT = `
   SELECT ep.id AS profile_id, ep.*,
          u.id AS user_id, u.name, u.email, u.role, u.manager_id, u.employee_number,
          u.active, u.created_at AS user_created_at,
-         m.name AS manager_name
+         m.name AS manager_name, m.email AS manager_email
   FROM employee_profiles ep
   JOIN users u ON u.id = ep.user_id
   LEFT JOIN users m ON m.id = u.manager_id
@@ -423,14 +478,13 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
   }
 
   let nextManagerId = null;
-  if (managerId !== undefined && managerId !== null && managerId !== '') {
-    const mgr = await db
-      .prepare(`SELECT id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
-      .get(Number(managerId));
-    if (!mgr) return res.status(400).json({ error: 'Invalid reporting manager' });
-    nextManagerId = mgr.id;
+  try {
+    nextManagerId = await resolveReportingManagerId(managerId, null);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    throw err;
   }
-  if (role === 'manager') nextManagerId = null;
+  if (nextManagerId === undefined) nextManagerId = null;
 
   let personal;
   let employment;
@@ -701,20 +755,13 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
   }
 
   let nextManagerId = user.manager_id;
-  if (nextRole === 'manager') {
-    nextManagerId = null;
-  } else if (body.managerId !== undefined) {
-    if (body.managerId === null || body.managerId === '') {
-      nextManagerId = null;
-    } else {
-      const mgr = await db
-        .prepare(`SELECT id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
-        .get(Number(body.managerId));
-      if (!mgr) return res.status(400).json({ error: 'Invalid reporting manager' });
-      if (mgr.id === userId) {
-        return res.status(400).json({ error: 'An employee cannot report to themselves' });
-      }
-      nextManagerId = mgr.id;
+  if (body.managerId !== undefined) {
+    try {
+      const resolved = await resolveReportingManagerId(body.managerId, userId);
+      if (resolved !== undefined) nextManagerId = resolved;
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      throw err;
     }
   }
 
@@ -905,15 +952,13 @@ router.patch('/users/:id', authRequired, hrRequired, async (req, res) => {
   }
 
   let nextManagerId = user.manager_id;
-  if (user.role === 'user' && managerId !== undefined) {
-    if (managerId === null || managerId === '') {
-      nextManagerId = null;
-    } else {
-      const mgr = await db
-        .prepare(`SELECT id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
-        .get(Number(managerId));
-      if (!mgr) return res.status(400).json({ error: 'Invalid manager' });
-      nextManagerId = mgr.id;
+  if (managerId !== undefined) {
+    try {
+      const resolved = await resolveReportingManagerId(managerId, id);
+      if (resolved !== undefined) nextManagerId = resolved;
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      throw err;
     }
   }
 
@@ -924,7 +969,7 @@ router.patch('/users/:id', authRequired, hrRequired, async (req, res) => {
     ).run(nextName, nextEmail, nextHash, nextActive, nextManagerId, nextEmployeeNumber, id);
     const updated = await db
       .prepare(
-        `SELECT u.*, m.name AS manager_name FROM users u
+        `SELECT u.*, m.name AS manager_name, m.email AS manager_email FROM users u
          LEFT JOIN users m ON m.id = u.manager_id WHERE u.id = ?`
       )
       .get(id);

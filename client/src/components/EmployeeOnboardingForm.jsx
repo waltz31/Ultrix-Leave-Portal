@@ -611,21 +611,22 @@ export default function EmployeeOnboardingForm({
             Job level / grade
             <input {...field('jobLevel')} />
           </label>
-          {form.role !== 'manager' && (
-            <label>
-              Reporting manager
-              <select {...field('managerId')}>
-                <option value="">No manager (HR approves leave)</option>
-                {(managers || [])
-                  .filter((m) => String(m.id) !== String(editingUserId || ''))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-          )}
+          <label>
+            Reporting manager
+            <select {...field('managerId')}>
+              <option value="">No reporting manager</option>
+              {(managers || [])
+                .filter(
+                  (m) =>
+                    String(m.id) !== String(editingUserId || '') && m.active !== false
+                )
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.email ? `${m.name} (${m.email})` : m.name}
+                  </option>
+                ))}
+            </select>
+          </label>
           <label>
             Location
             <input {...field('location')} />
@@ -680,7 +681,6 @@ export default function EmployeeOnboardingForm({
                 setForm((f) => ({
                   ...f,
                   role,
-                  managerId: role === 'manager' ? '' : f.managerId,
                 }));
               }}
             >
