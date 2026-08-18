@@ -4,8 +4,9 @@ import { api } from '../api';
 import ErrorPopup from './ErrorPopup';
 import {
   REQUEST_LABELS,
+  STATUS_LABELS,
   appToday,
-  formatHolidayTableDate,
+  formatOverviewHolidayDate,
   formatLeaveSpan,
   insufficientRestrictedBalance,
   isApplyBlockError,
@@ -92,8 +93,8 @@ function RestrictedBalancePanel({ balance = 0 }) {
         <span>days available</span>
       </p>
       <p className="muted slim">
-        Apply for restricted holidays from the company list below. Each approval uses 1 day from
-        this balance.
+        Apply for upcoming restricted holidays below. Each request goes through manager and HR
+        approval and uses 1 day from this balance.
       </p>
     </section>
   );
@@ -160,6 +161,22 @@ export function CompanyHolidaysPanel({
     [holidays]
   );
 
+  const upcomingRestricted = useMemo(
+    () =>
+      sortedHolidays.filter(
+        (holiday) =>
+          holiday.holidayType === 'restricted' && toYmd(holiday.startDate) >= todayYmd
+      ),
+    [sortedHolidays, todayYmd]
+  );
+
+  function statusLabel(status) {
+    if (status === 'approved') return STATUS_LABELS.approved;
+    if (status === 'pending_manager') return STATUS_LABELS.pending_manager;
+    if (status === 'pending_hr') return STATUS_LABELS.pending_hr;
+    return STATUS_LABELS.pending;
+  }
+
   async function applyRestricted(holiday) {
     const ymd = toYmd(holiday.startDate);
     if (!canApplyRestricted || holiday.holidayType !== 'restricted') return;
@@ -202,28 +219,19 @@ export function CompanyHolidaysPanel({
 
   function actionFor(holiday) {
     const ymd = toYmd(holiday.startDate);
-    if (holiday.holidayType !== 'restricted' || !canApplyRestricted) return null;
-
-    if (ymd < todayYmd) {
-      const status = appliedRhDates.get(ymd);
-      if (status === 'approved') {
-        return <span className="overview-holiday-status is-approved">Approved</span>;
-      }
-      if (status === 'pending_manager' || status === 'pending_hr') {
-        return <span className="overview-holiday-status is-pending">Pending</span>;
-      }
-      return <span className="overview-holiday-status is-muted">—</span>;
-    }
+    if (!canApplyRestricted) return null;
 
     const status = appliedRhDates.get(ymd);
     if (status === 'approved') {
-      return <span className="overview-holiday-status is-approved">Approved</span>;
+      return <span className="overview-holiday-status is-approved">{statusLabel(status)}</span>;
     }
     if (status === 'pending_manager' || status === 'pending_hr') {
-      return <span className="overview-holiday-status is-pending">Pending</span>;
+      return <span className="overview-holiday-status is-pending">{statusLabel(status)}</span>;
     }
     if (successDate === ymd) {
-      return <span className="overview-holiday-status is-pending">Submitted</span>;
+      return (
+        <span className="overview-holiday-status is-pending">{STATUS_LABELS.pending_manager}</span>
+      );
     }
     if (noRestrictedBalance) {
       return <span className="overview-holiday-status is-muted">No balance</span>;
@@ -248,57 +256,33 @@ export function CompanyHolidaysPanel({
         message={errorPopup?.message}
         onClose={() => setErrorPopup(null)}
       />
-      <PanelHead title={`Company holidays ${year}`} to={holidaysTo} />
+      <PanelHead title={`Upcoming restricted holidays`} to={holidaysTo} />
       {canApplyRestricted && (
         <p className="muted slim overview-holidays-note">
-          General holidays are fixed on the calendar. Restricted holidays can be applied below —
-          each uses 1 day from your restricted leave balance ({restrictedBalance} remaining).
+          Choose a date below to request restricted leave. Your manager and HR will review each
+          request ({restrictedBalance} day{restrictedBalance === 1 ? '' : 's'} remaining).
         </p>
       )}
       {loading && <p className="muted">Loading holidays…</p>}
-      {!loading && !sortedHolidays.length && (
-        <p className="empty">No company holidays published for {year} yet.</p>
+      {!loading && !upcomingRestricted.length && (
+        <p className="empty">
+          {sortedHolidays.some((h) => h.holidayType === 'restricted')
+            ? 'No upcoming restricted holidays this year.'
+            : `No restricted holidays published for ${year} yet.`}
+        </p>
       )}
-      {!loading && !!sortedHolidays.length && (
-        <div className="table-wrap">
-          <table className="overview-holiday-table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Holiday</th>
-                <th>Holiday Type</th>
-                {canApplyRestricted ? <th className="overview-holiday-action-col">Apply</th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedHolidays.map((holiday) => (
-                <tr
-                  key={holiday.id || `${holiday.startDate}-${holiday.userName}`}
-                  className={
-                    holiday.holidayType === 'restricted'
-                      ? 'overview-holiday-row-restricted'
-                      : 'overview-holiday-row-general'
-                  }
-                >
-                  <td>{formatHolidayTableDate(holiday.startDate)}</td>
-                  <td>{holiday.userName || holiday.title || 'Holiday'}</td>
-                  <td>
-                    <span
-                      className={`badge ${
-                        holiday.holidayType === 'restricted' ? 'type-restricted' : 'type-general'
-                      }`}
-                    >
-                      {holiday.holidayType === 'restricted' ? 'Restricted' : 'General'}
-                    </span>
-                  </td>
-                  {canApplyRestricted ? (
-                    <td className="overview-holiday-action-col">{actionFor(holiday)}</td>
-                  ) : null}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {!loading && !!upcomingRestricted.length && (
+        <ul className="overview-holiday-list">
+          {upcomingRestricted.map((holiday) => (
+            <li key={holiday.id || `${holiday.startDate}-${holiday.userName}`}>
+              <div className="overview-holiday-copy">
+                <strong>{holiday.userName || holiday.title || 'Restricted holiday'}</strong>
+                <span>{formatOverviewHolidayDate(holiday.startDate)}</span>
+              </div>
+              {actionFor(holiday)}
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

@@ -1605,7 +1605,7 @@ export function HrCalendar() {
         },
       });
       setMandatoryForm({ title: '', startDate: '', endDate: '', note: '', holidayType: 'general' });
-      setMandatoryMsg('Holiday added to all calendars.');
+      setMandatoryMsg('Holiday added. It is now on the team calendar below.');
       reload();
     } catch (error) {
       setErr(error.message);
@@ -1644,8 +1644,8 @@ export function HrCalendar() {
       const errCount = result.errors?.length || 0;
       setMandatoryMsg(
         errCount
-          ? `Uploaded ${result.created} holiday(s); ${errCount} row(s) skipped.`
-          : `Uploaded ${result.created} holiday(s) to all calendars.`
+          ? `Uploaded ${result.created} holiday(s); ${errCount} row(s) skipped. See the calendar below.`
+          : `Uploaded ${result.created} holiday(s). They are now on the team calendar below.`
       );
       reload();
     } catch (error) {
@@ -1654,8 +1654,6 @@ export function HrCalendar() {
       setUploadBusy(false);
     }
   }
-
-  const mandatoryOnCalendar = (data?.leaves || []).filter((l) => l.isMandatory);
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
@@ -1736,30 +1734,10 @@ export function HrCalendar() {
         </form>
         <p className="muted slim">
           Upload <code>.csv</code>, <code>.xlsx</code>, or <code>.xls</code> with columns{' '}
-          <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted). Dates like{' '}
-          <code>01 Jan 2026</code>, <code>01-Jan-2026</code>, or <code>YYYY-MM-DD</code>.
+          <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted). Uploaded
+          holidays appear directly on the team calendar below.
         </p>
         {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
-        {!!mandatoryOnCalendar.length && (
-          <ul className="mandatory-leave-list">
-            {mandatoryOnCalendar.map((leave) => (
-              <li key={leave.id}>
-                <span>
-                  <strong>{leave.userName}</strong> · {leave.holidayType === 'restricted' ? 'Restricted' : 'General'} · {formatLeaveSpan(leave)}
-                  {leave.reason ? ` · ${leave.reason}` : ''}
-                </span>
-                <button
-                  type="button"
-                  className="btn ghost-danger"
-                  disabled={busyId === leave.id}
-                  onClick={() => deleteLeave(leave)}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
 
       {loading && <p className="muted">Loading…</p>}
