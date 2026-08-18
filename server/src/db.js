@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import { isPostgres, translateSql, toPgPlaceholders } from './sqlDialect.js';
 import { seedCompanyHolidays } from './holidays.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

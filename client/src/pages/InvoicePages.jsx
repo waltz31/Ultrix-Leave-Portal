@@ -16,9 +16,9 @@ import { appYear, formatDateTime } from '../utils';
 
 const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/manager/reports', label: 'Reports', icon: '/assets/document.png' },
   { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
@@ -27,11 +27,12 @@ const MANAGER_NAV = [
 
 const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/hr/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/reports', label: 'Reports', icon: '/assets/document.png' },
+  { to: '/hr/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -118,9 +119,6 @@ export function HrInvoices() {
         <header className="employee-ratings-header">
           <div>
             <h2>Employee invoices</h2>
-            <p className="muted">
-              Invoices submitted by employees and managers. Filter by month and employee.
-            </p>
           </div>
         </header>
 

@@ -529,7 +529,6 @@ export default function InvoiceGenerator() {
       {!mode && (
         <section className="panel invoice-mode-panel">
           <h2>Invoices</h2>
-          <p className="muted slim">Choose how you want to send your invoice to HR.</p>
           <div className="invoice-mode-grid">
             <button
               type="button"
@@ -541,7 +540,6 @@ export default function InvoiceGenerator() {
             >
               <img src="/assets/sheets.png" alt="" />
               <strong>Generate invoice</strong>
-              <span>Build an invoice in the portal, preview it, then submit to HR.</span>
             </button>
             <button
               type="button"
@@ -553,7 +551,6 @@ export default function InvoiceGenerator() {
             >
               <img src="/assets/document.png" alt="" />
               <strong>Upload invoice</strong>
-              <span>Upload an existing PDF and submit it directly to HR.</span>
             </button>
           </div>
           {error && <p className="form-error">{error}</p>}
@@ -566,7 +563,6 @@ export default function InvoiceGenerator() {
           <div className="row-between">
             <div>
               <h2>Upload invoice</h2>
-              <p className="muted slim">Choose a PDF, then submit it to HR.</p>
             </div>
             <button
               type="button"
@@ -616,7 +612,6 @@ export default function InvoiceGenerator() {
             <div className="row-between">
               <div>
                 <h2>Invoice Generator</h2>
-                <p className="muted">Fill in details, preview, then submit to HR.</p>
               </div>
               <button
                 type="button"

@@ -59,6 +59,11 @@ import {
   payStructureKind,
   applyPayStructure,
 } from './employeeProfileUtils.js';
+import {
+  decodeUploadedSpreadsheet,
+  parseOnboardingBuffer,
+  rowToOnboardingBody,
+} from './onboardingImport.js';
 
 const router = Router();
 
@@ -109,6 +114,25 @@ async function getHrIds() {
     .prepare(`SELECT id FROM users WHERE role = 'hr' AND active = 1`)
     .all())
     .map((r) => r.id);
+}
+
+function parsePortalRole(raw) {
+  const roleRaw = String(raw || 'user').trim().toLowerCase();
+  if (roleRaw === 'employee' || roleRaw === 'user') return 'user';
+  if (roleRaw === 'manager') return 'manager';
+  if (roleRaw === 'hr' || roleRaw === 'admin' || roleRaw === 'superadmin') return 'hr';
+  const err = new Error('Role must be Employee, Manager, or HR');
+  err.status = 400;
+  throw err;
+}
+
+async function countActiveHr(excludeId = null) {
+  const row = excludeId
+    ? await db
+        .prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'hr' AND active = 1 AND id != ?`)
+        .get(excludeId)
+    : await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'hr' AND active = 1`).get();
+  return Number(row?.n || 0);
 }
 
 async function resolveReportingManagerId(candidateId, forUserId) {
@@ -268,9 +292,11 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
   const managers = (await db
     .prepare(
       `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.manager_id, u.employee_number,
-              m.name AS manager_name, m.email AS manager_email
+              m.name AS manager_name, m.email AS manager_email,
+              ep.profile_photo, ep.designation
        FROM users u
        LEFT JOIN users m ON m.id = u.manager_id
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
        WHERE u.role IN ('manager', 'hr')
        ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
@@ -279,52 +305,65 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
   res.json({ managers });
 });
 
+const APPROVED_USED_SQL = (type) =>
+  `COALESCE((
+    SELECT SUM(lr.days) FROM leave_requests lr
+    WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = '${type}'
+  ), 0)`;
+
+const USER_DIRECTORY_SELECT = `
+  SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
+         m.email AS manager_email, ep.profile_photo, ep.designation, ep.department,
+         ${APPROVED_USED_SQL('casual')} AS casual_used,
+         ${APPROVED_USED_SQL('earned')} AS earned_used,
+         ${APPROVED_USED_SQL('sick')} AS sick_used,
+         ${APPROVED_USED_SQL('restricted')} AS restricted_used,
+         COALESCE((
+           SELECT SUM(lr.days) FROM leave_requests lr
+           WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
+         ), 0) AS wfh_days
+  FROM users u
+  LEFT JOIN leave_balances b ON b.user_id = u.id
+  LEFT JOIN users m ON m.id = u.manager_id
+  LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+`;
+
+function mapUserWithBalances(row) {
+  return {
+    ...publicUser(row),
+    balances: mapBalance(row),
+    usage: {
+      casual: Number(row.casual_used || 0),
+      earned: Number(row.earned_used || 0),
+      sick: Number(row.sick_used || 0),
+      restricted: Number(row.restricted_used || 0),
+    },
+    wfhDays: row.wfh_days || 0,
+  };
+}
+
 // ——— Users (HR) ———
 router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
   if (req.user.role === 'manager') {
     const users = (await db
       .prepare(
-        `SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
-                m.email AS manager_email,
-                COALESCE((
-                  SELECT SUM(lr.days) FROM leave_requests lr
-                  WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
-                ), 0) AS wfh_days
-         FROM users u
-         LEFT JOIN leave_balances b ON b.user_id = u.id
-         LEFT JOIN users m ON m.id = u.manager_id
+        `${USER_DIRECTORY_SELECT}
          WHERE u.role = 'user' AND u.manager_id = ?
          ORDER BY u.name COLLATE NOCASE`
       )
       .all(req.user.id))
-      .map((row) => ({
-        ...publicUser(row),
-        balances: mapBalance(row),
-        wfhDays: row.wfh_days || 0,
-      }));
+      .map(mapUserWithBalances);
     return res.json({ users });
   }
 
   const users = (await db
     .prepare(
-      `SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
-              m.email AS manager_email,
-              COALESCE((
-                SELECT SUM(lr.days) FROM leave_requests lr
-                WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
-              ), 0) AS wfh_days
-       FROM users u
-       LEFT JOIN leave_balances b ON b.user_id = u.id
-       LEFT JOIN users m ON m.id = u.manager_id
-       WHERE u.role IN ('user', 'manager')
+      `${USER_DIRECTORY_SELECT}
+       WHERE u.role IN ('user', 'manager', 'hr')
        ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
     .all())
-    .map((row) => ({
-      ...publicUser(row),
-      balances: mapBalance(row),
-      wfhDays: row.wfh_days || 0,
-    }));
+    .map(mapUserWithBalances);
   res.json({ users });
 });
 
@@ -463,7 +502,7 @@ async function ensureEmployeeProfile(userId) {
 
 async function ensureManagerProfiles() {
   const managers = await db
-    .prepare(`SELECT id FROM users WHERE role = 'manager'`)
+    .prepare(`SELECT id FROM users WHERE role IN ('manager', 'hr')`)
     .all();
   for (const mgr of managers) {
     await ensureEmployeeProfile(mgr.id);
@@ -474,7 +513,7 @@ router.get('/onboarding', authRequired, hrRequired, async (_req, res) => {
   await ensureManagerProfiles();
   const rows = await db
     .prepare(
-      `${PROFILE_SELECT} WHERE u.role IN ('user', 'manager') ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
+      `${PROFILE_SELECT} WHERE u.role IN ('user', 'manager', 'hr') ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
     .all();
   const assetsByUser = await loadAssetsByUserIds(rows.map((r) => r.user_id));
@@ -492,7 +531,16 @@ router.get('/onboarding/:userId', authRequired, hrRequired, async (req, res) => 
 });
 
 router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
-  const body = req.body || {};
+  try {
+    const result = await createOnboardedEmployee(req.body || {});
+    res.status(201).json(result);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+});
+
+async function createOnboardedEmployee(body) {
   const name = String(body.name || '').trim() || 'New employee';
   const emailProvided = Boolean(String(body.email || '').trim());
   const email =
@@ -502,71 +550,49 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
   const rawPassword = body.password == null ? '' : String(body.password);
   const passwordProvided = Boolean(rawPassword.trim());
   if (passwordProvided && rawPassword.length < 6) {
-    return res.status(400).json({ error: 'Temporary password must be at least 6 characters' });
+    throw Object.assign(new Error('Temporary password must be at least 6 characters'), { status: 400 });
   }
   const password = passwordProvided ? rawPassword : crypto.randomBytes(9).toString('base64url');
   const employeeNumber = String(body.employeeNumber || body.employeeId || '').trim() || null;
   const managerId = body.managerId;
   const roleRaw = String(body.role || 'user').trim();
-  const role = roleRaw === 'employee' ? 'user' : roleRaw;
-  if (role !== 'user' && role !== 'manager') {
-    return res.status(400).json({ error: 'Role must be Employee or Manager' });
-  }
+  const role = parsePortalRole(roleRaw === 'employee' ? 'user' : roleRaw);
 
   if (employeeNumber && employeeNumber.length > 40) {
-    return res.status(400).json({ error: 'Employee ID is too long' });
+    throw Object.assign(new Error('Employee ID is too long'), { status: 400 });
   }
 
-  let nextManagerId = null;
-  try {
-    nextManagerId = await resolveReportingManagerId(managerId, null);
-  } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
-    throw err;
-  }
+  let nextManagerId = await resolveReportingManagerId(managerId, null);
   if (nextManagerId === undefined) nextManagerId = null;
 
-  let personal;
-  let employment;
-  let assets;
-  let payroll;
-  try {
-    personal = {
-      profilePhoto: normalizeProfilePhoto(body.profilePhoto),
-      dateOfBirth: normalizeDate(body.dateOfBirth, 'Date of birth'),
-      gender: normalizeEnum(body.gender, GENDERS, 'gender'),
-      personalEmail: normalizeOptional(body.personalEmail, 120),
-      personalMobile: normalizeOptional(body.personalMobile, 40),
-      address: normalizeOptional(body.address, 2000),
-      emergencyContact: normalizeOptional(body.emergencyContact, 500),
-      nationality: normalizeOptional(body.nationality, 80),
-      maritalStatus: normalizeEnum(body.maritalStatus, MARITAL_STATUSES, 'marital status'),
-    };
-    employment = {
-      dateOfJoining: normalizeDate(body.dateOfJoining, 'Date of joining'),
-      employmentType: normalizeEnum(body.employmentType, EMPLOYMENT_TYPES, 'employment type'),
-      department: normalizeOptional(body.department, 120),
-      designation: normalizeOptional(body.designation, 120),
-      jobLevel: normalizeOptional(body.jobLevel, 80),
-      location: normalizeOptional(body.location, 120),
-      workMode: normalizeEnum(body.workMode, WORK_MODES, 'work mode'),
-      employmentStatus:
-        normalizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES, 'employment status') ||
-        'active',
-      probationPeriod: normalizeOptional(body.probationPeriod, 80),
-      confirmationDate: normalizeDate(body.confirmationDate, 'Confirmation date'),
-      employeeCategory: null,
-    };
-    ({ assets, payroll } = parseItPayrollForCreate(body));
-    payroll = applyPayStructure(
-      payroll,
-      payStructureKind(employment.employmentType)
-    );
-  } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
-    throw err;
-  }
-
+  const personal = {
+    profilePhoto: normalizeProfilePhoto(body.profilePhoto),
+    dateOfBirth: normalizeDate(body.dateOfBirth, 'Date of birth'),
+    gender: normalizeEnum(body.gender, GENDERS, 'gender'),
+    personalEmail: normalizeOptional(body.personalEmail, 120),
+    personalMobile: normalizeOptional(body.personalMobile, 40),
+    address: normalizeOptional(body.address, 2000),
+    emergencyContact: normalizeOptional(body.emergencyContact, 500),
+    nationality: normalizeOptional(body.nationality, 80),
+    maritalStatus: normalizeEnum(body.maritalStatus, MARITAL_STATUSES, 'marital status'),
+  };
+  const employment = {
+    dateOfJoining: normalizeDate(body.dateOfJoining, 'Date of joining'),
+    employmentType: normalizeEnum(body.employmentType, EMPLOYMENT_TYPES, 'employment type'),
+    department: normalizeOptional(body.department, 120),
+    designation: normalizeOptional(body.designation, 120),
+    jobLevel: normalizeOptional(body.jobLevel, 80),
+    location: normalizeOptional(body.location, 120),
+    workMode: normalizeEnum(body.workMode, WORK_MODES, 'work mode'),
+    employmentStatus:
+      normalizeEnum(body.employmentStatus, EMPLOYMENT_STATUSES, 'employment status') ||
+      'active',
+    probationPeriod: normalizeOptional(body.probationPeriod, 80),
+    confirmationDate: normalizeDate(body.confirmationDate, 'Confirmation date'),
+    employeeCategory: null,
+  };
+  let { assets, payroll } = parseItPayrollForCreate(body);
+  payroll = applyPayStructure(payroll, payStructureKind(employment.employmentType));
   const active = activeFromEmploymentStatus(employment.employmentStatus);
 
   try {
@@ -645,7 +671,7 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
 
     const row = await db.prepare(`${PROFILE_SELECT} WHERE ep.user_id = ?`).get(userId);
     const assetsByUser = await loadAssetsByUserIds([userId]);
-    res.status(201).json({
+    return {
       profile: mapProfileWithAssets(row, assetsByUser),
       credentials: {
         email,
@@ -653,15 +679,74 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
         emailGenerated: !emailProvided,
         passwordGenerated: !passwordProvided,
       },
-    });
+    };
   } catch (err) {
     if (String(err.message).includes('UNIQUE') || isUniqueViolation(err)) {
       const msg = String(err.message).toLowerCase();
       if (msg.includes('employee_number') || msg.includes('idx_users_employee_number')) {
-        return res.status(409).json({ error: 'Employee ID already exists' });
+        throw Object.assign(new Error('Employee ID already exists'), { status: 409 });
       }
-      return res.status(409).json({ error: 'Email already exists' });
+      throw Object.assign(new Error('Email already exists'), { status: 409 });
     }
+    throw err;
+  }
+}
+
+router.post('/onboarding/upload', authRequired, hrRequired, async (req, res) => {
+  try {
+    const { filename, buffer, fileType } = decodeUploadedSpreadsheet(req.body || {});
+    const rows = parseOnboardingBuffer(buffer, fileType);
+    const managers = (
+      await db
+        .prepare(
+          `SELECT id, name, email FROM users WHERE role IN ('manager', 'hr') AND active = 1`
+        )
+        .all()
+    ).map((m) => ({ id: m.id, name: m.name, email: m.email }));
+
+    const created = [];
+    const failed = [];
+    for (const row of rows) {
+      const body = rowToOnboardingBody(row, managers);
+      const excelRow = body._excelRow;
+      delete body._excelRow;
+      try {
+        const { profile, credentials } = await createOnboardedEmployee(body);
+        created.push({
+          row: excelRow,
+          name: profile?.name || body.name || 'Employee',
+          email: credentials?.email || profile?.email || '',
+          password: credentials?.password || '',
+          emailGenerated: Boolean(credentials?.emailGenerated),
+          passwordGenerated: Boolean(credentials?.passwordGenerated),
+        });
+      } catch (err) {
+        failed.push({
+          row: excelRow,
+          name: body.name || body.email || `Row ${excelRow}`,
+          error: err.message || 'Could not import this row',
+        });
+      }
+    }
+
+    if (!created.length) {
+      return res.status(400).json({
+        error: failed[0]?.error || 'No employees could be imported from that file',
+        fileType,
+        filename,
+        created,
+        failed,
+      });
+    }
+
+    res.status(201).json({
+      fileType,
+      filename,
+      created,
+      failed,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     throw err;
   }
 });
@@ -669,7 +754,7 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
 router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) => {
   const userId = Number(req.params.userId);
   const user = await db
-    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager')`)
+    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager', 'hr')`)
     .get(userId);
   if (!user) return res.status(404).json({ error: 'Employee not found' });
 
@@ -788,10 +873,10 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
 
   let nextRole = user.role;
   if (body.role !== undefined && body.role !== null && String(body.role).trim() !== '') {
-    const roleRaw = String(body.role).trim();
-    if (roleRaw === 'employee' || roleRaw === 'user') nextRole = 'user';
-    else if (roleRaw === 'manager') nextRole = 'manager';
-    else return res.status(400).json({ error: 'Role must be Employee or Manager' });
+    nextRole = parsePortalRole(body.role);
+    if (user.role === 'hr' && nextRole !== 'hr' && (await countActiveHr(userId)) < 1) {
+      return res.status(400).json({ error: 'Cannot change the role of the last active HR account' });
+    }
   }
 
   let nextManagerId = user.manager_id;
@@ -832,7 +917,7 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
           nextActive,
           userId
         );
-      if (user.role === 'manager' && nextRole === 'user') {
+      if ((user.role === 'manager' || user.role === 'hr') && nextRole === 'user') {
         await db.prepare(`UPDATE users SET manager_id = NULL WHERE manager_id = ?`).run(userId);
       }
 
@@ -918,7 +1003,7 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
 
 // ——— Profile / salary views (own account only for employee + manager) ———
 router.get('/profiles/me', authRequired, async (req, res) => {
-  if (req.user.role === 'manager') {
+  if (req.user.role === 'manager' || req.user.role === 'hr') {
     await ensureEmployeeProfile(req.user.id);
   }
   const row = await db.prepare(`${PROFILE_SELECT} WHERE ep.user_id = ?`).get(req.user.id);
@@ -971,9 +1056,7 @@ router.get('/profiles/:userId', authRequired, async (req, res) => {
 
 router.patch('/users/:id', authRequired, hrRequired, async (req, res) => {
   const id = Number(req.params.id);
-  const user = await db
-    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager')`)
-    .get(id);
+  const user = await db.prepare(`SELECT * FROM users WHERE id = ?`).get(id);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const { name, email, password, active, managerId, employeeNumber } = req.body || {};
@@ -981,6 +1064,15 @@ router.patch('/users/:id', authRequired, hrRequired, async (req, res) => {
   const nextEmail = email?.trim() ? email.toLowerCase().trim() : user.email;
   const nextActive = typeof active === 'boolean' ? (active ? 1 : 0) : user.active;
   const nextHash = password ? hashPassword(password) : user.password_hash;
+
+  if (typeof active === 'boolean' && !active) {
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'You cannot deactivate your own account' });
+    }
+    if (user.role === 'hr' && (await countActiveHr(id)) < 1) {
+      return res.status(400).json({ error: 'Cannot deactivate the last active HR account' });
+    }
+  }
 
   let nextEmployeeNumber = user.employee_number;
   if (employeeNumber !== undefined) {
@@ -1088,21 +1180,27 @@ router.post('/balances/credit', authRequired, hrRequired, async (req, res) => {
     return res.status(400).json({ error: 'Valid userId and leaveType required' });
   }
   const amt = Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) {
-    return res.status(400).json({ error: 'Amount must be a positive number' });
+  if (!Number.isFinite(amt) || amt === 0) {
+    return res.status(400).json({ error: 'Amount must be a non-zero number' });
   }
   const user = await db
-    .prepare(`SELECT id FROM users WHERE id = ? AND role IN ('user', 'manager')`)
+    .prepare(`SELECT id FROM users WHERE id = ? AND role IN ('user', 'manager', 'hr')`)
     .get(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   await ensureBalanceRow(userId);
+  const current = Number((await getBalance(userId))[leaveType] || 0);
+  const next = Math.round((current + amt) * 100) / 100;
+  if (next < 0) {
+    return res.status(400).json({ error: 'Balance cannot go below zero' });
+  }
+
   const balances = await db.transaction(async () => {
     await db.prepare(
       `UPDATE leave_balances
-       SET ${leaveType} = ${leaveType} + ?, updated_at = ${SQL_NOW_IST}
+       SET ${leaveType} = ?, updated_at = ${SQL_NOW_IST}
        WHERE user_id = ?`
-    ).run(amt, userId);
+    ).run(next, userId);
     await db.prepare(
       `INSERT INTO balance_credits (user_id, leave_type, amount, note, credited_by)
        VALUES (?, ?, ?, ?, ?)`
@@ -1110,15 +1208,21 @@ router.post('/balances/credit', authRequired, hrRequired, async (req, res) => {
     return mapBalance(await getBalance(userId));
   });
   const typeLabel = leaveLabel(leaveType);
-  const dayLabel = amt === 1 ? 'day' : 'days';
+  const absAmt = Math.abs(amt);
+  const dayLabel = absAmt === 1 ? 'day' : 'days';
+  const credited = amt > 0;
   await notifyUser({
     userId,
     leaveId: null,
     type: 'balance_credited',
-    title: 'Leave balance credited',
-    message: `HR credited ${amt} ${typeLabel} ${dayLabel} to your account.${
-      note ? ` Note: ${note}` : ''
-    }`,
+    title: credited ? 'Leave balance credited' : 'Leave balance adjusted',
+    message: credited
+      ? `HR credited ${absAmt} ${typeLabel} ${dayLabel} to your account.${
+          note ? ` Note: ${note}` : ''
+        }`
+      : `HR deducted ${absAmt} ${typeLabel} ${dayLabel} from your account.${
+          note ? ` Note: ${note}` : ''
+        }`,
   });
 
   res.json({ balances, credited: { userId, leaveType, amount: amt } });
@@ -1134,11 +1238,16 @@ router.get('/leaves', authRequired, async (req, res) => {
     clauses.push('lr.user_id = ?');
     params.push(req.user.id);
   } else if (req.user.role === 'manager') {
-    clauses.push('u.manager_id = ?');
-    params.push(req.user.id);
-    if (userId) {
+    if (userId && Number(userId) === req.user.id) {
       clauses.push('lr.user_id = ?');
-      params.push(Number(userId));
+      params.push(req.user.id);
+    } else {
+      clauses.push('u.manager_id = ?');
+      params.push(req.user.id);
+      if (userId) {
+        clauses.push('lr.user_id = ?');
+        params.push(Number(userId));
+      }
     }
   } else if (req.user.role === 'hr' && userId) {
     clauses.push('lr.user_id = ?');
@@ -1202,7 +1311,8 @@ router.get('/leaves/calendar', authRequired, async (req, res) => {
   const rows = (await db
     .prepare(`${LEAVE_SELECT} WHERE ${clauses.join(' AND ')} ORDER BY lr.start_date`)
     .all(...params))
-    .map(mapLeave);
+    .map(mapLeave)
+    .filter((leave) => leave.leaveType !== 'restricted' || leave.status === 'approved');
 
   const mandatoryRows = (
     await db
@@ -1211,6 +1321,7 @@ router.get('/leaves/calendar', authRequired, async (req, res) => {
          FROM mandatory_leaves ml
          LEFT JOIN users u ON u.id = ml.created_by
          WHERE ml.end_date >= ? AND ml.start_date <= ?
+           AND COALESCE(ml.holiday_type, 'general') = 'general'
          ORDER BY ml.start_date`
       )
       .all(from, to)
@@ -1382,8 +1493,16 @@ router.post('/mandatory-leaves/upload', authRequired, hrRequired, async (req, re
 router.delete('/mandatory-leaves/:id', authRequired, hrRequired, async (req, res) => {
   const id = Number(req.params.id);
   if (!id) return res.status(400).json({ error: 'Invalid id' });
-  const existing = await db.prepare(`SELECT id FROM mandatory_leaves WHERE id = ?`).get(id);
+  const existing = await db
+    .prepare(`SELECT id, holiday_type FROM mandatory_leaves WHERE id = ?`)
+    .get(id);
   if (!existing) return res.status(404).json({ error: 'Mandatory leave not found' });
+  if (existing.holiday_type === 'restricted') {
+    return res.status(400).json({
+      error:
+        'Restricted holidays stay in Overview for applying and cannot be removed from the calendar.',
+    });
+  }
   await db.prepare(`DELETE FROM mandatory_leaves WHERE id = ?`).run(id);
   res.json({ ok: true });
 });
@@ -1393,14 +1512,11 @@ router.post('/leaves', authRequired, async (req, res) => {
   const startDate = asYmd(req.body?.startDate);
   const endDate = asYmd(req.body?.endDate);
   const isRestricted = leaveType === 'restricted';
-  if (req.user.role === 'hr') {
-    return res.status(400).json({ error: 'HR cannot apply for leave from this screen' });
-  }
   if (req.user.role === 'manager' && !isRestricted) {
     return res.status(400).json({ error: 'Managers can apply only for restricted holidays' });
   }
-  if (req.user.role !== 'user' && req.user.role !== 'manager') {
-    return res.status(400).json({ error: 'Only employees and managers can apply' });
+  if (req.user.role !== 'user' && req.user.role !== 'manager' && req.user.role !== 'hr') {
+    return res.status(400).json({ error: 'Only employees, managers, and HR can apply' });
   }
 
   const employee = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -1474,6 +1590,39 @@ router.post('/leaves', authRequired, async (req, res) => {
   );
   if (overlap) {
     return res.status(409).json({ error: 'Overlapping leave/WFH request already exists' });
+  }
+
+  if (req.user.role === 'hr') {
+    const leaveId = await db.transaction(async () => {
+      if (isBalanceType(leaveType)) {
+        await db
+          .prepare(
+            `UPDATE leave_balances
+             SET ${leaveType} = ${leaveType} - ?, updated_at = ${SQL_NOW_IST}
+             WHERE user_id = ?`
+          )
+          .run(days, req.user.id);
+      }
+      const inserted = await db
+        .prepare(
+          `INSERT INTO leave_requests
+             (user_id, leave_type, start_date, end_date, days, session, reason, status, hr_id, hr_reviewed_at, hr_note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ${SQL_NOW_IST}, ?)`
+        )
+        .run(
+          req.user.id,
+          leaveType,
+          startDate,
+          resolvedEnd,
+          days,
+          leaveSession,
+          reason?.trim() || null,
+          req.user.id,
+          'Applied by HR'
+        );
+      return inserted.lastInsertRowid;
+    });
+    return res.status(201).json({ leave: mapLeave(await getLeaveById(leaveId)) });
   }
 
   const initialStatus = employee.manager_id ? 'pending_manager' : 'pending_hr';
@@ -1593,7 +1742,7 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
   }
 
   const employee = await db
-    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager')`)
+    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager', 'hr')`)
     .get(employeeId);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
 
@@ -2040,7 +2189,7 @@ router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, re
     .prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_hr'`)
     .get()).c;
   const users = (await db
-    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('user', 'manager')`)
+    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('user', 'manager', 'hr')`)
     .get()).c;
   const onLeaveToday = (await db
     .prepare(

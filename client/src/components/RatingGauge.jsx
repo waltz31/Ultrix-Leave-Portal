@@ -175,11 +175,11 @@ export function RatingScorePicker({ value, onChange }) {
         })}
       </div>
 
-      <p className="rating-picker-hint muted">
-        {selected > 0
-          ? `${TONE_LABELS_BY_SCORE[selected]} · ${selected}/${RATING_MAX}`
-          : 'Hover a number to see its label'}
-      </p>
+      {selected > 0 && (
+        <p className="rating-picker-hint muted">
+          {`${TONE_LABELS_BY_SCORE[selected]} · ${selected}/${RATING_MAX}`}
+        </p>
+      )}
     </div>
   );
 }

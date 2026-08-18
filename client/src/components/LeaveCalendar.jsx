@@ -38,6 +38,7 @@ import {
   CALENDAR_CELLS,
   calendarMonthImageUrl,
 } from '../calendarMonthImages';
+import { api } from '../api';
 
 const WEEK_STARTS_ON = 0;
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -150,12 +151,20 @@ export default function LeaveCalendar({
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState('');
   const [errorPopup, setErrorPopup] = useState(null);
+  const [publishedRestricted, setPublishedRestricted] = useState([]);
   const popoverRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
   const canDelete = canManage && typeof onDeleteLeave === 'function';
   const canCreate = canManage && typeof onCreateLeave === 'function';
   const today = appToday();
+
+  useEffect(() => {
+    const year = cursor.getFullYear();
+    api(`/holidays?year=${year}`)
+      .then((data) => setPublishedRestricted(data.restricted || []))
+      .catch(() => setPublishedRestricted([]));
+  }, [cursor]);
 
   const employeeOptions = useMemo(() => {
     if (employees?.length) return employees;
@@ -169,7 +178,15 @@ export default function LeaveCalendar({
   }, [employees, leaves]);
 
   const filteredLeaves = useMemo(() => {
-    const all = leaves || [];
+    const all = (leaves || []).filter((leave) => {
+      if (leave.isMandatory && (leave.leaveType === 'restricted' || leave.holidayType === 'restricted')) {
+        return false;
+      }
+      if (leave.leaveType === 'restricted' && leave.status !== 'approved') {
+        return false;
+      }
+      return true;
+    });
     if (!employeeFilter) return all;
     return all.filter(
       (l) => l.isMandatory || String(l.userId) === String(employeeFilter)
@@ -178,11 +195,10 @@ export default function LeaveCalendar({
 
   const restrictedHolidayOptions = useMemo(
     () =>
-      (leaves || [])
-        .filter((l) => l.isMandatory && l.leaveType === 'restricted')
-        .slice()
-        .sort((a, b) => toYmd(a.startDate).localeCompare(toYmd(b.startDate))),
-    [leaves]
+      [...publishedRestricted].sort((a, b) =>
+        toYmd(a.startDate).localeCompare(toYmd(b.startDate))
+      ),
+    [publishedRestricted]
   );
   const restrictedHolidayDates = useMemo(
     () => new Set(restrictedHolidayOptions.map((h) => toYmd(h.startDate))),
@@ -258,6 +274,14 @@ export default function LeaveCalendar({
   }
 
   async function handleDelete(leave) {
+    if (leave.isMandatory && (leave.leaveType === 'restricted' || leave.holidayType === 'restricted')) {
+      setErrorPopup({
+        title: 'Cannot remove from calendar',
+        message:
+          'Restricted holidays stay in Overview for applying. They appear on a calendar only after a leave request is approved.',
+      });
+      return;
+    }
     const ok = window.confirm(
       leave.isMandatory
         ? `Remove mandatory leave “${leave.userName}” (${formatLeaveSpan(leave)}) from all calendars?`
@@ -415,20 +439,6 @@ export default function LeaveCalendar({
           <i className="legend-swatch type-weekend" /> Sat / Sun
         </span>
       </div>
-
-      {canCancelLeaves && (
-        <p className="calendar-hint muted">
-          Tap a leave day to cancel that day only, or cancel the full request.
-        </p>
-      )}
-      {canManage && (
-        <p className="calendar-hint muted">
-          General holidays (blue) already appear with the holiday name. You cannot apply leave on
-          general holidays or Saturdays/Sundays. Restricted holidays (pink) are optional — employees
-          and managers may take only 2 per year, and only on those RH dates.
-          Use + on a working day to add leave, or open a chip to delete.
-        </p>
-      )}
 
       <div className="calendar-stage">
         <div className="calendar-visual-panel" aria-hidden="true">
@@ -820,13 +830,6 @@ export default function LeaveCalendar({
                     required
                   />
                 </label>
-              )}
-              {createForm.leaveType === 'restricted' && (
-                <p className="muted slim">
-                  Restricted leave can only be taken on the published RH dates (pink on the
-                  calendar). General holidays are already shown and do not need an application.
-                  Each employee starts with 2 restricted leaves per year (deducted from balance on approval).
-                </p>
               )}
               {createForm.leaveType === 'restricted' && !restrictedHolidayOptions.length && (
                 <p className="form-error">

@@ -46,7 +46,6 @@ export default function StatusCelebration({
                 ) : null}
               </div>
             ) : null}
-            <p className="credential-hint">Use work email (not personal email) to sign in.</p>
           </div>
         ) : null}
       </div>

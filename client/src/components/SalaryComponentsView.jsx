@@ -172,7 +172,6 @@ export function SalaryComponentsView({
         <div>
           <p className="salary-slip-kicker">{structureLabel}</p>
           <h2 className="salary-slip-title">{title}</h2>
-          <p className="muted slim">View only · private to your account</p>
         </div>
         <button
           type="button"

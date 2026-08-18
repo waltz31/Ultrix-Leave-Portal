@@ -41,9 +41,9 @@ function formatPeriodLabel(year, month) {
 
 const MANAGER_NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/manager/reports', label: 'Reports', icon: '/assets/document.png' },
   { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -51,11 +51,12 @@ const MANAGER_NAV = [
 
 const HR_NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/hr/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/reports', label: 'Reports', icon: '/assets/document.png' },
+  { to: '/hr/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -348,9 +349,6 @@ export function EmployeeRatingsSection() {
       <header className="employee-ratings-header">
         <div>
           <h2>My performance ratings</h2>
-          <p className="muted">
-            All ratings from your managers — score, period, date, and full feedback.
-          </p>
         </div>
         {avg && (
           <div className="employee-ratings-avg">
@@ -466,9 +464,6 @@ export function ManagerRatings() {
     <AppShell title={`Rate employees · ${user?.name || ''}`} nav={MANAGER_NAV}>
       <section className="panel">
         <h2>Rate an employee</h2>
-        <p className="muted">
-          Select any active employee, give a score from 1–10, and provide written feedback (required).
-        </p>
         <input
           type="search"
           className="search-input"
@@ -615,7 +610,6 @@ export function HrRatings() {
     <AppShell title={`Employee ratings · ${user?.name || ''}`} nav={HR_NAV}>
       <section className="panel">
         <h2>All employee ratings</h2>
-        <p className="muted">View ratings submitted by managers. Filter and export as CSV or PDF.</p>
         <div className="export-filters">
           <label>
             Employee

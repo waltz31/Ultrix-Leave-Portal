@@ -4,19 +4,20 @@ import { ThemeProvider } from './theme';
 import LoginPage from './pages/LoginPage';
 import {
   HrApprovals,
+  HrApply,
   HrCalendar,
   HrHistory,
   HrOnboarding,
   HrOverview,
-  HrReports,
+  HrSalary,
   HrUsers,
 } from './pages/HrPages';
 import {
   ManagerApprovals,
+  ManagerApply,
   ManagerCalendar,
   ManagerHistory,
   ManagerOverview,
-  ManagerReports,
   ManagerSalary,
 } from './pages/ManagerPages';
 import { UserApply, UserCalendar, UserHistory, UserHome, UserSalary } from './pages/UserPages';
@@ -61,6 +62,14 @@ export default function App() {
             }
           />
           <Route
+            path="/hr/apply"
+            element={
+              <Protected role="hr">
+                <HrApply />
+              </Protected>
+            }
+          />
+          <Route
             path="/hr/approvals"
             element={
               <Protected role="hr">
@@ -81,6 +90,14 @@ export default function App() {
             element={
               <Protected role="hr">
                 <HrUsers />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/salary"
+            element={
+              <Protected role="hr">
+                <HrSalary />
               </Protected>
             }
           />
@@ -108,14 +125,7 @@ export default function App() {
               </Protected>
             }
           />
-          <Route
-            path="/hr/reports"
-            element={
-              <Protected role="hr">
-                <HrReports />
-              </Protected>
-            }
-          />
+          <Route path="/hr/reports" element={<Navigate to="/hr" replace />} />
 
           <Route
             path="/hr/invoices"
@@ -131,6 +141,14 @@ export default function App() {
             element={
               <Protected role="manager">
                 <ManagerOverview />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/apply"
+            element={
+              <Protected role="manager">
+                <ManagerApply />
               </Protected>
             }
           />
@@ -166,14 +184,7 @@ export default function App() {
               </Protected>
             }
           />
-          <Route
-            path="/manager/reports"
-            element={
-              <Protected role="manager">
-                <ManagerReports />
-              </Protected>
-            }
-          />
+          <Route path="/manager/reports" element={<Navigate to="/manager" replace />} />
           <Route
             path="/manager/salary"
             element={

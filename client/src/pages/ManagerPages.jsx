@@ -6,17 +6,17 @@ import AppShell from '../components/AppShell';
 import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
-import ErrorPopup from '../components/ErrorPopup';
 import { LeaveReportSection } from '../components/LeaveReports';
 import OverviewPanels from '../components/OverviewPanels';
-import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, holidayDateLabel, insufficientRestrictedBalance, isWfh, RH_ONLY_PUBLISHED_DATES, toYmd } from '../utils';
+import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
+import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/manager/reports', label: 'Reports', icon: '/assets/document.png' },
   { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
@@ -78,14 +78,8 @@ export function ManagerOverview() {
         canApplyRestricted
       />
 
-    </AppShell>
-  );
-}
-
-export function ManagerReports() {
-  return (
-    <AppShell title="Reports" nav={NAV}>
       <LeaveReportSection />
+
     </AppShell>
   );
 }
@@ -183,9 +177,6 @@ export function ManagerApprovals() {
               Manager review — {active.userName} ({isWfh(active.leaveType) ? 'WFH' : 'leave'})
             </h2>
             <ApprovalProgress leave={active} />
-            <p className="muted">
-              Approving sends this request to HR. Leave balance is not deducted yet.
-            </p>
             <div className="form-grid">
               <label>
                 Request type
@@ -281,133 +272,11 @@ export function ManagerApprovals() {
   );
 }
 
-function ManagerRestrictedApply({ onSubmitted }) {
-  const year = appToday().getFullYear();
-  const { data: holidayData, reload: reloadHolidays } = useLoad(
-    () => api(`/holidays?year=${year}`),
-    [year]
-  );
-  const [startDate, setStartDate] = useState('');
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-  const [errorPopup, setErrorPopup] = useState(null);
-  const { data: balances, reload: reloadBalances } = useLoad(() =>
-    api('/balances/me').then((d) => d.balances)
-  );
-  const restrictedBalance = balances?.restricted ?? 2;
-  const noRestrictedBalance = restrictedBalance < 1;
-  const rhDates = new Set((holidayData?.restricted || []).map((h) => toYmd(h.startDate)));
-
-  function showApplyError(message, title = 'Cannot apply leave') {
-    setErrorPopup({ title, message });
-    setErr(message);
-  }
-
-  async function onSubmit(e) {
-    e.preventDefault();
-    setBusy(true);
-    setMsg('');
-    setErr('');
-    try {
-      if (noRestrictedBalance) {
-        throw new Error(insufficientRestrictedBalance(restrictedBalance));
-      }
-      const ymd = toYmd(startDate);
-      if (!ymd || !rhDates.has(ymd)) {
-        throw new Error(RH_ONLY_PUBLISHED_DATES);
-      }
-      await api('/leaves', {
-        method: 'POST',
-        body: {
-          leaveType: 'restricted',
-          startDate: ymd,
-          endDate: ymd,
-          session: 'full',
-          reason,
-        },
-      });
-      setMsg('Restricted leave submitted for approval.');
-      setStartDate('');
-      setReason('');
-      reloadHolidays();
-      reloadBalances();
-      onSubmitted?.();
-    } catch (error) {
-      const message = error.message || 'Could not submit leave';
-      showApplyError(
-        message,
-        /insufficient restricted leave/i.test(message) ? 'No restricted leave balance' : 'Cannot apply leave'
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
+export function ManagerApply() {
   return (
-    <section className="panel mandatory-leave-panel">
-      <ErrorPopup
-        show={Boolean(errorPopup)}
-        title={errorPopup?.title}
-        message={errorPopup?.message}
-        onClose={() => setErrorPopup(null)}
-      />
-      <h2>Take restricted leave</h2>
-      <p className="muted slim">
-        Restricted leave can only be taken on the published RH dates below (pink on the calendar).
-        You cannot apply leave on Saturdays, Sundays, or general holidays. Balance:{' '}
-        {restrictedBalance} restricted leave{restrictedBalance === 1 ? '' : 's'} remaining.
-        {noRestrictedBalance ? ' You have no restricted leave balance left.' : ''}
-      </p>
-      <form className="rh-apply-form" onSubmit={onSubmit}>
-        <label>
-          Restricted leave
-          <select
-            value={startDate}
-            disabled={noRestrictedBalance}
-            onChange={(e) => {
-              const value = e.target.value;
-              if (noRestrictedBalance) {
-                showApplyError(
-                  insufficientRestrictedBalance(restrictedBalance),
-                  'No restricted leave balance'
-                );
-                return;
-              }
-              if (value && !rhDates.has(value)) {
-                showApplyError(RH_ONLY_PUBLISHED_DATES);
-                return;
-              }
-              setStartDate(value);
-            }}
-            required
-          >
-            <option value="">Select a published RH date…</option>
-            {(holidayData?.restricted || []).map((h) => (
-              <option key={h.id} value={toYmd(h.startDate)}>
-                {holidayDateLabel(h)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Notes
-          <input
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Optional"
-          />
-        </label>
-        <div className="mandatory-leave-actions">
-          <button className="btn primary" type="submit" disabled={busy || !startDate || noRestrictedBalance}>
-            {busy ? 'Submitting…' : 'Submit'}
-          </button>
-        </div>
-      </form>
-      {msg && <p className="form-ok">{msg}</p>}
-      {err && !errorPopup && <p className="form-error">{err}</p>}
-    </section>
+    <AppShell title="Apply" nav={NAV}>
+      <LeaveBalanceDashboard restrictedOnly />
+    </AppShell>
   );
 }
 
@@ -436,12 +305,6 @@ export function ManagerCalendar() {
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
-      <p className="lede">
-        Approved leave for your team. General holidays are blue with the holiday name. Restricted
-        holidays are pink — you can take up to 2 per year, only on those RH dates. Saturdays and
-        Sundays are grey.
-      </p>
-      <ManagerRestrictedApply onSubmitted={reload} />
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {data && (
@@ -507,7 +370,6 @@ export function ManagerSalary() {
 
   return (
     <AppShell title="My salary" nav={NAV}>
-      <p className="lede">Your salary components (view only). Contact HR for changes.</p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {!loading && !data && !error && (

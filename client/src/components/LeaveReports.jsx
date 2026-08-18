@@ -291,9 +291,6 @@ export function LeaveExportPanel() {
       <div className="export-head">
         <div>
           <h2>Download leave data</h2>
-          <p className="muted export-sub">
-            Export filtered leave requests as CSV or PDF for HR records.
-          </p>
         </div>
       </div>
 

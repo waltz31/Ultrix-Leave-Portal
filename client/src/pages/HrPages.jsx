@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
@@ -7,7 +7,9 @@ import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveExportPanel, LeaveReportSection } from '../components/LeaveReports';
+import OnboardingIdCard from '../components/OnboardingIdCard';
 import OverviewPanels from '../components/OverviewPanels';
+import HrEmployeeBalanceDirectory from '../components/HrEmployeeBalanceDirectory';
 import EmployeeOnboardingForm, {
   ASSET_CATEGORY_OPTIONS,
   EMPTY_ASSET,
@@ -21,27 +23,35 @@ import EmployeeOnboardingForm, {
   profileToForm,
 } from '../components/EmployeeOnboardingForm';
 import {
-  DetailList,
   SALARY_SENSITIVE_FIELDS,
+  SalaryComponentsView,
   formatPayrollValue,
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
+import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh, managerOptionLabel } from '../utils';
 import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
 import * as XLSX from 'xlsx';
 
 const NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
+  { to: '/hr/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/reports', label: 'Reports', icon: '/assets/document.png' },
+  { to: '/hr/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
 ];
+
+function portalRoleLabel(role) {
+  if (role === 'hr') return 'HR';
+  if (role === 'manager') return 'Manager';
+  return 'Employee';
+}
 
 function useLoad(loader, deps = []) {
   const [data, setData] = useState(null);
@@ -99,17 +109,12 @@ export function HrOverview() {
         teamTitle="Team on leave"
         calendarTo="/hr/calendar"
         holidaysTo="/hr/calendar"
+        canApplyRestricted
       />
 
-    </AppShell>
-  );
-}
-
-export function HrReports() {
-  return (
-    <AppShell title="Reports" nav={NAV}>
       <LeaveReportSection />
       <LeaveExportPanel />
+
     </AppShell>
   );
 }
@@ -171,7 +176,6 @@ export function HrApprovals() {
         imageSrc="/assets/leave-approved.gif"
         durationMs={2800}
       />
-      <p className="lede">Requests already approved by the manager.</p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {!loading && data?.length === 0 && <p className="empty">No requests awaiting HR.</p>}
@@ -205,9 +209,6 @@ export function HrApprovals() {
               HR review — {active.userName} ({isWfh(active.leaveType) ? 'WFH' : 'leave'})
             </h2>
             <ApprovalProgress leave={active} />
-            <p className="muted">
-              Final approval deducts leave balance (not for WFH). You may adjust type/dates.
-            </p>
             <div className="form-grid">
               <label>
                 Request type
@@ -303,6 +304,77 @@ export function HrApprovals() {
   );
 }
 
+function reportingManagerName(profile, managers) {
+  if (profile?.managerName) return profile.managerName;
+  const match = (managers || []).find((m) => String(m.id) === String(profile?.managerId));
+  if (match) return managerOptionLabel(match);
+  return 'Unassigned';
+}
+
+function ProfileFacts({ items }) {
+  return (
+    <dl className="profile-facts">
+      {items.map((item) => (
+        <div key={item.label} className={item.wide ? 'is-wide' : undefined}>
+          <dt>{item.label}</dt>
+          <dd>{item.value ?? '—'}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ProfileCardMenu({ items = [] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(event) {
+      if (!ref.current?.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  if (!items.length) return null;
+
+  return (
+    <div className="profile-card-menu" ref={ref}>
+      <button
+        type="button"
+        className="profile-card-more"
+        aria-label="Profile actions"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.8" />
+          <circle cx="12" cy="12" r="1.8" />
+          <circle cx="19" cy="12" r="1.8" />
+        </svg>
+      </button>
+      {open && (
+        <div className="profile-card-dropdown" role="menu">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              className={item.danger ? 'danger' : undefined}
+              onClick={() => {
+                setOpen(false);
+                item.onClick();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function HrOnboarding() {
   const { data: profiles, error, loading, reload } = useLoad(() =>
     api('/onboarding').then((d) => d.profiles)
@@ -368,21 +440,21 @@ export function HrOnboarding() {
           body,
         });
         setSelected(profile);
-        setMsg(form.role === 'manager' ? 'Manager profile updated.' : 'Employee profile updated.');
+        setMsg(`${portalRoleLabel(form.role)} profile updated.`);
       } else {
         const { profile, credentials } = await api('/onboarding', {
           method: 'POST',
           body,
         });
         setCreatedNotice({
-          name: profile?.name || form.name || (form.role === 'manager' ? 'Manager' : 'Employee'),
+          name: profile?.name || form.name || portalRoleLabel(form.role),
           email: credentials?.email || profile?.email || '',
           password: credentials?.password || '',
           emailGenerated: Boolean(credentials?.emailGenerated),
           passwordGenerated: Boolean(credentials?.passwordGenerated),
           role: form.role,
         });
-        setMsg(form.role === 'manager' ? 'Manager profile created.' : 'Employee profile created.');
+        setMsg(`${portalRoleLabel(form.role)} profile created.`);
       }
       setForm(blankForm());
       setShowForm(false);
@@ -396,62 +468,31 @@ export function HrOnboarding() {
     }
   }
 
-  async function bulkImportEmployees(forms) {
-    setBusy(true);
-    setMsg('');
-    setErr('');
-    const created = [];
-    const failed = [];
-    try {
-      for (let i = 0; i < forms.length; i += 1) {
-        const next = forms[i];
-        const rowLabel = next._excelRow || i + 2;
-        const formBody = { ...next };
-        delete formBody._excelRow;
-        try {
-          const { profile, credentials } = await api('/onboarding', {
-            method: 'POST',
-            body: {
-              ...formBody,
-              managerId: formBody.managerId ? Number(formBody.managerId) : null,
-              assets: formBody.assets || [],
-            },
-          });
-          created.push({
-            row: rowLabel,
-            name: profile?.name || formBody.name || 'Employee',
-            email: credentials?.email || profile?.email || '',
-            password: credentials?.password || '',
-            emailGenerated: Boolean(credentials?.emailGenerated),
-            passwordGenerated: Boolean(credentials?.passwordGenerated),
-          });
-        } catch (error) {
-          failed.push({
-            row: rowLabel,
-            name: formBody.name || formBody.email || `Row ${rowLabel}`,
-            error: error.message,
-          });
-        }
-      }
-      setShowForm(false);
-      setEditingUserId(null);
-      setForm(blankForm());
-      setBulkResult({ created, failed });
-      if (created.length && !failed.length) {
-        setMsg(
-          `Imported ${created.length} employee${created.length === 1 ? '' : 's'} from the spreadsheet.`
-        );
-      } else if (created.length) {
-        setMsg(
-          `Imported ${created.length} employee${created.length === 1 ? '' : 's'}. ${failed.length} row${failed.length === 1 ? '' : 's'} failed.`
-        );
-      } else {
-        setErr(failed[0]?.error || 'No employees could be imported from that spreadsheet.');
-      }
-      reload();
-    } finally {
-      setBusy(false);
+  async function bulkImportEmployees(result) {
+    const created = result?.created || [];
+    const failed = result?.failed || [];
+    setShowForm(false);
+    setEditingUserId(null);
+    setForm(blankForm());
+    setBulkResult({ created, failed });
+    if (created.length && !failed.length) {
+      setMsg(
+        `Imported ${created.length} employee${created.length === 1 ? '' : 's'} from the ${
+          result.fileType === 'csv' ? 'CSV' : 'Excel'
+        } file.`
+      );
+      setErr('');
+    } else if (created.length) {
+      setMsg(
+        `Imported ${created.length} employee${created.length === 1 ? '' : 's'}. ${failed.length} row${failed.length === 1 ? '' : 's'} failed.`
+      );
+      setErr('');
+    } else {
+      setMsg('');
+      setErr(failed[0]?.error || 'No employees could be imported from that file.');
     }
+    reload();
+    reloadManagers();
   }
 
   function openCreate(role = 'user') {
@@ -534,11 +575,6 @@ export function HrOnboarding() {
         durationMs={createdNotice?.password ? 12000 : 2800}
       />
       <div className="page-actions">
-        <p className="lede">
-          Create and edit employee and manager profiles including personal, employment, IT/asset,
-          and payroll details. Assign who each person reports to — managers can report to another
-          manager.
-        </p>
         <div className="page-actions-buttons">
           <button type="button" className="btn secondary" onClick={() => openCreate('manager')}>
             + Add manager
@@ -623,115 +659,32 @@ export function HrOnboarding() {
 
       <section className="panel">
         <h2>Employee &amp; manager profiles</h2>
-        <p className="muted slim">
-          Employees and managers can each view their own salary in the portal. Assign reporting
-          to here, including a manager for managers. Edit payroll to keep their Salary page up to
-          date.
-        </p>
         {!loading && !profiles?.length && (
           <p className="empty">No onboarded employees yet. Create a profile to get started.</p>
         )}
         {!!profiles?.length && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Role</th>
-                  <th>Emp ID</th>
-                  <th>Department</th>
-                  <th>Designation</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Reporting To</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {profiles.map((p) => (
-                  <tr key={p.userId}>
-                    <td>
-                      <div className="onboarding-row-identity">
-                        <img
-                          className="onboarding-avatar"
-                          src={avatarSrc(p.personal.profilePhoto)}
-                          alt=""
-                        />
-                        <div>
-                          <strong className="employee-name">{p.name}</strong>
-                          <div className="sub">{p.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="badge">
-                        {p.role === 'manager' ? 'Manager' : 'Employee'}
-                      </span>
-                    </td>
-                    <td>{p.employeeNumber || '—'}</td>
-                    <td>{p.employment.department || '—'}</td>
-                    <td>{p.employment.designation || '—'}</td>
-                    <td>{labelFrom(EMPLOYMENT_TYPE_OPTIONS, p.employment.employmentType)}</td>
-                    <td>
-                      <span
-                        className={`badge status-${p.employment.employmentStatus || 'active'}`}
-                      >
-                        {labelFrom(EMPLOYMENT_STATUS_OPTIONS, p.employment.employmentStatus)}
-                      </span>
-                    </td>
-                    <td>
-                      <select
-                        className="reporting-to-select"
-                        aria-label={`Reporting to for ${p.name}`}
-                        value={p.managerId || ''}
-                        disabled={busy}
-                        onChange={(e) => assignReportingTo(p, e.target.value)}
-                      >
-                        <option value="">Unassigned</option>
-                        {(managers || [])
-                          .filter(
-                            (m) =>
-                              String(m.id) !== String(p.userId) && m.active !== false
-                          )
-                          .map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {managerOptionLabel(m)}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className={`btn ghost ${selected?.userId === p.userId && !showForm ? 'is-selected' : ''}`}
-                          onClick={() => setSelected(p)}
-                        >
-                          View
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn ghost ${editingUserId === p.userId && showForm ? 'is-selected' : ''}`}
-                          onClick={() => openEdit(p)}
-                        >
-                          Edit
-                        </button>
-                        {p.role !== 'manager' && (
-                          <button
-                            type="button"
-                            className="btn ghost-danger"
-                            onClick={() => deleteProfile(p)}
-                            disabled={busy}
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="id-badge-grid">
+            {profiles.map((p) => (
+              <OnboardingIdCard
+                key={p.userId}
+                profile={p}
+                selected={selected?.userId === p.userId && !showForm}
+                managerName={
+                  p.managerId || p.managerName ? reportingManagerName(p, managers) : 'Unassigned'
+                }
+                menu={
+                  <ProfileCardMenu
+                    items={[
+                      { label: 'View profile', onClick: () => setSelected(p) },
+                      { label: 'Edit', onClick: () => openEdit(p) },
+                      ...(p.role !== 'manager'
+                        ? [{ label: 'Delete', onClick: () => deleteProfile(p), danger: true }]
+                        : []),
+                    ]}
+                  />
+                }
+              />
+            ))}
           </div>
         )}
       </section>
@@ -739,21 +692,22 @@ export function HrOnboarding() {
       {showForm && (
         <div className="modal-backdrop modal-backdrop-static">
           <div
-            className="modal modal-wide"
+            className="modal modal-wide profile-sheet"
             role="dialog"
             aria-modal="true"
             aria-labelledby="onboarding-title"
           >
-            <div className="row-between">
-              <h2 id="onboarding-title">
-                {editingUserId
-                  ? form.role === 'manager'
-                    ? 'Edit manager profile'
-                    : 'Edit employee profile'
-                  : form.role === 'manager'
-                    ? 'Create manager profile'
-                    : 'Create employee profile'}
-              </h2>
+            <div className="profile-sheet-toolbar">
+              <div>
+                <p className="profile-sheet-kicker">
+                  {editingUserId ? 'Edit profile' : 'New profile'}
+                </p>
+                <h2 id="onboarding-title">
+                  {editingUserId
+                    ? form.name || portalRoleLabel(form.role)
+                    : `Create ${portalRoleLabel(form.role).toLowerCase()} profile`}
+                </h2>
+              </div>
               <div className="row-actions">
                 {editingUserId && (
                   <button
@@ -791,11 +745,7 @@ export function HrOnboarding() {
               editingUserId={editingUserId}
               busy={busy}
               submitLabel={
-                editingUserId
-                  ? 'Save changes'
-                  : form.role === 'manager'
-                    ? 'Create manager profile'
-                    : 'Create employee profile'
+                editingUserId ? 'Save changes' : `Create ${portalRoleLabel(form.role).toLowerCase()} profile`
               }
             />
           </div>
@@ -805,162 +755,144 @@ export function HrOnboarding() {
       {selected && (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>
           <div
-            className="modal modal-wide"
+            className="modal modal-wide profile-sheet"
             role="dialog"
             aria-modal="true"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="row-between">
-              <h2>{selected.name}</h2>
+            <div className="profile-sheet-toolbar">
+              <p className="profile-sheet-kicker">View profile</p>
               <div className="row-actions">
-                <button type="button" className="btn primary is-selected" onClick={() => openEdit(selected)}>
+                <button type="button" className="btn primary" onClick={() => openEdit(selected)}>
                   Edit
                 </button>
-                <button
-                  type="button"
-                  className="btn ghost-danger"
-                  onClick={() => deleteProfile(selected)}
-                  disabled={busy}
-                >
-                  Delete
-                </button>
+                {selected.role !== 'manager' && (
+                  <button
+                    type="button"
+                    className="btn ghost-danger"
+                    onClick={() => deleteProfile(selected)}
+                    disabled={busy}
+                  >
+                    Delete
+                  </button>
+                )}
                 <button type="button" className="btn ghost" onClick={() => setSelected(null)}>
                   Close
                 </button>
               </div>
             </div>
-            <div className="onboarding-detail-grid">
-              <section>
+
+            <div className="profile-sheet-hero">
+              <img
+                className="profile-sheet-photo"
+                src={avatarSrc(selected.personal.profilePhoto)}
+                alt=""
+              />
+              <div className="profile-sheet-id">
+                <h2>{selected.name}</h2>
+                <p>{selected.email}</p>
+                <p className="profile-sheet-role">{selected.employment.designation || '—'}</p>
+                <div className="profile-sheet-chips">
+                  <span>{selected.role === 'manager' ? 'Manager' : 'Employee'}</span>
+                  {selected.employeeNumber ? <span>{selected.employeeNumber}</span> : null}
+                  <span>
+                    {labelFrom(EMPLOYMENT_STATUS_OPTIONS, selected.employment.employmentStatus)}
+                  </span>
+                </div>
+                <label className="profile-sheet-manager">
+                  Reporting manager
+                  <select
+                    className="reporting-to-select"
+                    aria-label={`Reporting to for ${selected.name}`}
+                    value={selected.managerId || ''}
+                    disabled={busy}
+                    onChange={(e) => assignReportingTo(selected, e.target.value)}
+                  >
+                    <option value="">Unassigned</option>
+                    {(managers || [])
+                      .filter(
+                        (m) =>
+                          String(m.id) !== String(selected.userId) && m.active !== false
+                      )
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {managerOptionLabel(m)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div className="profile-sheet-sections">
+              <section className="profile-sheet-section">
                 <h3>Personal</h3>
-                <img
-                  className="onboarding-detail-photo"
-                  src={avatarSrc(selected.personal.profilePhoto)}
-                  alt=""
-                />
-                <dl className="detail-list">
-                  <div>
-                    <dt>Employee ID</dt>
-                    <dd>{selected.employeeNumber || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Date of birth</dt>
-                    <dd>
-                      {selected.personal.dateOfBirth
+                <ProfileFacts
+                  items={[
+                    {
+                      label: 'Date of birth',
+                      value: selected.personal.dateOfBirth
                         ? formatDate(selected.personal.dateOfBirth)
-                        : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Gender</dt>
-                    <dd>{labelFrom(GENDER_OPTIONS, selected.personal.gender)}</dd>
-                  </div>
-                  <div>
-                    <dt>Personal email</dt>
-                    <dd>{selected.personal.personalEmail || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Mobile</dt>
-                    <dd>{selected.personal.personalMobile || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Address</dt>
-                    <dd>{selected.personal.address || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Emergency contact</dt>
-                    <dd>{selected.personal.emergencyContact || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Nationality</dt>
-                    <dd>{selected.personal.nationality || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Marital status</dt>
-                    <dd>{labelFrom(MARITAL_STATUS_OPTIONS, selected.personal.maritalStatus)}</dd>
-                  </div>
-                </dl>
+                        : '—',
+                    },
+                    { label: 'Gender', value: labelFrom(GENDER_OPTIONS, selected.personal.gender) },
+                    { label: 'Personal email', value: selected.personal.personalEmail || '—' },
+                    { label: 'Mobile', value: selected.personal.personalMobile || '—' },
+                    { label: 'Nationality', value: selected.personal.nationality || '—' },
+                    {
+                      label: 'Marital status',
+                      value: labelFrom(MARITAL_STATUS_OPTIONS, selected.personal.maritalStatus),
+                    },
+                    { label: 'Address', value: selected.personal.address || '—', wide: true },
+                    {
+                      label: 'Emergency contact',
+                      value: selected.personal.emergencyContact || '—',
+                      wide: true,
+                    },
+                  ]}
+                />
               </section>
-              <section>
+
+              <section className="profile-sheet-section">
                 <h3>Employment</h3>
-                <dl className="detail-list">
-                  <div>
-                    <dt>Date of joining</dt>
-                    <dd>
-                      {selected.employment.dateOfJoining
+                <ProfileFacts
+                  items={[
+                    {
+                      label: 'Date of joining',
+                      value: selected.employment.dateOfJoining
                         ? formatDate(selected.employment.dateOfJoining)
-                        : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Employment type</dt>
-                    <dd>
-                      {labelFrom(EMPLOYMENT_TYPE_OPTIONS, selected.employment.employmentType)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Department</dt>
-                    <dd>{selected.employment.department || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Designation</dt>
-                    <dd>{selected.employment.designation || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Job level</dt>
-                    <dd>{selected.employment.jobLevel || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Role</dt>
-                    <dd>{labelFrom(PORTAL_ROLE_OPTIONS, selected.role)}</dd>
-                  </div>
-                  <div>
-                    <dt>Reporting to</dt>
-                    <dd>
-                      {selected.managerName || selected.managerEmail ? (
-                        <>
-                          {selected.managerName || '—'}
-                          {selected.managerEmail ? (
-                            <div className="sub">{selected.managerEmail}</div>
-                          ) : null}
-                        </>
-                      ) : (
-                        '—'
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Location</dt>
-                    <dd>{selected.employment.location || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Work mode</dt>
-                    <dd>{labelFrom(WORK_MODE_OPTIONS, selected.employment.workMode)}</dd>
-                  </div>
-                  <div>
-                    <dt>Status</dt>
-                    <dd>
-                      {labelFrom(EMPLOYMENT_STATUS_OPTIONS, selected.employment.employmentStatus)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Probation</dt>
-                    <dd>{selected.employment.probationPeriod || '—'}</dd>
-                  </div>
-                  <div>
-                    <dt>Confirmation date</dt>
-                    <dd>
-                      {selected.employment.confirmationDate
+                        : '—',
+                    },
+                    {
+                      label: 'Employment type',
+                      value: labelFrom(EMPLOYMENT_TYPE_OPTIONS, selected.employment.employmentType),
+                    },
+                    { label: 'Department', value: selected.employment.department || '—' },
+                    { label: 'Designation', value: selected.employment.designation || '—' },
+                    { label: 'Job level', value: selected.employment.jobLevel || '—' },
+                    { label: 'Role', value: labelFrom(PORTAL_ROLE_OPTIONS, selected.role) },
+                    { label: 'Location', value: selected.employment.location || '—' },
+                    {
+                      label: 'Work mode',
+                      value: labelFrom(WORK_MODE_OPTIONS, selected.employment.workMode),
+                    },
+                    {
+                      label: 'Status',
+                      value: labelFrom(EMPLOYMENT_STATUS_OPTIONS, selected.employment.employmentStatus),
+                    },
+                    { label: 'Probation', value: selected.employment.probationPeriod || '—' },
+                    {
+                      label: 'Confirmation date',
+                      value: selected.employment.confirmationDate
                         ? formatDate(selected.employment.confirmationDate)
-                        : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Work email</dt>
-                    <dd>{selected.email || '—'}</dd>
-                  </div>
-                </dl>
+                        : '—',
+                    },
+                    { label: 'Work email', value: selected.email || '—' },
+                  ]}
+                />
               </section>
-              <section className="full">
+
+              <section className="profile-sheet-section is-wide">
                 <h3>IT / Asset</h3>
                 {!selected.assets?.length && !selected.it?.assetId && !selected.it?.laptopDesktopAssigned ? (
                   <p className="empty">No assets tagged.</p>
@@ -988,7 +920,7 @@ export function HrOnboarding() {
                             ?.label || 'Asset'}{' '}
                           {selected.assets?.length > 1 ? `#${idx + 1}` : ''}
                         </h4>
-                        <DetailList
+                        <ProfileFacts
                           items={[
                             { label: 'Device / item', value: asset.deviceAssigned || '—' },
                             { label: 'Asset ID', value: asset.assetId || '—' },
@@ -1005,10 +937,12 @@ export function HrOnboarding() {
                             {
                               label: 'Software / access',
                               value: asset.softwareAccess || '—',
+                              wide: true,
                             },
                             {
                               label: 'Company email / account',
                               value: asset.companyEmail || '—',
+                              wide: true,
                             },
                           ]}
                         />
@@ -1017,9 +951,10 @@ export function HrOnboarding() {
                   </div>
                 )}
               </section>
-              <section>
+
+              <section className="profile-sheet-section is-wide">
                 <h3>Payroll &amp; salary</h3>
-                <DetailList
+                <ProfileFacts
                   items={[
                     ...payrollFieldsFor(selected.employment?.employmentType).map((f) => ({
                       label: f.label,
@@ -1029,6 +964,7 @@ export function HrOnboarding() {
                       ? SALARY_SENSITIVE_FIELDS.map((f) => ({
                           label: f.label,
                           value: selected.payroll?.[f.key] || '—',
+                          wide: true,
                         }))
                       : []),
                   ]}
@@ -1056,13 +992,6 @@ export function HrUsers() {
     data: creditLog,
     reload: reloadCredits,
   } = useLoad(() => api('/balances/credits').then((d) => d.credits));
-  const [managerForm, setManagerForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    employeeNumber: '',
-    managerId: '',
-  });
   const [creditForm, setCreditForm] = useState({
     userId: '',
     leaveType: 'casual',
@@ -1072,39 +1001,6 @@ export function HrUsers() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [creditPopup, setCreditPopup] = useState(null);
-  const [managerNotice, setManagerNotice] = useState(null);
-  const [managerBusy, setManagerBusy] = useState(false);
-
-  async function createManager(e) {
-    e.preventDefault();
-    setMsg('');
-    setErr('');
-    setManagerBusy(true);
-    try {
-      const body = {
-        name: managerForm.name.trim(),
-        email: managerForm.email.trim(),
-        password: managerForm.password,
-        role: 'manager',
-        employeeNumber: managerForm.employeeNumber.trim() || undefined,
-        managerId: managerForm.managerId ? Number(managerForm.managerId) : null,
-      };
-      const { user } = await api('/users', { method: 'POST', body });
-      setManagerNotice({
-        name: user?.name || body.name,
-        email: user?.email || body.email,
-        password: body.password,
-      });
-      setMsg(`${user?.name || body.name} added as manager.`);
-      setManagerForm({ name: '', email: '', password: '', employeeNumber: '', managerId: '' });
-      reloadManagers();
-      reload();
-    } catch (error) {
-      setErr(error.message);
-    } finally {
-      setManagerBusy(false);
-    }
-  }
 
   async function creditBalance(e) {
     e.preventDefault();
@@ -1196,170 +1092,17 @@ export function HrUsers() {
         imageSrc="/assets/balance-credited.gif"
         durationMs={3200}
       />
-      <StatusCelebration
-        show={Boolean(managerNotice)}
-        onDone={() => setManagerNotice(null)}
-        message="Manager created!"
-        detail={
-          managerNotice?.email
-            ? `${managerNotice.name} can log in with the credentials below.`
-            : `${managerNotice?.name || 'Manager'} has been added.`
-        }
-        credentials={
-          managerNotice?.email
-            ? {
-                email: managerNotice.email,
-                password: managerNotice.password,
-              }
-            : null
-        }
-        imageSrc="/assets/leave-approved.gif"
-        durationMs={managerNotice?.password ? 12000 : 2800}
-      />
-      <p className="lede">
-        Add managers, credit leave balances, and manage employees. Create employees in{' '}
-        <Link to="/hr/onboarding">Onboarding</Link>.
-      </p>
       {(msg || err) && <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {managersError && <p className="form-error">{managersError}</p>}
 
       <div className="leave-mgmt-stack">
-      <section className="panel leave-mgmt-managers">
-        <h2>Add manager</h2>
-        <p className="muted slim">
-          Managers approve team leave before HR. They sign in with the email and password you set.
-          Assign who each manager reports to — another manager can be their reporting manager.
-        </p>
-        <form className="manager-create-form" onSubmit={createManager}>
-          <label>
-            Name
-            <input
-              value={managerForm.name}
-              onChange={(e) => setManagerForm((f) => ({ ...f, name: e.target.value }))}
-              required
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Work email
-            <input
-              type="email"
-              value={managerForm.email}
-              onChange={(e) => setManagerForm((f) => ({ ...f, email: e.target.value }))}
-              required
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Temp password
-            <input
-              type="text"
-              value={managerForm.password}
-              onChange={(e) => setManagerForm((f) => ({ ...f, password: e.target.value }))}
-              minLength={6}
-              required
-              autoComplete="new-password"
-              placeholder="Min 6 characters"
-            />
-          </label>
-          <label>
-            Emp ID (optional)
-            <input
-              value={managerForm.employeeNumber}
-              onChange={(e) => setManagerForm((f) => ({ ...f, employeeNumber: e.target.value }))}
-              autoComplete="off"
-            />
-          </label>
-          <label>
-            Reporting to
-            <select
-              value={managerForm.managerId}
-              onChange={(e) => setManagerForm((f) => ({ ...f, managerId: e.target.value }))}
-            >
-              <option value="">No reporting manager</option>
-              {(managers || [])
-                .filter((m) => m.active !== false)
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.email ? `${managerOptionLabel(m)} (${m.email})` : managerOptionLabel(m)}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <div className="leave-credit-actions">
-            <button className="btn primary" type="submit" disabled={managerBusy}>
-              {managerBusy ? 'Adding…' : 'Add manager'}
-            </button>
-          </div>
-        </form>
-
-        <h3 className="leave-mgmt-subhead">Managers &amp; HR</h3>
-        {managersLoading && <p className="muted">Loading managers…</p>}
-        {!managersLoading && !managers?.length && (
-          <p className="empty">No managers or HR users yet. Add a manager above.</p>
-        )}
-        {!!managers?.length && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Role</th>
-                  <th>Email</th>
-                  <th>Reporting To</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {managers.map((mgr) => (
-                  <tr key={mgr.id} className={mgr.active ? '' : 'is-inactive'}>
-                    <td>
-                      <strong className="employee-name">{mgr.name}</strong>
-                    </td>
-                    <td>{ROLE_LABELS[mgr.role] || mgr.role}</td>
-                    <td>{mgr.email}</td>
-                    <td>
-                      <select
-                        className="reporting-to-select"
-                        aria-label={`Reporting to for ${mgr.name}`}
-                        value={mgr.managerId || ''}
-                        onChange={(e) => assignManagerReportingTo(mgr, e.target.value)}
-                      >
-                        <option value="">Unassigned</option>
-                        {(managers || [])
-                          .filter((m) => String(m.id) !== String(mgr.id) && m.active !== false)
-                          .map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {managerOptionLabel(m)}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                    <td>
-                      <span className={`badge ${mgr.active ? 'status-active' : 'status-inactive'}`}>
-                        {mgr.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button type="button" className="btn ghost" onClick={() => toggleActive(mgr)}>
-                          {mgr.active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       <section className="panel leave-mgmt-credit">
-        <h2>Credit leave balance</h2>
+        <div className="leave-credit-head">
+          <p className="leave-credit-kicker">Leave balances</p>
+          <h2>Credit leave balance</h2>
+        </div>
         <form className="leave-credit-form" onSubmit={creditBalance}>
           <label>
             Employee
@@ -1372,13 +1115,13 @@ export function HrUsers() {
               {(data || []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
-                  {u.role === 'manager' ? ' (manager)' : ''}
+                  {u.role === 'manager' ? ' (manager)' : u.role === 'hr' ? ' (HR)' : ''}
                   {u.active ? '' : ' (inactive)'}
                 </option>
               ))}
             </select>
           </label>
-          <label>
+          <label className={`leave-credit-type is-${creditForm.leaveType}`}>
             Type
             <select
               value={creditForm.leaveType}
@@ -1418,77 +1161,100 @@ export function HrUsers() {
         </form>
       </section>
 
-      <section className="panel">
-        <h2>Employee leave balances</h2>
-        {!loading && !data?.length && (
+      <section className="panel leave-mgmt-managers">
+        <h2>Managers &amp; HR</h2>
+        {managersLoading && <p className="muted">Loading managers…</p>}
+        {!managersLoading && !managers?.length && (
           <p className="empty">
-            No employees yet. Add them from <Link to="/hr/onboarding">Onboarding</Link>.
+            No managers or HR users yet. Add them from <Link to="/hr/onboarding">Onboarding</Link>.
           </p>
         )}
-        {!!data?.length && (
-          <div className="table-wrap">
-            <table className="leave-balances-table">
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th>Emp ID</th>
-                  <th>Reporting To</th>
-                  <th>Status</th>
-                  <th className="leave-type-heading">Casual Leave</th>
-                  <th className="leave-type-heading">Earned Leave</th>
-                  <th className="leave-type-heading">Sick Leave</th>
-                  <th className="leave-type-heading">Restricted Leave</th>
-                  <th className="leave-type-heading">WFH</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((user) => (
-                  <tr key={user.id} className={user.active ? '' : 'is-inactive'}>
-                    <td>
-                      <strong className="employee-name">{user.name}</strong>
-                      <div className="sub">
-                        {user.email}
-                        {user.role === 'manager' ? ' · Manager' : ''}
-                      </div>
-                    </td>
-                    <td>{user.employeeNumber || '—'}</td>
-                    <td>{user.managerEmail || user.managerName || '—'}</td>
-                    <td>
-                      <span className={`badge ${user.active ? 'status-active' : 'status-inactive'}`}>
-                        {user.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td>{user.balances.casual}</td>
-                    <td>{user.balances.earned}</td>
-                    <td>{user.balances.sick}</td>
-                    <td>{user.balances.restricted ?? 0}</td>
-                    <td>{user.wfhDays ?? 0}</td>
-                    <td>
-                      <div className="row-actions">
-                        <button type="button" className="btn ghost" onClick={() => toggleActive(user)}>
-                          {user.active ? 'Deactivate' : 'Activate'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost-danger"
-                          onClick={() => deleteEmployee(user)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {!!managers?.length && (
+          <div className="profile-card-grid">
+            {managers.map((mgr) => (
+              <article
+                key={mgr.id}
+                className={`profile-card ${mgr.active ? '' : 'is-inactive'}`}
+              >
+                <img
+                  className="profile-card-photo"
+                  src={avatarSrc(mgr.profilePhoto)}
+                  alt=""
+                />
+                <div className="profile-card-body">
+                  <div className="profile-card-head">
+                    <h3 className="profile-card-name">{mgr.name}</h3>
+                    <ProfileCardMenu
+                      items={[
+                        {
+                          label: mgr.active ? 'Deactivate' : 'Activate',
+                          onClick: () => toggleActive(mgr),
+                        },
+                      ]}
+                    />
+                  </div>
+                  <p className="profile-card-email">{mgr.email}</p>
+                  <p className="profile-card-designation">
+                    {mgr.designation || ROLE_LABELS[mgr.role] || mgr.role}
+                  </p>
+                  <p className="profile-card-manager">
+                    {mgr.managerId || mgr.managerName
+                      ? `Reports to ${reportingManagerName(mgr, managers)}`
+                      : 'No reporting manager'}
+                  </p>
+                  <label className="profile-card-assign">
+                    Reporting manager
+                    <select
+                      className="reporting-to-select"
+                      aria-label={`Reporting to for ${mgr.name}`}
+                      value={mgr.managerId || ''}
+                      onChange={(e) => assignManagerReportingTo(mgr, e.target.value)}
+                    >
+                      <option value="">Unassigned</option>
+                      {(managers || [])
+                        .filter((m) => String(m.id) !== String(mgr.id) && m.active !== false)
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {managerOptionLabel(m)}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
+              </article>
+            ))}
           </div>
         )}
       </section>
 
+      <HrEmployeeBalanceDirectory
+        users={data || []}
+        empty={
+          !loading ? (
+            <p className="empty">
+              No employees yet. Add them from <Link to="/hr/onboarding">Onboarding</Link>.
+            </p>
+          ) : null
+        }
+        renderMenu={(user) => (
+          <ProfileCardMenu
+            items={[
+              {
+                label: user.active ? 'Deactivate' : 'Activate',
+                onClick: () => toggleActive(user),
+              },
+              {
+                label: 'Delete',
+                onClick: () => deleteEmployee(user),
+                danger: true,
+              },
+            ]}
+          />
+        )}
+      />
+
       <section className="panel">
         <h2>Credit history</h2>
-        <p className="muted slim">Leave balances credited by HR, with date and time.</p>
         {!creditLog?.length && <p className="empty">No credits recorded yet.</p>}
         {!!creditLog?.length && (
           <div className="table-wrap">
@@ -1527,6 +1293,38 @@ export function HrUsers() {
         )}
       </section>
       </div>
+    </AppShell>
+  );
+}
+
+export function HrApply() {
+  return (
+    <AppShell title="Apply leave" nav={NAV}>
+      <LeaveBalanceDashboard />
+    </AppShell>
+  );
+}
+
+export function HrSalary() {
+  const { data, error, loading } = useLoad(() =>
+    api('/profiles/me').then((d) => d.profile)
+  );
+
+  return (
+    <AppShell title="My salary" nav={NAV}>
+      {loading && <p className="muted">Loading…</p>}
+      {error && <p className="form-error">{error}</p>}
+      {!loading && !data && !error && (
+        <p className="empty">No salary profile on file yet. Add your details in Onboarding.</p>
+      )}
+      {data && (
+        <SalaryComponentsView
+          payroll={data.payroll}
+          employmentType={data.employment?.employmentType}
+          showSensitive
+          title={`${data.name} · salary components`}
+        />
+      )}
     </AppShell>
   );
 }
@@ -1576,6 +1374,12 @@ export function HrCalendar() {
     setErr('');
     try {
       if (leave.isMandatory) {
+        if (leave.leaveType === 'restricted' || leave.holidayType === 'restricted') {
+          setErr(
+            'Restricted holidays stay in Overview for applying. They appear on a calendar only after a leave request is approved.'
+          );
+          return false;
+        }
         await api(`/mandatory-leaves/${leave.mandatoryId}`, { method: 'DELETE' });
       } else {
         await api(`/leaves/${leave.id}`, { method: 'DELETE' });
@@ -1607,7 +1411,11 @@ export function HrCalendar() {
         },
       });
       setMandatoryForm({ title: '', startDate: '', endDate: '', note: '', holidayType: 'general' });
-      setMandatoryMsg('Holiday added. It is now on the team calendar below.');
+      setMandatoryMsg(
+        mandatoryForm.holidayType === 'restricted'
+          ? 'Restricted holiday added. It is listed on Overview for employees and managers to apply.'
+          : 'Holiday added. It is now on the team calendar below.'
+      );
       reload();
     } catch (error) {
       setErr(error.message);
@@ -1659,19 +1467,8 @@ export function HrCalendar() {
 
   return (
     <AppShell title="Team calendar" nav={NAV}>
-      <p className="lede">
-        Filter by employee to review overlapping leave. Use + on a working day to add leave for an
-        employee. Leave cannot be applied on Saturdays, Sundays, or general holidays. Restricted
-        holidays can be taken only on the published RH dates — maximum 2 per year.
-      </p>
-
       <section className="panel mandatory-leave-panel">
         <h2>Company holidays</h2>
-        <p className="muted slim">
-          General holidays are company-wide offs and already show on every calendar with the holiday
-          name. Restricted holidays are optional — each employee or manager may take only 2 per year,
-          and only on the RH dates in this list.
-        </p>
         <form className="mandatory-leave-form" onSubmit={submitMandatory}>
           <label>
             Holiday
@@ -1734,11 +1531,6 @@ export function HrCalendar() {
             </label>
           </div>
         </form>
-        <p className="muted slim">
-          Upload <code>.csv</code>, <code>.xlsx</code>, or <code>.xls</code> with columns{' '}
-          <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted). Uploaded
-          holidays appear directly on the team calendar below.
-        </p>
         {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
       </section>
 

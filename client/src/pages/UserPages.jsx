@@ -1,30 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
 import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
-import StatusCelebration from '../components/StatusCelebration';
-import ErrorPopup from '../components/ErrorPopup';
 import OverviewPanels from '../components/OverviewPanels';
+import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import { LeaveReportCharts } from '../components/LeaveReports';
 import {
-  APPLY_LABELS,
   LEAVE_LABELS,
   REQUEST_LABELS,
-  SESSION_LABELS,
   STATUS_LABELS,
   appToday,
   formatLeaveSpan,
-  isWfh,
   canUserCancel,
-  holidayDateLabel,
-  toYmd,
-  blockedRegularLeaveMessage,
-  generalHolidayMapFromList,
-  isApplyBlockError,
-  insufficientRestrictedBalance,
-  RH_ONLY_PUBLISHED_DATES,
 } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
@@ -136,7 +125,6 @@ export function UserHome() {
         calendarTo="/app/calendar"
         holidaysTo="/app/calendar"
         canApplyRestricted
-        restrictedBalance={balances?.restricted ?? 2}
         onRestrictedApplied={() => {
           reloadLeaves();
           reloadBalances();
@@ -184,354 +172,9 @@ export function UserHome() {
 }
 
 export function UserApply() {
-  const { data: balances, reload } = useLoad(() =>
-    api('/balances/me').then((d) => d.balances)
-  );
-  const [form, setForm] = useState({
-    leaveType: 'casual',
-    startDate: '',
-    endDate: '',
-    session: 'full',
-    reason: '',
-  });
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [submittedPopup, setSubmittedPopup] = useState(null);
-  const { data: holidayData, reload: reloadHolidays } = useLoad(() =>
-    api(`/holidays?year=${appToday().getFullYear()}`)
-  );
-  const [errorPopup, setErrorPopup] = useState(null);
-  const wfh = isWfh(form.leaveType);
-  const restricted = form.leaveType === 'restricted';
-  const halfDay = !restricted && form.session !== 'full';
-  const restrictedBalance = balances?.restricted ?? 2;
-  const noRestrictedBalance = restrictedBalance < 1;
-  const generalHolidayMap = useMemo(
-    () => generalHolidayMapFromList(holidayData?.general || holidayData?.holidays),
-    [holidayData]
-  );
-  const rhDates = useMemo(
-    () => new Set((holidayData?.restricted || []).map((h) => toYmd(h.startDate))),
-    [holidayData]
-  );
-
-  function showApplyError(message, title = 'Cannot apply leave') {
-    setErrorPopup({ title, message });
-    setErr(message);
-  }
-
-  function pickWorkingDate(field, value) {
-    const blocked = blockedRegularLeaveMessage(
-      field === 'startDate' ? value : form.startDate,
-      field === 'endDate' ? value : field === 'startDate' && (halfDay || form.session !== 'full') ? value : form.endDate,
-      generalHolidayMap
-    );
-    if (blocked) {
-      showApplyError(blocked);
-      return;
-    }
-    setForm((f) => ({
-      ...f,
-      [field]: value,
-      endDate:
-        field === 'startDate' && (halfDay || f.session !== 'full')
-          ? value
-          : field === 'endDate'
-            ? value
-            : f.endDate || value,
-    }));
-  }
-
-  async function onSubmit(e) {
-    e.preventDefault();
-    setBusy(true);
-    setMsg('');
-    setErr('');
-    try {
-      const body = {
-        ...form,
-        session: restricted ? 'full' : form.session,
-        startDate: restricted || halfDay ? toYmd(form.startDate) : toYmd(form.startDate),
-        endDate: restricted || halfDay ? toYmd(form.startDate) : toYmd(form.endDate),
-      };
-      if (restricted) {
-        if (noRestrictedBalance) {
-          throw new Error(insufficientRestrictedBalance(restrictedBalance));
-        }
-        if (!body.startDate) {
-          throw new Error(RH_ONLY_PUBLISHED_DATES);
-        }
-        if (!rhDates.has(body.startDate)) {
-          throw new Error(RH_ONLY_PUBLISHED_DATES);
-        }
-      } else {
-        const blocked = blockedRegularLeaveMessage(body.startDate, body.endDate, generalHolidayMap);
-        if (blocked) throw new Error(blocked);
-      }
-      await api('/leaves', { method: 'POST', body });
-      setSubmittedPopup({
-        message: restricted
-          ? 'Restricted leave submitted'
-          : wfh
-            ? 'Work from Home submitted'
-            : 'Leave submitted',
-        detail: 'Your request is waiting for manager approval, then HR.',
-      });
-      setMsg(
-        wfh
-          ? 'Work from Home submitted — waiting for manager, then HR.'
-          : `${REQUEST_LABELS[form.leaveType] || 'Leave'} submitted — waiting for manager, then HR.`
-      );
-      setForm({
-        leaveType: form.leaveType,
-        startDate: '',
-        endDate: '',
-        session: 'full',
-        reason: '',
-      });
-      reload();
-      reloadHolidays();
-    } catch (error) {
-      const message = error.message || 'Could not submit leave';
-      if (isApplyBlockError(message) || restricted) {
-        showApplyError(
-          message,
-          /insufficient restricted leave/i.test(message) ? 'No restricted leave balance' : 'Cannot apply leave'
-        );
-      } else {
-        setErr(message);
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <AppShell title="Apply" nav={NAV}>
-      <ErrorPopup
-        show={Boolean(errorPopup)}
-        title={errorPopup?.title}
-        message={errorPopup?.message}
-        onClose={() => setErrorPopup(null)}
-      />
-      <StatusCelebration
-        show={Boolean(submittedPopup)}
-        onDone={() => setSubmittedPopup(null)}
-        message={submittedPopup?.message || 'Request submitted'}
-        detail={submittedPopup?.detail || ''}
-        imageSrc="/assets/request-submitted.gif"
-        durationMs={3200}
-      />
-      <div className="apply-layout">
-        <div className="apply-main">
-          <section className="panel apply-form-panel">
-            <h2>Apply</h2>
-            <p className="muted slim">
-              Pick a type, dates, and submit. Manager then HR approve. You cannot apply leave on
-              Saturdays, Sundays, or general holidays — those already appear on the calendar. Restricted
-              holidays can only be taken on the published RH dates (max 2 per year).
-            </p>
-            <form className="stack-form apply-form" onSubmit={onSubmit}>
-              <div className="apply-field">
-                <span className="apply-label" id="apply-type-label">
-                  Type
-                </span>
-                <div
-                  className="apply-type-pills"
-                  role="radiogroup"
-                  aria-labelledby="apply-type-label"
-                >
-                  {Object.entries(APPLY_LABELS).map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      role="radio"
-                      aria-checked={form.leaveType === key}
-                      className={`apply-type-pill type-${key}${form.leaveType === key ? ' is-selected' : ''}`}
-                      onClick={() => {
-                        if (key === 'restricted' && noRestrictedBalance) {
-                          showApplyError(
-                            insufficientRestrictedBalance(restrictedBalance),
-                            'No restricted leave balance'
-                          );
-                          return;
-                        }
-                        setForm((f) => ({
-                          ...f,
-                          leaveType: key,
-                          session: key === 'restricted' ? 'full' : f.session,
-                          endDate: key === 'restricted' ? f.startDate : f.endDate,
-                          startDate: key === 'restricted' ? '' : f.startDate,
-                        }));
-                      }}
-                    >
-                      <span className={`apply-type-swatch type-${key}`} aria-hidden />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {restricted ? (
-                <div className="apply-dates">
-                  <label className="full">
-                    Restricted leave
-                    <select
-                      value={form.startDate}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        if (noRestrictedBalance) {
-                          showApplyError(
-                            insufficientRestrictedBalance(restrictedBalance),
-                            'No restricted leave balance'
-                          );
-                          return;
-                        }
-                        if (value && !rhDates.has(value)) {
-                          showApplyError(RH_ONLY_PUBLISHED_DATES);
-                          return;
-                        }
-                        setForm((f) => ({
-                          ...f,
-                          startDate: value,
-                          endDate: value,
-                          session: 'full',
-                        }));
-                      }}
-                      required
-                      disabled={noRestrictedBalance}
-                    >
-                      <option value="">Select a published RH date…</option>
-                      {(holidayData?.restricted || []).map((h) => (
-                        <option key={h.id} value={toYmd(h.startDate)}>
-                          {holidayDateLabel(h)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="muted slim apply-hint">
-                    You can take restricted holidays only on these company RH dates — for example
-                    Sankranti/Ponga, Ugadi Festival, Eid-ul-Fitr, Good Friday. General holidays
-                    (New Year, Republic Day, Independence Day, and others) already appear on your
-                    calendar. Balance: {restrictedBalance} restricted leave
-                    {restrictedBalance === 1 ? '' : 's'} remaining.
-                    {noRestrictedBalance ? ' You have no restricted leave balance left.' : ''}
-                  </p>
-                  {!holidayData?.restricted?.length && (
-                    <p className="form-error">
-                      No restricted holidays are published for this year yet. Ask HR to add the RH
-                      list.
-                    </p>
-                  )}
-                </div>
-              ) : (
-              <div className="apply-dates">
-                <label>
-                  Session
-                  <select
-                    value={form.session}
-                    onChange={(e) => {
-                      const session = e.target.value;
-                      const nextEnd = session !== 'full' ? form.startDate || form.endDate : form.endDate;
-                      const blocked = blockedRegularLeaveMessage(
-                        form.startDate,
-                        nextEnd,
-                        generalHolidayMap
-                      );
-                      if (blocked) {
-                        showApplyError(blocked);
-                        return;
-                      }
-                      setForm((f) => ({
-                        ...f,
-                        session,
-                        endDate: session !== 'full' ? f.startDate || f.endDate : f.endDate,
-                      }));
-                    }}
-                  >
-                    {Object.entries(SESSION_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  {halfDay ? 'Date' : 'Start date'}
-                  <input
-                    type="date"
-                    value={form.startDate}
-                    onChange={(e) => pickWorkingDate('startDate', e.target.value)}
-                    required
-                  />
-                </label>
-                {!halfDay && (
-                  <label>
-                    End date
-                    <input
-                      type="date"
-                      value={form.endDate}
-                      min={form.startDate || undefined}
-                      onChange={(e) => pickWorkingDate('endDate', e.target.value)}
-                      required
-                    />
-                  </label>
-                )}
-              </div>
-              )}
-              {halfDay && <p className="muted slim apply-hint">Half day counts as 0.5.</p>}
-
-              <label>
-                Notes
-                <textarea
-                  rows={3}
-                  value={form.reason}
-                  onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
-                  placeholder="Optional — reason for this request"
-                />
-              </label>
-
-              {msg && <p className="form-ok">{msg}</p>}
-              {err && !errorPopup && <p className="form-error">{err}</p>}
-              <button
-                className="btn primary apply-submit"
-                type="submit"
-                disabled={busy || (restricted && noRestrictedBalance)}
-              >
-                {busy
-                  ? 'Submitting…'
-                  : `Submit ${REQUEST_LABELS[form.leaveType] || 'request'}`}
-              </button>
-            </form>
-          </section>
-        </div>
-
-        <aside className="panel balance-side">
-          <h2>Balances</h2>
-          {balances ? (
-            <ul className="balance-list">
-              {Object.entries(LEAVE_LABELS).map(([key, label]) => (
-                <li key={key}>
-                  <span>{label}</span>
-                  <strong>{balances[key] ?? 0}</strong>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">Loading…</p>
-          )}
-          {restricted && (
-            <p className="balance-note">
-              Restricted leave uses your restricted leave balance (2 per year by default). You can
-              only take it on published RH dates. General holidays are already on the calendar.
-            </p>
-          )}
-          {wfh && (
-            <p className="balance-note">Work from Home does not use leave balance.</p>
-          )}
-        </aside>
-      </div>
+      <LeaveBalanceDashboard />
     </AppShell>
   );
 }
@@ -565,12 +208,6 @@ export function UserCalendar() {
 
   return (
     <AppShell title="My calendar" nav={NAV}>
-      <p className="lede">
-        Your active leave appears here, colored by leave type. General holidays show in blue with
-        the holiday name (New Year, Republic Day, Independence Day, and others). Restricted
-        holidays are pink — you may take only 2 per year on those dates. Saturdays and Sundays are
-        grey. Tap a day to cancel just that day, or cancel the full multi-day request.
-      </p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {cancelErr && <p className="form-error">{cancelErr}</p>}
@@ -659,7 +296,6 @@ export function UserSalary() {
 
   return (
     <AppShell title="My salary" nav={NAV}>
-      <p className="lede">Your salary components (view only). Contact HR for changes.</p>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {!loading && !data && !error && (

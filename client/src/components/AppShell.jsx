@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -18,6 +18,92 @@ const USER_ICONS = [
   { to: '/app/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/app/history', label: 'History', icon: '/assets/nav-history.png' },
 ];
+
+const SIDEBAR_COLLAPSE_KEY = 'ultrix_sidebar_collapsed';
+
+function NavGlyph({ label }) {
+  const key = String(label || '').toLowerCase();
+  const common = { viewBox: '0 0 24 24', width: '20', height: '20', fill: 'none', 'aria-hidden': true };
+  const stroke = { stroke: 'currentColor', strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  if (key.includes('overview') || key === 'home') {
+    return (
+      <svg {...common}>
+        <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" {...stroke} />
+        <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" {...stroke} />
+        <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" {...stroke} />
+        <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('approv')) {
+    return (
+      <svg {...common}>
+        <path d="M20 6.5 9.5 17 4 11.5" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('calendar')) {
+    return (
+      <svg {...common}>
+        <rect x="3.5" y="5" width="17" height="15" rx="2.2" {...stroke} />
+        <path d="M8 3.5v3M16 3.5v3M3.5 10h17" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('apply')) {
+    return (
+      <svg {...common}>
+        <path d="M12 5v14M5 12h14" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('salary') || key.includes('invoice')) {
+    return (
+      <svg {...common}>
+        <rect x="5" y="3.5" width="14" height="17" rx="2" {...stroke} />
+        <path d="M8.5 8h7M8.5 12h7M8.5 16h4.5" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('rating')) {
+    return (
+      <svg {...common}>
+        <path d="m12 4 2.3 4.7 5.2.8-3.8 3.6.9 5.2L12 16.2 7.4 18.3l.9-5.2L4.5 9.5l5.2-.8L12 4Z" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('history')) {
+    return (
+      <svg {...common}>
+        <path d="M12 7.5V12l3 1.8" {...stroke} />
+        <path d="M4.8 9.2A8 8 0 1 1 4 12" {...stroke} />
+        <path d="M4 6.5V12h4" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('onboard') || key.includes('team') || key.includes('leave management') || key.includes('users')) {
+    return (
+      <svg {...common}>
+        <circle cx="9" cy="8" r="3" {...stroke} />
+        <path d="M3.6 18.5c.6-3 3.1-4.5 5.4-4.5s4.8 1.5 5.4 4.5" {...stroke} />
+        <path d="M16.5 8.5a2.5 2.5 0 1 1 0 5" {...stroke} />
+        <path d="M19.2 18.4c.3-1.8 1.4-3 2.8-3.4" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('report')) {
+    return (
+      <svg {...common}>
+        <path d="M4.5 18.5V9.5M10 18.5V5.5M15.5 18.5v-6M21 18.5V8" {...stroke} />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="7.5" {...stroke} />
+    </svg>
+  );
+}
 
 function pathForNotification(role, type) {
   if (role === 'manager') {
@@ -356,7 +442,7 @@ function ChangeNameModal({ onClose }) {
   );
 }
 
-function SettingsMenu() {
+function SettingsMenu({ variant = 'header' }) {
   const { user, logout } = useAuth();
   const { bgColor } = useTheme();
   const [open, setOpen] = useState(false);
@@ -365,6 +451,7 @@ function SettingsMenu() {
   const [showName, setShowName] = useState(false);
   const panelRef = useRef(null);
   const isHr = user?.role === 'hr';
+  const isSidebar = variant === 'sidebar';
 
   useEffect(() => {
     function onDocClick(e) {
@@ -387,21 +474,44 @@ function SettingsMenu() {
 
   return (
     <>
-      <div className="bell-wrap" ref={panelRef}>
-        <button
-          type="button"
-          className="bell-btn settings-btn"
-          onClick={toggle}
-          aria-label="Account menu"
-          title={user?.name || 'Account'}
-          aria-expanded={open}
-        >
-          <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
-          <span className="theme-swatch" style={{ background: bgColor }} />
-        </button>
+      <div className={isSidebar ? 'sidebar-profile-wrap' : 'bell-wrap'} ref={panelRef}>
+        {isSidebar ? (
+          <button
+            type="button"
+            className="sidebar-profile"
+            onClick={toggle}
+            aria-label="Account menu"
+            aria-expanded={open}
+          >
+            <img className="sidebar-profile-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
+            <span className="sidebar-profile-copy">
+              <strong>{user?.name || 'Account'}</strong>
+              <span>{user?.email || ''}</span>
+            </span>
+            <span className="sidebar-profile-more" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="18" height="18">
+                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+              </svg>
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="bell-btn settings-btn"
+            onClick={toggle}
+            aria-label="Account menu"
+            title={user?.name || 'Account'}
+            aria-expanded={open}
+          >
+            <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
+            <span className="theme-swatch" style={{ background: bgColor }} />
+          </button>
+        )}
 
         {open && (
-          <div className="settings-panel">
+          <div className={`settings-panel${isSidebar ? ' settings-panel-up' : ''}`}>
             {view === 'color' ? (
               <ColorPanel onClose={() => setView('menu')} />
             ) : (
@@ -503,9 +613,46 @@ export default function AppShell({ title, nav, children }) {
   const [managerCelebrate, setManagerCelebrate] = useState(false);
   const [creditNotice, setCreditNotice] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const navRef = useRef(null);
+  const [indicator, setIndicator] = useState({ y: 0, h: 44, visible: false });
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const roleIsUser = user?.role === 'user';
   const sidebarNav = roleIsUser ? USER_ICONS : nav;
-  const hasIcons = sidebarNav.some((item) => item.icon);
+
+  const moveIndicator = useCallback((el) => {
+    const nav = navRef.current;
+    const target = el || nav?.querySelector('.sidebar-link.active');
+    if (!nav || !target) {
+      setIndicator((s) => ({ ...s, visible: false }));
+      return;
+    }
+    setIndicator({
+      y: target.offsetTop,
+      h: target.offsetHeight,
+      visible: true,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    moveIndicator();
+  }, [location.pathname, collapsed, sidebarNav, mobileOpen, moveIndicator]);
+
+  useEffect(() => {
+    const onResize = () => moveIndicator();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [moveIndicator]);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     if (user?.role !== 'manager' && user?.role !== 'hr') {
@@ -541,8 +688,34 @@ export default function AppShell({ title, nav, children }) {
     return null;
   }
 
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSE_KEY, next ? '1' : '0');
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }
+
+  function onSidebarToggle() {
+    if (window.matchMedia('(max-width: 960px)').matches) {
+      setMobileOpen(false);
+      return;
+    }
+    toggleCollapsed();
+  }
+
   return (
-    <div className="shell" data-theme={mode} style={shellStyle}>
+    <div
+      className="shell"
+      data-theme={mode}
+      data-sidebar-collapsed={collapsed ? 'true' : 'false'}
+      data-sidebar-open={mobileOpen ? 'true' : 'false'}
+      style={shellStyle}
+    >
       <ApprovedCelebration
         show={celebrate}
         onDone={() => setCelebrate(false)}
@@ -564,44 +737,78 @@ export default function AppShell({ title, nav, children }) {
         imageSrc="/assets/balance-credited.gif"
         durationMs={3200}
       />
+      {mobileOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close menu"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
       <aside className="sidebar">
-        <div className="brand brand-only">
-          <img className="brand-logo" src="/assets/yupnup.svg" alt="YupNup" />
+        <div className="sidebar-head">
+          <div className="brand brand-only">
+            <img className="brand-logo" src="/assets/yupnup.svg" alt="YupNup" />
+          </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={onSidebarToggle}
+            aria-label={collapsed ? 'Expand menu' : 'Collapse menu'}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
         </div>
-        <nav className={hasIcons ? 'sidebar-icon-nav' : undefined}>
-          {sidebarNav.map((item) => {
-            const badge = navBadgeFor(item);
-            return (
-              <NavLink key={item.to} to={item.to} end={item.end} title={item.label}>
-                {item.icon ? (
-                  <>
-                    <img src={item.icon} alt="" className="nav-icon" />
-                    <span className="nav-label-with-badge">
-                      {item.label}
-                      {badge != null && (
-                        <span className="nav-count-badge" aria-label={`${badge} pending`}>
-                          {badge > 99 ? '99+' : badge}
-                        </span>
-                      )}
-                    </span>
-                  </>
-                ) : (
-                  <span className="nav-label-with-badge">
-                    {item.label}
-                    {badge != null && (
-                      <span className="nav-count-badge" aria-label={`${badge} pending`}>
-                        {badge > 99 ? '99+' : badge}
-                      </span>
-                    )}
+        <div className="sidebar-nav-stage" ref={navRef} onMouseLeave={() => moveIndicator()}>
+          <span
+            className={`sidebar-indicator${indicator.visible ? ' is-on' : ''}`}
+            style={{ transform: `translateY(${indicator.y}px)`, height: indicator.h }}
+            aria-hidden="true"
+          />
+          <nav className="sidebar-nav">
+            {sidebarNav.map((item, index) => {
+              const badge = navBadgeFor(item);
+              return (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  title={item.label}
+                  className="sidebar-link"
+                  style={{ '--i': index }}
+                  onMouseEnter={(e) => moveIndicator(e.currentTarget)}
+                  onFocus={(e) => moveIndicator(e.currentTarget)}
+                >
+                  <span className="sidebar-link-icon">
+                    <NavGlyph label={item.label} />
                   </span>
-                )}
-              </NavLink>
-            );
-          })}
-        </nav>
+                  <span className="sidebar-link-label">{item.label}</span>
+                  {badge != null && (
+                    <span className="nav-count-badge" aria-label={`${badge} pending`}>
+                      {badge > 99 ? '99+' : badge}
+                    </span>
+                  )}
+                </NavLink>
+              );
+            })}
+          </nav>
+        </div>
+        <SettingsMenu variant="sidebar" />
       </aside>
       <main className="main">
         <header className="page-header with-tools">
+          <button
+            type="button"
+            className="sidebar-mobile-toggle"
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label="Open menu"
+          >
+            <span />
+            <span />
+            <span />
+          </button>
           <PageTitle title={title} />
           <div className="header-tools">
             <NotificationBell

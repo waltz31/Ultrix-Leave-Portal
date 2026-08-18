@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { managerOptionLabel } from '../utils';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import { avatarSrc, managerOptionLabel } from '../utils';
 
 export const EMPLOYMENT_TYPE_OPTIONS = [
   { value: 'full_time', label: 'Full-time' },
@@ -184,7 +185,7 @@ export function profileToForm(profile) {
     department: profile.employment?.department || '',
     designation: profile.employment?.designation || '',
     jobLevel: profile.employment?.jobLevel || '',
-    role: profile.role === 'manager' ? 'manager' : 'user',
+    role: profile.role === 'manager' || profile.role === 'hr' ? profile.role : 'user',
     managerId: profile.managerId ? String(profile.managerId) : '',
     location: profile.employment?.location || '',
     workMode: profile.employment?.workMode || '',
@@ -238,7 +239,7 @@ export function readProfilePhoto(file) {
   });
 }
 
-function CollapsibleSection({ id, title, open, onToggle, children, hint }) {
+function CollapsibleSection({ id, title, open, onToggle, children }) {
   return (
     <section className={`onboarding-category ${open ? 'is-open' : 'is-collapsed'}`}>
       <button
@@ -254,7 +255,6 @@ function CollapsibleSection({ id, title, open, onToggle, children, hint }) {
       </button>
       {open && (
         <div className="onboarding-section-body">
-          {hint && <p className="muted">{hint}</p>}
           {children}
         </div>
       )}
@@ -265,6 +265,7 @@ function CollapsibleSection({ id, title, open, onToggle, children, hint }) {
 export const PORTAL_ROLE_OPTIONS = [
   { value: 'user', label: 'Employee' },
   { value: 'manager', label: 'Manager' },
+  { value: 'hr', label: 'HR' },
 ];
 
 export default function EmployeeOnboardingForm({
@@ -291,75 +292,77 @@ export default function EmployeeOnboardingForm({
   }));
   const [openAssets, setOpenAssets] = useState({ 0: true });
 
+  useEffect(() => {
+    if (!editingUserId) return;
+    setOpenSections({
+      personal: true,
+      employment: true,
+      portal: true,
+      it: true,
+      payroll: true,
+    });
+  }, [editingUserId]);
+
   async function downloadTemplate(kind) {
     const { downloadOnboardingTemplate } = await import('../onboardingImport.js');
     await downloadOnboardingTemplate(kind);
   }
 
-  function readFileWithProgress(file, onProgress) {
+  function readFileAsBase64(file, onProgress) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onprogress = (e) => {
         if (e.lengthComputable && e.total) {
-          onProgress(Math.min(85, Math.round((e.loaded / e.total) * 85)));
+          onProgress(Math.min(80, Math.round((e.loaded / e.total) * 80)));
         }
       };
       reader.onload = () => {
-        onProgress(90);
-        resolve(reader.result);
+        onProgress(86);
+        const result = String(reader.result || '');
+        const comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
       };
       reader.onerror = () => reject(new Error('Could not read that file'));
-      reader.readAsArrayBuffer(file);
+      reader.readAsDataURL(file);
     });
   }
 
-  async function onSpreadsheetUpload(e, kind) {
+  async function onSpreadsheetUpload(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     setImportMsg('');
     setImportErr('');
     if (!file) return;
-    setUploadProgress({ percent: 8, name: file.name, kind });
+    setUploadProgress({ percent: 8, name: file.name });
     try {
-      const { parseOnboardingFile, rowToForm } = await import('../onboardingImport.js');
-      const buffer = await readFileWithProgress(file, (percent) => {
-        setUploadProgress({ percent, name: file.name, kind });
+      const content = await readFileAsBase64(file, (percent) => {
+        setUploadProgress({ percent, name: file.name });
       });
-      setUploadProgress({ percent: 94, name: file.name, kind });
-      const rows = await parseOnboardingFile(buffer);
-      const forms = rows.map((row) => rowToForm(row, managers));
-      if (forms.length > 1 && typeof onBulkImport === 'function') {
-        setUploadProgress({ percent: 97, name: file.name, kind });
-        await onBulkImport(
-          forms.map((next, i) => ({
-            ...next,
-            _excelRow: rows[i]._excelRow,
-          }))
-        );
-        setUploadProgress({ percent: 100, name: file.name, kind });
-        await new Promise((r) => setTimeout(r, 250));
+      setUploadProgress({ percent: 90, name: file.name });
+      const result = await api('/onboarding/upload', {
+        method: 'POST',
+        body: {
+          filename: file.name,
+          mimeType: file.type,
+          content,
+        },
+      });
+      setUploadProgress({ percent: 100, name: file.name });
+      await new Promise((r) => setTimeout(r, 200));
+      if (typeof onBulkImport === 'function') {
+        await onBulkImport(result);
+      }
+    } catch (err) {
+      if (err.data?.failed && typeof onBulkImport === 'function') {
+        await onBulkImport({
+          created: err.data.created || [],
+          failed: err.data.failed,
+          fileType: err.data.fileType,
+          filename: err.data.filename || file.name,
+        });
         return;
       }
-      const next = forms[0];
-      setForm(next);
-      setOpenSections({
-        personal: true,
-        employment: true,
-        portal: true,
-        it: true,
-        payroll: true,
-      });
-      setOpenAssets(Object.fromEntries((next.assets || [{}]).map((_, i) => [i, true])));
-      setUploadProgress({ percent: 100, name: file.name, kind });
-      await new Promise((r) => setTimeout(r, 350));
-      const extra = forms.length - 1;
-      setImportMsg(
-        extra
-          ? `Loaded the first of ${forms.length} employees from ${file.name}. Open Create employee profile and upload again to import every row.`
-          : `Loaded employee details from ${file.name}. Review and save.`
-      );
-    } catch (err) {
-      setImportErr(err.message || 'Could not read that file');
+      setImportErr(err.message || 'Could not upload that file');
     } finally {
       setUploadProgress(null);
     }
@@ -436,11 +439,8 @@ export default function EmployeeOnboardingForm({
 
   return (
     <form className="onboarding-form" onSubmit={onSubmit}>
+      {!editingUserId && (
       <div className="onboarding-import">
-        <p className="muted">
-          All fields are optional. Download the template, fill one employee per row, then upload
-          Excel or CSV. Every filled cell and every data row is imported.
-        </p>
         <div className="onboarding-import-actions">
           <button
             type="button"
@@ -452,24 +452,13 @@ export default function EmployeeOnboardingForm({
             <img src="/assets/file.png" alt="" />
             <span className="onboarding-icon-tip">Download template</span>
           </button>
-          <label className={`onboarding-icon-btn ${uploadProgress?.kind === 'xlsx' ? 'is-selected' : ''} ${uploadProgress ? 'is-disabled' : ''}`}>
+          <label className={`onboarding-icon-btn ${uploadProgress ? 'is-selected is-disabled' : ''}`}>
             <img src="/assets/sheets.png" alt="" />
-            <span className="onboarding-icon-tip">Upload Excel</span>
+            <span className="onboarding-icon-tip">Upload CSV or Excel</span>
             <input
               type="file"
-              accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              onChange={(e) => onSpreadsheetUpload(e, 'xlsx')}
-              hidden
-              disabled={Boolean(uploadProgress)}
-            />
-          </label>
-          <label className={`onboarding-icon-btn ${uploadProgress?.kind === 'csv' ? 'is-selected' : ''} ${uploadProgress ? 'is-disabled' : ''}`}>
-            <img src="/assets/document.png" alt="" />
-            <span className="onboarding-icon-tip">Upload CSV</span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => onSpreadsheetUpload(e, 'csv')}
+              accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={onSpreadsheetUpload}
               hidden
               disabled={Boolean(uploadProgress)}
             />
@@ -497,28 +486,21 @@ export default function EmployeeOnboardingForm({
         {importMsg && <p className="form-ok">{importMsg}</p>}
         {importErr && <p className="form-error">{importErr}</p>}
       </div>
+      )}
       <CollapsibleSection
         id="personal"
         title="Employee personal details"
         open={openSections.personal}
         onToggle={toggleSection}
       >
-        <div className="form-grid">
-          <label>
-            Employee ID
-            <input {...field('employeeNumber')} maxLength={40} placeholder="e.g. EMP001" />
-          </label>
-          <label>
-            Full name
-            <input {...field('name')} autoFocus />
-          </label>
-          <label className="full">
-            Profile photo
-            <input type="file" accept="image/*" onChange={onPhotoChange} />
-          </label>
-          {form.profilePhoto && (
-            <div className="full onboarding-photo-preview">
-              <img src={form.profilePhoto} alt="Profile preview" />
+        <div className="onboarding-identity">
+          <div className="onboarding-identity-photo">
+            <img src={avatarSrc(form.profilePhoto)} alt="" />
+            <label className="onboarding-photo-btn">
+              {form.profilePhoto ? 'Change photo' : 'Add photo'}
+              <input type="file" accept="image/*" onChange={onPhotoChange} hidden />
+            </label>
+            {form.profilePhoto && (
               <button
                 type="button"
                 className="btn ghost"
@@ -526,55 +508,65 @@ export default function EmployeeOnboardingForm({
               >
                 Remove photo
               </button>
-            </div>
-          )}
-          {photoError && <p className="form-error full">{photoError}</p>}
-          <label>
-            Date of birth
-            <input type="date" {...field('dateOfBirth')} />
-          </label>
-          <label>
-            Gender
-            <select {...field('gender')}>
-              <option value="">Select…</option>
-              {GENDER_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Personal email
-            <input type="email" {...field('personalEmail')} />
-          </label>
-          <label>
-            Personal mobile number
-            <input {...field('personalMobile')} inputMode="tel" />
-          </label>
-          <label className="full">
-            Current / permanent address
-            <textarea {...field('address')} rows={2} />
-          </label>
-          <label className="full">
-            Emergency contact
-            <input {...field('emergencyContact')} placeholder="Name and phone number" />
-          </label>
-          <label>
-            Nationality
-            <input {...field('nationality')} />
-          </label>
-          <label>
-            Marital status
-            <select {...field('maritalStatus')}>
-              <option value="">Select…</option>
-              {MARITAL_STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            )}
+            {photoError && <p className="form-error">{photoError}</p>}
+          </div>
+          <div className="form-grid">
+            <label>
+              Employee ID
+              <input {...field('employeeNumber')} maxLength={40} placeholder="e.g. EMP001" />
+            </label>
+            <label>
+              Full name
+              <input {...field('name')} autoFocus />
+            </label>
+            <label>
+              Date of birth
+              <input type="date" {...field('dateOfBirth')} />
+            </label>
+            <label>
+              Gender
+              <select {...field('gender')}>
+                <option value="">Select…</option>
+                {GENDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Personal email
+              <input type="email" {...field('personalEmail')} />
+            </label>
+            <label>
+              Personal mobile number
+              <input {...field('personalMobile')} inputMode="tel" />
+            </label>
+            <label className="full">
+              Current / permanent address
+              <textarea {...field('address')} rows={2} />
+            </label>
+            <label className="full">
+              Emergency contact
+              <input {...field('emergencyContact')} placeholder="Name and phone number" />
+            </label>
+            <label>
+              Nationality
+              <input {...field('nationality')} />
+            </label>
+            <label>
+              Marital status
+              <select {...field('maritalStatus')}>
+                <option value="">Select…</option>
+                {MARITAL_STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
       </CollapsibleSection>
 
@@ -654,7 +646,6 @@ export default function EmployeeOnboardingForm({
         title="Portal access"
         open={openSections.portal}
         onToggle={toggleSection}
-        hint="Work email + temporary password are used to log in. Personal email above is not for login. Employees and managers can both report to a manager."
       >
         <div className="form-grid">
           <label>
@@ -715,7 +706,6 @@ export default function EmployeeOnboardingForm({
         title="IT / Asset information"
         open={openSections.it}
         onToggle={toggleSection}
-        hint="Tag multiple devices or cards to this employee."
       >
         <div className="asset-list">
           {assets.map((asset, index) => {
@@ -846,13 +836,6 @@ export default function EmployeeOnboardingForm({
         title="Payroll & salary details"
         open={openSections.payroll}
         onToggle={toggleSection}
-        hint={
-          payStructureKind(form.employmentType) === 'intern'
-            ? 'Intern pay structure: stipend only.'
-            : payStructureKind(form.employmentType) === 'consultant'
-              ? 'Consultant pay structure: fixed pay, bonuses, and ESOPs.'
-              : 'Employee salary components.'
-        }
       >
         <div className="form-grid">
           {payStructureKind(form.employmentType) === 'intern' && (
