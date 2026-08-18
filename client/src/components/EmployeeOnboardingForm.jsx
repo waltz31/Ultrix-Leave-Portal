@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { managerOptionLabel } from '../utils';
 
 export const EMPLOYMENT_TYPE_OPTIONS = [
   { value: 'full_time', label: 'Full-time' },
@@ -686,7 +687,7 @@ export default function EmployeeOnboardingForm({
                 )
                 .map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.email ? `${m.name} (${m.email})` : m.name}
+                    {m.email ? `${managerOptionLabel(m)} (${m.email})` : managerOptionLabel(m)}
                   </option>
                 ))}
             </select>

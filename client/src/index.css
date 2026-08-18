@@ -732,6 +732,7 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+  overflow-x: clip;
 }
 
 .page-header {
@@ -1115,6 +1116,7 @@ textarea:focus {
   grid-template-columns: 1fr 1fr;
   gap: var(--space-md);
   margin: 0;
+  align-items: start;
 }
 
 .overview-stack {
@@ -1263,7 +1265,7 @@ textarea:focus {
 .overview-team-list li,
 .overview-holiday-list li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 14px 4px;
@@ -1295,7 +1297,9 @@ textarea:focus {
 .overview-holiday-copy {
   display: grid;
   gap: 2px;
+  flex: 1;
   min-width: 0;
+  padding-right: 8px;
 }
 
 .overview-holiday-date-line {
@@ -1329,7 +1333,11 @@ textarea:focus {
 .overview-holiday-list .overview-holiday-apply,
 .overview-holiday-list .overview-holiday-status {
   flex-shrink: 0;
-  align-self: center;
+  align-self: flex-start;
+  margin-top: 2px;
+  max-width: 42%;
+  text-align: right;
+  line-height: 1.35;
 }
 
 .overview-holiday-apply {
@@ -1742,6 +1750,7 @@ textarea:focus {
   border-radius: var(--radius);
   padding: 14px 16px;
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .panel.narrow {
@@ -2050,6 +2059,7 @@ th.leave-type-heading {
   align-items: center;
   gap: var(--space-sm);
   margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
 }
 
 .row-actions {
@@ -2491,6 +2501,13 @@ th.leave-type-heading {
 
 .calendar-split-view {
   padding: 16px 18px 18px;
+  contain: layout style;
+}
+
+.calendar-split-view .calendar-grid.head.calendar-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0;
 }
 
 .calendar-stage {
@@ -2499,21 +2516,43 @@ th.leave-type-heading {
   border: 1px solid rgba(21, 32, 51, 0.12);
   border-radius: 14px;
   overflow: hidden;
-  min-height: 460px;
+  height: 532px;
+  min-height: 532px;
+  max-height: 532px;
   background: #fff;
   box-shadow: 0 10px 28px rgba(21, 32, 51, 0.08);
 }
 
 .calendar-visual-panel {
   position: relative;
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
   align-items: end;
   justify-items: center;
   padding: 28px 20px;
 }
 
+.calendar-visual-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.calendar-visual-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(8, 16, 28, 0.08) 0%, rgba(8, 16, 28, 0.62) 100%);
+  pointer-events: none;
+}
+
 .calendar-visual-label {
+  position: relative;
+  z-index: 1;
   color: #fff;
   font-size: clamp(1.5rem, 2.4vw, 2rem);
   font-weight: 600;
@@ -2522,11 +2561,14 @@ th.leave-type-heading {
 }
 
 .calendar-grid-panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
+  height: 100%;
+  min-height: 0;
   background: #fff;
   color: #15221b;
+  overflow: hidden;
 }
 
 .calendar-month-banner {
@@ -2559,13 +2601,28 @@ th.leave-type-heading {
   color: #6b7280;
 }
 
+.calendar-split-view .calendar-grid.body.calendar-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: repeat(6, minmax(0, 1fr));
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  border-left: 1px solid #e5e7eb;
+}
+
 .calendar-split-view .calendar-cell {
-  min-height: 78px;
+  min-height: 0;
+  height: 100%;
+  border: none;
   border-radius: 0;
-  border: 1px solid #e5e7eb;
+  box-shadow: inset -1px -1px 0 #e5e7eb;
   margin: 0;
-  padding: 6px 4px 8px;
+  padding: 4px 3px 6px;
   background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .calendar-split-view .calendar-cell.muted {
@@ -2574,47 +2631,74 @@ th.leave-type-heading {
 }
 
 .calendar-split-view .calendar-cell .day-head {
+  display: flex;
   justify-content: center;
+  align-items: flex-start;
   position: relative;
-  min-height: 22px;
+  min-height: 20px;
+  flex-shrink: 0;
+  padding: 0 16px 0 0;
 }
 
 .calendar-split-view .day-num {
-  width: 100%;
+  width: auto;
   text-align: center;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: #15221b;
+  line-height: 1.2;
 }
 
 .calendar-split-view .day-num.is-today {
-  width: auto;
-  min-width: 28px;
-  margin: 0 auto;
+  min-width: 24px;
+  height: 24px;
+  margin: 0;
+  font-size: 0.76rem;
 }
 
 .calendar-split-view .day-head-actions {
   position: absolute;
-  right: 2px;
-  top: -2px;
+  top: 0;
+  right: 0;
+  z-index: 1;
 }
 
 .calendar-split-view .leave-chips {
-  margin-top: 4px;
-  gap: 3px;
+  margin-top: 2px;
+  gap: 2px;
+  overflow: hidden;
+  min-height: 0;
+  flex: 1;
 }
 
 .calendar-split-view .leave-chip {
-  min-height: 28px;
-  padding: 4px 6px !important;
+  min-height: 0;
+  padding: 3px 4px !important;
+  line-height: 1.15;
 }
 
 .calendar-split-view .leave-chip-main {
-  font-size: 0.68rem;
+  font-size: 0.64rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-split-view .leave-chip.is-holiday .leave-chip-main {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 0.6rem;
 }
 
 .calendar-split-view .leave-chip-sub {
-  font-size: 0.62rem;
+  font-size: 0.58rem;
+}
+
+.calendar-split-view .chip.more {
+  font-size: 0.58rem;
+  padding: 2px 4px;
 }
 
 .calendar-month-strip-wrap {
@@ -2662,11 +2746,10 @@ th.leave-type-heading {
   padding: 0;
   background: #fff;
   box-shadow: 0 2px 10px rgba(21, 32, 51, 0.1);
-  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .calendar-month-thumb:hover {
-  transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(21, 32, 51, 0.12);
 }
 
@@ -2676,7 +2759,17 @@ th.leave-type-heading {
 }
 
 .calendar-month-thumb-visual {
+  position: relative;
   height: 62px;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+
+.calendar-month-thumb-visual img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .calendar-month-thumb-header {
@@ -2691,11 +2784,15 @@ th.leave-type-heading {
 @media (max-width: 900px) {
   .calendar-stage {
     grid-template-columns: 1fr;
-    min-height: 0;
+    grid-template-rows: 160px minmax(0, 1fr);
+    height: 620px;
+    min-height: 620px;
+    max-height: 620px;
   }
 
   .calendar-visual-panel {
-    min-height: 140px;
+    min-height: 0;
+    height: 100%;
   }
 }
 
@@ -2735,9 +2832,10 @@ th.leave-type-heading {
 
 .calendar-toolbar h3 {
   font-size: 1.35rem;
-  min-width: 10ch;
+  min-width: 11rem;
   text-align: center;
   margin: 0;
+  flex-shrink: 0;
 }
 
 .calendar-today-btn {
@@ -3012,8 +3110,7 @@ th.leave-type-heading {
 }
 
 .cal-leave-popover {
-  position: sticky;
-  bottom: 12px;
+  position: relative;
   z-index: 30;
   margin-top: 14px;
   padding: 14px 16px;
@@ -4583,7 +4680,8 @@ body:has(.modal-backdrop) {
 
 .shell .calendar-split-view .calendar-cell {
   background: #fff;
-  border-color: #e5e7eb;
+  border: none;
+  box-shadow: inset -1px -1px 0 #e5e7eb;
   color: #15221b;
 }
 
@@ -5332,6 +5430,18 @@ body:has(.modal-backdrop) {
   .calendar-cell {
     min-height: 58px;
     padding: 4px;
+  }
+
+  .calendar-split-view .calendar-cell {
+    min-height: 0;
+    height: 100%;
+    padding: 4px 3px 6px;
+  }
+
+  .calendar-split-view .calendar-stage {
+    height: 560px;
+    min-height: 560px;
+    max-height: 560px;
   }
 
   .leave-chips .chip:not(.more) {

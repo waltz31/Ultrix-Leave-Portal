@@ -27,7 +27,7 @@ import {
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
-import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
+import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh, managerOptionLabel } from '../utils';
 import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
 import * as XLSX from 'xlsx';
 
@@ -695,7 +695,7 @@ export function HrOnboarding() {
                           )
                           .map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name}
+                              {managerOptionLabel(m)}
                             </option>
                           ))}
                       </select>
@@ -1283,7 +1283,7 @@ export function HrUsers() {
                 .filter((m) => m.active !== false)
                 .map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.email ? `${m.name} (${m.email})` : m.name}
+                    {m.email ? `${managerOptionLabel(m)} (${m.email})` : managerOptionLabel(m)}
                   </option>
                 ))}
             </select>
@@ -1295,10 +1295,10 @@ export function HrUsers() {
           </div>
         </form>
 
-        <h3 className="leave-mgmt-subhead">Managers</h3>
+        <h3 className="leave-mgmt-subhead">Managers &amp; HR</h3>
         {managersLoading && <p className="muted">Loading managers…</p>}
         {!managersLoading && !managers?.length && (
-          <p className="empty">No managers yet. Add one above.</p>
+          <p className="empty">No managers or HR users yet. Add a manager above.</p>
         )}
         {!!managers?.length && (
           <div className="table-wrap">
@@ -1306,6 +1306,7 @@ export function HrUsers() {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Role</th>
                   <th>Email</th>
                   <th>Reporting To</th>
                   <th>Status</th>
@@ -1318,6 +1319,7 @@ export function HrUsers() {
                     <td>
                       <strong className="employee-name">{mgr.name}</strong>
                     </td>
+                    <td>{ROLE_LABELS[mgr.role] || mgr.role}</td>
                     <td>{mgr.email}</td>
                     <td>
                       <select
@@ -1331,7 +1333,7 @@ export function HrUsers() {
                           .filter((m) => String(m.id) !== String(mgr.id) && m.active !== false)
                           .map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.name}
+                              {managerOptionLabel(m)}
                             </option>
                           ))}
                       </select>

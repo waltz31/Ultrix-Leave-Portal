@@ -126,7 +126,9 @@ async function resolveReportingManagerId(candidateId, forUserId) {
     throw err;
   }
   const mgr = await db
-    .prepare(`SELECT id, manager_id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
+    .prepare(
+      `SELECT id, manager_id FROM users WHERE id = ? AND role IN ('manager', 'hr') AND active = 1`
+    )
     .get(id);
   if (!mgr) {
     const err = new Error('Invalid reporting manager');
@@ -269,8 +271,8 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
               m.name AS manager_name, m.email AS manager_email
        FROM users u
        LEFT JOIN users m ON m.id = u.manager_id
-       WHERE u.role = 'manager'
-       ORDER BY u.name COLLATE NOCASE`
+       WHERE u.role IN ('manager', 'hr')
+       ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
     .all())
     .map(publicUser);

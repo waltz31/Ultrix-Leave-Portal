@@ -120,13 +120,13 @@ export async function reviewLeaveRequest(opts) {
   const employee = await db.prepare('SELECT * FROM users WHERE id = ?').get(leave.user_id);
   if (!employee) throw new LeaveReviewError(404, 'Employee not found');
 
-  // ——— Manager stage ———
-  if (actor.role === 'manager') {
-    if (leave.status !== 'pending_manager') {
-      throw new LeaveReviewError(400, 'This request is not awaiting manager approval');
-    }
+  // ——— Manager stage (managers and HR when listed as reporting manager) ———
+  if (leave.status === 'pending_manager') {
     if (employee.manager_id !== actor.id) {
       throw new LeaveReviewError(403, 'Not your team member');
+    }
+    if (actor.role !== 'manager' && actor.role !== 'hr') {
+      throw new LeaveReviewError(403, 'Only managers or HR can review leave');
     }
 
     if (action === 'reject') {

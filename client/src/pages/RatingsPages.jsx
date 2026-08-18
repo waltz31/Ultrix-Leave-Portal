@@ -9,7 +9,7 @@ import {
   downloadRatingsPdf,
   monthRange,
 } from '../exportRatings';
-import { formatDateTime, appYear, appToday } from '../utils';
+import { formatDateTime, appYear, appToday, managerOptionLabel } from '../utils';
 
 const PERIOD_MONTHS = [
   { value: '1', label: 'January' },
@@ -631,10 +631,10 @@ export function HrRatings() {
           <label>
             Manager
             <select value={managerId} onChange={(e) => setManagerId(e.target.value)}>
-              <option value="">All managers</option>
+              <option value="">All managers & HR</option>
               {managers.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
+                  {managerOptionLabel(m)}
                 </option>
               ))}
             </select>

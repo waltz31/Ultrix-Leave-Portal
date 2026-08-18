@@ -37,6 +37,13 @@ export const ROLE_LABELS = {
   hr: 'HR',
 };
 
+export function managerOptionLabel(manager) {
+  if (!manager) return '';
+  const suffix =
+    manager.role === 'hr' ? ' (HR)' : manager.role === 'manager' ? ' (Manager)' : '';
+  return `${manager.name || 'User'}${suffix}`;
+}
+
 /** App timezone — Indian Standard Time. */
 export const APP_TIMEZONE = 'Asia/Kolkata';
 export const APP_LOCALE = 'en-IN';

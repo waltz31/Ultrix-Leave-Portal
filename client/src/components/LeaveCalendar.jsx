@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  addDays,
   addMonths,
   eachDayOfInterval,
   endOfMonth,
@@ -36,59 +37,27 @@ import {
   RH_ONLY_PUBLISHED_DATES,
 } from '../utils';
 import ErrorPopup from './ErrorPopup';
+import {
+  CALENDAR_CELLS,
+  calendarMonthImageUrl,
+} from '../calendarMonthImages';
 
 const WEEK_STARTS_ON = 0;
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 const MONTH_THEMES = [
-  {
-    header: '#5b9bd5',
-    visual: 'linear-gradient(165deg, #0f3d66 0%, #5b9bd5 52%, #9ecbf0 100%)',
-  },
-  {
-    header: '#6ba3d6',
-    visual: 'linear-gradient(165deg, #1a3f5c 0%, #6ba3d6 52%, #a8d4f5 100%)',
-  },
-  {
-    header: '#c4a574',
-    visual: 'linear-gradient(165deg, #5c4a32 0%, #c4a574 52%, #e8d4b0 100%)',
-  },
-  {
-    header: '#9bc53d',
-    visual: 'linear-gradient(165deg, #3d5220 0%, #9bc53d 52%, #cfe87a 100%)',
-  },
-  {
-    header: '#56b8a4',
-    visual: 'linear-gradient(165deg, #1f4f47 0%, #56b8a4 52%, #9de5d8 100%)',
-  },
-  {
-    header: '#e8a838',
-    visual: 'linear-gradient(165deg, #6b4a12 0%, #e8a838 52%, #ffd978 100%)',
-  },
-  {
-    header: '#ef7b6a',
-    visual: 'linear-gradient(165deg, #6b2a22 0%, #ef7b6a 52%, #ffb5aa 100%)',
-  },
-  {
-    header: '#d97757',
-    visual: 'linear-gradient(165deg, #5c2d1f 0%, #d97757 52%, #f5b49a 100%)',
-  },
-  {
-    header: '#8b6fd4',
-    visual: 'linear-gradient(165deg, #3a2a66 0%, #8b6fd4 52%, #c4b0f0 100%)',
-  },
-  {
-    header: '#c97b4a',
-    visual: 'linear-gradient(165deg, #5c3518 0%, #c97b4a 52%, #f0b88a 100%)',
-  },
-  {
-    header: '#6d8fb8',
-    visual: 'linear-gradient(165deg, #2a3d58 0%, #6d8fb8 52%, #a8c4e8 100%)',
-  },
-  {
-    header: '#5a9e86',
-    visual: 'linear-gradient(165deg, #1f4038 0%, #5a9e86 52%, #98d4c2 100%)',
-  },
+  { header: '#5b9bd5' },
+  { header: '#6ba3d6' },
+  { header: '#c4a574' },
+  { header: '#9bc53d' },
+  { header: '#56b8a4' },
+  { header: '#e8a838' },
+  { header: '#ef7b6a' },
+  { header: '#d97757' },
+  { header: '#8b6fd4' },
+  { header: '#c97b4a' },
+  { header: '#6d8fb8' },
+  { header: '#5a9e86' },
 ];
 
 function monthTheme(date) {
@@ -236,7 +205,12 @@ export default function LeaveCalendar({
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: WEEK_STARTS_ON });
     const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: WEEK_STARTS_ON });
-    return eachDayOfInterval({ start, end });
+    const interval = eachDayOfInterval({ start, end });
+    const padded = [...interval];
+    while (padded.length < CALENDAR_CELLS) {
+      padded.push(addDays(padded[padded.length - 1], 1));
+    }
+    return padded.slice(0, CALENDAR_CELLS);
   }, [cursor]);
 
   const monthThemeStyle = useMemo(() => monthTheme(cursor), [cursor]);
@@ -471,11 +445,15 @@ export default function LeaveCalendar({
       )}
 
       <div className="calendar-stage">
-        <div
-          className="calendar-visual-panel"
-          style={{ background: monthThemeStyle.visual }}
-          aria-hidden="true"
-        >
+        <div className="calendar-visual-panel" aria-hidden="true">
+          <img
+            className="calendar-visual-image"
+            src={calendarMonthImageUrl(getMonth(cursor), 'hero')}
+            alt=""
+            loading="lazy"
+            decoding="async"
+          />
+          <div className="calendar-visual-overlay" />
           <span className="calendar-visual-label">{format(cursor, 'MMMM')}</span>
         </div>
 
@@ -543,7 +521,7 @@ export default function LeaveCalendar({
                     </div>
                   </div>
                   <div className="leave-chips">
-                    {items.slice(0, 3).map((leave) => {
+                    {items.slice(0, 2).map((leave) => {
                       const cancellable =
                         canCancelLeaves && !leave.isMandatory && canUserCancel(leave.status);
                       const interactive = cancellable || canDelete || (showBalances && !leave.isMandatory);
@@ -604,8 +582,8 @@ export default function LeaveCalendar({
                         </ChipTag>
                       );
                     })}
-                    {items.length > 3 && (
-                      <span className="chip more">+{items.length - 3} more</span>
+                    {items.length > 2 && (
+                      <span className="chip more">+{items.length - 2} more</span>
                     )}
                   </div>
                 </div>
@@ -637,7 +615,14 @@ export default function LeaveCalendar({
                 aria-current={active ? 'true' : undefined}
                 onClick={() => setCursor(startOfMonth(month))}
               >
-                <div className="calendar-month-thumb-visual" style={{ background: theme.visual }} />
+                <div className="calendar-month-thumb-visual">
+                  <img
+                    src={calendarMonthImageUrl(getMonth(month), 'thumb')}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
                 <div
                   className="calendar-month-thumb-header"
                   style={{ backgroundColor: theme.header }}
