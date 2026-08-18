@@ -412,6 +412,11 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
   const password = passwordProvided ? rawPassword : crypto.randomBytes(9).toString('base64url');
   const employeeNumber = String(body.employeeNumber || body.employeeId || '').trim() || null;
   const managerId = body.managerId;
+  const roleRaw = String(body.role || 'user').trim();
+  const role = roleRaw === 'employee' ? 'user' : roleRaw;
+  if (role !== 'user' && role !== 'manager') {
+    return res.status(400).json({ error: 'Role must be Employee or Manager' });
+  }
 
   if (employeeNumber && employeeNumber.length > 40) {
     return res.status(400).json({ error: 'Employee ID is too long' });
@@ -425,6 +430,7 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
     if (!mgr) return res.status(400).json({ error: 'Invalid reporting manager' });
     nextManagerId = mgr.id;
   }
+  if (role === 'manager') nextManagerId = null;
 
   let personal;
   let employment;
@@ -474,9 +480,9 @@ router.post('/onboarding', authRequired, hrRequired, async (req, res) => {
       const result = await db
         .prepare(
           `INSERT INTO users (name, email, password_hash, role, manager_id, employee_number, active)
-           VALUES (?, ?, ?, 'user', ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(name, email, hashPassword(password), nextManagerId, employeeNumber, active);
+        .run(name, email, hashPassword(password), role, nextManagerId, employeeNumber, active);
 
       const newUserId = result.lastInsertRowid;
       await ensureBalanceRow(newUserId);
@@ -686,8 +692,16 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
     nextEmployeeNumber = empNo || null;
   }
 
+  let nextRole = user.role;
+  if (body.role !== undefined && body.role !== null && String(body.role).trim() !== '') {
+    const roleRaw = String(body.role).trim();
+    if (roleRaw === 'employee' || roleRaw === 'user') nextRole = 'user';
+    else if (roleRaw === 'manager') nextRole = 'manager';
+    else return res.status(400).json({ error: 'Role must be Employee or Manager' });
+  }
+
   let nextManagerId = user.manager_id;
-  if (user.role === 'manager') {
+  if (nextRole === 'manager') {
     nextManagerId = null;
   } else if (body.managerId !== undefined) {
     if (body.managerId === null || body.managerId === '') {
@@ -697,6 +711,9 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
         .prepare(`SELECT id FROM users WHERE id = ? AND role = 'manager' AND active = 1`)
         .get(Number(body.managerId));
       if (!mgr) return res.status(400).json({ error: 'Invalid reporting manager' });
+      if (mgr.id === userId) {
+        return res.status(400).json({ error: 'An employee cannot report to themselves' });
+      }
       nextManagerId = mgr.id;
     }
   }
@@ -715,18 +732,22 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
     await db.transaction(async () => {
       await db
         .prepare(
-          `UPDATE users SET name = ?, email = ?, password_hash = ?, manager_id = ?, employee_number = ?, active = ?
+          `UPDATE users SET name = ?, email = ?, password_hash = ?, role = ?, manager_id = ?, employee_number = ?, active = ?
            WHERE id = ?`
         )
         .run(
           nextName,
           nextEmail,
           nextHash,
+          nextRole,
           nextManagerId,
           nextEmployeeNumber,
           nextActive,
           userId
         );
+      if (user.role === 'manager' && nextRole === 'user') {
+        await db.prepare(`UPDATE users SET manager_id = NULL WHERE manager_id = ?`).run(userId);
+      }
 
       await db
         .prepare(

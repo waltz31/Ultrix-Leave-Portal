@@ -88,6 +88,7 @@ export const EMPTY_ONBOARDING_FORM = {
   department: '',
   designation: '',
   jobLevel: '',
+  role: 'user',
   managerId: '',
   location: '',
   workMode: '',
@@ -182,6 +183,7 @@ export function profileToForm(profile) {
     department: profile.employment?.department || '',
     designation: profile.employment?.designation || '',
     jobLevel: profile.employment?.jobLevel || '',
+    role: profile.role === 'manager' ? 'manager' : 'user',
     managerId: profile.managerId ? String(profile.managerId) : '',
     location: profile.employment?.location || '',
     workMode: profile.employment?.workMode || '',
@@ -259,6 +261,11 @@ function CollapsibleSection({ id, title, open, onToggle, children, hint }) {
   );
 }
 
+export const PORTAL_ROLE_OPTIONS = [
+  { value: 'user', label: 'Employee' },
+  { value: 'manager', label: 'Manager' },
+];
+
 export default function EmployeeOnboardingForm({
   form,
   setForm,
@@ -268,6 +275,7 @@ export default function EmployeeOnboardingForm({
   submitLabel = 'Create employee profile',
   showPassword = true,
   onBulkImport,
+  editingUserId,
 }) {
   const [photoError, setPhotoError] = useState('');
   const [importMsg, setImportMsg] = useState('');
@@ -603,17 +611,21 @@ export default function EmployeeOnboardingForm({
             Job level / grade
             <input {...field('jobLevel')} />
           </label>
-          <label>
-            Reporting manager
-            <select {...field('managerId')}>
-              <option value="">No manager (HR approves leave)</option>
-              {(managers || []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {form.role !== 'manager' && (
+            <label>
+              Reporting manager
+              <select {...field('managerId')}>
+                <option value="">No manager (HR approves leave)</option>
+                {(managers || [])
+                  .filter((m) => String(m.id) !== String(editingUserId || ''))
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <label>
             Location
             <input {...field('location')} />
@@ -659,6 +671,26 @@ export default function EmployeeOnboardingForm({
         hint="Work email + temporary password are used to log in. Personal email above is not for login."
       >
         <div className="form-grid">
+          <label>
+            Role
+            <select
+              value={form.role || 'user'}
+              onChange={(e) => {
+                const role = e.target.value === 'manager' ? 'manager' : 'user';
+                setForm((f) => ({
+                  ...f,
+                  role,
+                  managerId: role === 'manager' ? '' : f.managerId,
+                }));
+              }}
+            >
+              {PORTAL_ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <label>
             Work email (login)
             <input type="email" {...field('email')} placeholder="name@company.com" autoComplete="off" />

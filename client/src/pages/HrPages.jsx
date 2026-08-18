@@ -16,6 +16,7 @@ import EmployeeOnboardingForm, {
   EMPLOYMENT_TYPE_OPTIONS,
   GENDER_OPTIONS,
   MARITAL_STATUS_OPTIONS,
+  PORTAL_ROLE_OPTIONS,
   WORK_MODE_OPTIONS,
   profileToForm,
 } from '../components/EmployeeOnboardingForm';
@@ -310,7 +311,9 @@ export function HrOnboarding() {
   const { data: profiles, error, loading, reload } = useLoad(() =>
     api('/onboarding').then((d) => d.profiles)
   );
-  const { data: managers } = useLoad(() => api('/managers').then((d) => d.managers));
+  const { data: managers, reload: reloadManagers } = useLoad(() =>
+    api('/managers').then((d) => d.managers)
+  );
   const [form, setForm] = useState(() => ({
     ...EMPTY_ONBOARDING_FORM,
     assets: [{ ...EMPTY_ASSET }],
@@ -388,6 +391,7 @@ export function HrOnboarding() {
       setShowForm(false);
       setEditingUserId(null);
       reload();
+      reloadManagers();
     } catch (error) {
       setErr(error.message);
     } finally {
@@ -723,6 +727,7 @@ export function HrOnboarding() {
               managers={managers}
               onSubmit={saveProfile}
               onBulkImport={editingUserId ? undefined : bulkImportEmployees}
+              editingUserId={editingUserId}
               busy={busy}
               submitLabel={editingUserId ? 'Save changes' : 'Create employee profile'}
             />
@@ -836,6 +841,10 @@ export function HrOnboarding() {
                   <div>
                     <dt>Job level</dt>
                     <dd>{selected.employment.jobLevel || '—'}</dd>
+                  </div>
+                  <div>
+                    <dt>Role</dt>
+                    <dd>{labelFrom(PORTAL_ROLE_OPTIONS, selected.role)}</dd>
                   </div>
                   <div>
                     <dt>Reporting manager</dt>
