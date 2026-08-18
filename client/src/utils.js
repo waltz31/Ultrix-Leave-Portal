@@ -181,18 +181,26 @@ export function formatHolidayTableDate(iso) {
 
 /** e.g. "26 Aug Wednesday" for overview holiday rows */
 export function formatOverviewHolidayDate(iso) {
+  const { date, weekday } = formatOverviewHolidayRow(iso);
+  if (!weekday) return date;
+  return `${date} ${weekday}`;
+}
+
+/** e.g. { date: "26 Aug", weekday: "Wednesday" } for overview holiday list rows */
+export function formatOverviewHolidayRow(iso) {
   const d = parseLeaveDate(iso);
-  if (!d) return '—';
-  const dayMonth = d.toLocaleDateString(APP_LOCALE, {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-  const weekday = d.toLocaleDateString(APP_LOCALE, {
-    weekday: 'long',
-    timeZone: 'UTC',
-  });
-  return `${dayMonth} ${weekday}`;
+  if (!d) return { date: '—', weekday: '' };
+  return {
+    date: d.toLocaleDateString(APP_LOCALE, {
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'UTC',
+    }),
+    weekday: d.toLocaleDateString(APP_LOCALE, {
+      weekday: 'long',
+      timeZone: 'UTC',
+    }),
+  };
 }
 
 export function formatDateTime(value) {

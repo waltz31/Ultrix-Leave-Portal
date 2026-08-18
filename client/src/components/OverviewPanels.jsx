@@ -6,7 +6,7 @@ import {
   REQUEST_LABELS,
   STATUS_LABELS,
   appToday,
-  formatOverviewHolidayDate,
+  formatOverviewHolidayRow,
   formatLeaveSpan,
   insufficientRestrictedBalance,
   isApplyBlockError,
@@ -161,12 +161,8 @@ export function CompanyHolidaysPanel({
     [holidays]
   );
 
-  const upcomingRestricted = useMemo(
-    () =>
-      sortedHolidays.filter(
-        (holiday) =>
-          holiday.holidayType === 'restricted' && toYmd(holiday.startDate) >= todayYmd
-      ),
+  const upcomingHolidays = useMemo(
+    () => sortedHolidays.filter((holiday) => toYmd(holiday.startDate) >= todayYmd),
     [sortedHolidays, todayYmd]
   );
 
@@ -219,7 +215,7 @@ export function CompanyHolidaysPanel({
 
   function actionFor(holiday) {
     const ymd = toYmd(holiday.startDate);
-    if (!canApplyRestricted) return null;
+    if (holiday.holidayType !== 'restricted' || !canApplyRestricted) return null;
 
     const status = appliedRhDates.get(ymd);
     if (status === 'approved') {
@@ -256,32 +252,31 @@ export function CompanyHolidaysPanel({
         message={errorPopup?.message}
         onClose={() => setErrorPopup(null)}
       />
-      <PanelHead title={`Upcoming restricted holidays`} to={holidaysTo} />
-      {canApplyRestricted && (
-        <p className="muted slim overview-holidays-note">
-          Choose a date below to request restricted leave. Your manager and HR will review each
-          request ({restrictedBalance} day{restrictedBalance === 1 ? '' : 's'} remaining).
-        </p>
-      )}
+      <PanelHead title="Upcoming Holidays" to={holidaysTo} />
       {loading && <p className="muted">Loading holidays…</p>}
-      {!loading && !upcomingRestricted.length && (
-        <p className="empty">
-          {sortedHolidays.some((h) => h.holidayType === 'restricted')
-            ? 'No upcoming restricted holidays this year.'
-            : `No restricted holidays published for ${year} yet.`}
-        </p>
+      {!loading && !upcomingHolidays.length && (
+        <p className="empty">No upcoming holidays published for {year} yet.</p>
       )}
-      {!loading && !!upcomingRestricted.length && (
+      {!loading && !!upcomingHolidays.length && (
         <ul className="overview-holiday-list">
-          {upcomingRestricted.map((holiday) => (
-            <li key={holiday.id || `${holiday.startDate}-${holiday.userName}`}>
-              <div className="overview-holiday-copy">
-                <strong>{holiday.userName || holiday.title || 'Restricted holiday'}</strong>
-                <span>{formatOverviewHolidayDate(holiday.startDate)}</span>
-              </div>
-              {actionFor(holiday)}
-            </li>
-          ))}
+          {upcomingHolidays.map((holiday) => {
+            const { date, weekday } = formatOverviewHolidayRow(holiday.startDate);
+            const name = holiday.userName || holiday.title || 'Holiday';
+            return (
+              <li key={holiday.id || `${holiday.startDate}-${name}`}>
+                <div className="overview-holiday-copy">
+                  <div className="overview-holiday-date-line">
+                    <strong className="overview-holiday-date">{date}</strong>
+                    {weekday ? (
+                      <span className="overview-holiday-weekday">{weekday}</span>
+                    ) : null}
+                  </div>
+                  <span className="overview-holiday-name">{name}</span>
+                </div>
+                {actionFor(holiday)}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
