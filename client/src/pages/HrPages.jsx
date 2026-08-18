@@ -1278,6 +1278,7 @@ export function HrUsers() {
               {(data || []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
+                  {u.role === 'manager' ? ' (manager)' : ''}
                   {u.active ? '' : ' (inactive)'}
                 </option>
               ))}
@@ -1352,7 +1353,10 @@ export function HrUsers() {
                   <tr key={user.id} className={user.active ? '' : 'is-inactive'}>
                     <td>
                       <strong className="employee-name">{user.name}</strong>
-                      <div className="sub">{user.email}</div>
+                      <div className="sub">
+                        {user.email}
+                        {user.role === 'manager' ? ' · Manager' : ''}
+                      </div>
                     </td>
                     <td>{user.employeeNumber || '—'}</td>
                     <td>{user.managerEmail || user.managerName || '—'}</td>

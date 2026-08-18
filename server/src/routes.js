@@ -276,8 +276,8 @@ router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
        FROM users u
        LEFT JOIN leave_balances b ON b.user_id = u.id
        LEFT JOIN users m ON m.id = u.manager_id
-       WHERE u.role = 'user'
-       ORDER BY u.name COLLATE NOCASE`
+       WHERE u.role IN ('user', 'manager')
+       ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
     .all())
     .map((row) => ({
@@ -1051,7 +1051,9 @@ router.post('/balances/credit', authRequired, hrRequired, async (req, res) => {
   if (!Number.isFinite(amt) || amt <= 0) {
     return res.status(400).json({ error: 'Amount must be a positive number' });
   }
-  const user = await db.prepare(`SELECT id FROM users WHERE id = ? AND role = 'user'`).get(userId);
+  const user = await db
+    .prepare(`SELECT id FROM users WHERE id = ? AND role IN ('user', 'manager')`)
+    .get(userId);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   await ensureBalanceRow(userId);
@@ -1471,7 +1473,7 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
   }
 
   const employee = await db
-    .prepare(`SELECT * FROM users WHERE id = ? AND role = 'user'`)
+    .prepare(`SELECT * FROM users WHERE id = ? AND role IN ('user', 'manager')`)
     .get(employeeId);
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
 
@@ -1909,7 +1911,7 @@ router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, re
     .prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_hr'`)
     .get()).c;
   const users = (await db
-    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'user' AND active = 1`)
+    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('user', 'manager')`)
     .get()).c;
   const onLeaveToday = (await db
     .prepare(
@@ -1949,7 +1951,7 @@ router.get('/reports/overview', authRequired, async (req, res) => {
   }
   if (filterUserId != null && (role === 'manager' || role === 'hr')) {
     const employee = await db
-      .prepare(`SELECT id, manager_id, role FROM users WHERE id = ? AND role = 'user'`)
+      .prepare(`SELECT id, manager_id, role FROM users WHERE id = ? AND role IN ('user', 'manager')`)
       .get(filterUserId);
     if (!employee) {
       return res.status(404).json({ error: 'Employee not found' });
@@ -2059,13 +2061,17 @@ router.get('/reports/overview', authRequired, async (req, res) => {
 
 // ——— Employee ratings ———
 router.get('/ratings/employees', authRequired, managerOrHrRequired, async (req, res) => {
+  const roleClause =
+    req.user.role === 'hr'
+      ? `u.role IN ('user', 'manager')`
+      : `u.role = 'user' AND u.active = 1`;
   const rows = (await db
     .prepare(
       `SELECT u.id, u.name, u.email, u.employee_number,
               m.name AS manager_name
        FROM users u
        LEFT JOIN users m ON m.id = u.manager_id
-       WHERE u.role = 'user' AND u.active = 1
+       WHERE ${roleClause}
        ORDER BY u.name COLLATE NOCASE`
     )
     .all())
