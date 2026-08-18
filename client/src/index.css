@@ -2758,19 +2758,30 @@ th.leave-type-heading {
 }
 
 /* Modal */
+body:has(.modal-backdrop) {
+  overflow: hidden;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(21, 34, 27, 0.45);
-  display: grid;
-  place-items: center;
-  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
   z-index: 40;
   animation: fadeIn 0.18s ease;
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
 .modal {
   width: min(560px, 100%);
+  max-height: min(90vh, calc(100dvh - 40px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: var(--surface);
   border-radius: 16px;
   padding: 18px 20px;
@@ -2779,6 +2790,12 @@ th.leave-type-heading {
   animation: riseIn 0.22s ease;
   display: grid;
   gap: var(--space-sm);
+  align-content: start;
+}
+
+.modal.modal-wide {
+  width: min(920px, 100%);
+  max-height: min(92vh, calc(100dvh - 40px));
 }
 
 .modal h2 {
@@ -4597,8 +4614,10 @@ th.leave-type-heading {
 
   .modal {
     width: min(560px, calc(100vw - 24px));
-    max-height: min(90vh, 720px);
-    overflow: auto;
+  }
+
+  .modal.modal-wide {
+    width: min(920px, calc(100vw - 24px));
   }
 
   .calendar {
