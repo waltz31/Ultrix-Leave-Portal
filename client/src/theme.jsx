@@ -79,7 +79,6 @@ export function ThemeProvider({ children }) {
     () => ({
       '--shell-wash': withAlpha(bgColor, mode === 'light' ? 0.78 : 0.55),
       '--shell-wash-deep': withAlpha(bgColor, mode === 'light' ? 0.88 : 0.72),
-      '--welcome-label': mode === 'light' ? 'rgba(21, 32, 51, 0.78)' : '#ffffff',
     }),
     [bgColor, mode]
   );
