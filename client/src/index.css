@@ -142,65 +142,75 @@ a {
   user-select: none;
 }
 
-.login-logo-animated {
+.login-logo-flying {
+  position: fixed;
+  z-index: 2;
+  width: min(168px, 30vw);
+  left: 10%;
+  top: 14%;
   transform-origin: center center;
-  animation: login-logo-intro 2.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
+  animation: login-logo-fly 22s ease-in-out infinite;
+  will-change: left, top, transform;
 }
 
-@keyframes login-logo-intro {
+@keyframes login-logo-fly {
   0% {
-    opacity: 0;
-    transform: scale(0.55);
+    left: 8%;
+    top: 10%;
+    transform: rotate(-8deg) scale(0.92);
+    opacity: 0.88;
   }
 
   18% {
+    left: 74%;
+    top: 16%;
+    transform: rotate(10deg) scale(1.06);
     opacity: 1;
-    transform: scale(1.12);
   }
 
-  32% {
-    transform: scale(0.94);
-  }
-
-  44% {
-    transform: scale(1.05);
+  36% {
+    left: 82%;
+    top: 58%;
+    transform: rotate(-6deg) scale(0.96);
+    opacity: 0.95;
   }
 
   54% {
-    transform: scale(1);
+    left: 52%;
+    top: 78%;
+    transform: rotate(12deg) scale(1.08);
+    opacity: 1;
   }
 
-  62% {
-    transform: scale(1) rotate(0deg);
+  72% {
+    left: 12%;
+    top: 66%;
+    transform: rotate(-10deg) scale(0.94);
+    opacity: 0.92;
   }
 
-  70% {
-    transform: scale(1) rotate(-5deg);
-  }
-
-  78% {
-    transform: scale(1) rotate(4deg);
-  }
-
-  86% {
-    transform: scale(1) rotate(-2.5deg);
-  }
-
-  93% {
-    transform: scale(1) rotate(1deg);
+  88% {
+    left: 38%;
+    top: 8%;
+    transform: rotate(7deg) scale(1.02);
+    opacity: 0.98;
   }
 
   100% {
-    opacity: 1;
-    transform: scale(1) rotate(0deg);
+    left: 8%;
+    top: 10%;
+    transform: rotate(-8deg) scale(0.92);
+    opacity: 0.88;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-logo-animated {
+  .login-logo-flying {
     animation: none;
+    left: 50%;
+    top: 18%;
+    transform: translateX(-50%);
     opacity: 1;
-    transform: none;
   }
 }
 
@@ -4474,8 +4484,8 @@ th.leave-type-heading {
     padding: 20px 16px;
   }
 
-  .login-logo {
-    width: min(240px, 72vw);
+  .login-logo-flying {
+    width: min(132px, 36vw);
   }
 
   .login-form {

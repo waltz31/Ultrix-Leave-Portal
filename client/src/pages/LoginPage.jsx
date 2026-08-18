@@ -33,17 +33,15 @@ export default function LoginPage() {
         <img src="/assets/login-bg.png" alt="" />
       </div>
 
-      <div className="login-content">
-        <div className="login-brand">
-          <img
-            className="login-logo login-logo-animated"
-            src="/assets/yupnup.svg"
-            alt="YupNup"
-            width={380}
-            height={140}
-          />
-        </div>
+      <img
+        className="login-logo login-logo-flying"
+        src="/assets/yupnup.svg"
+        alt="YupNup"
+        width={380}
+        height={140}
+      />
 
+      <div className="login-content">
         <div className="login-panel glass">
           <form className="login-form" onSubmit={onSubmit}>
             <h1 className="login-title">Sign in</h1>

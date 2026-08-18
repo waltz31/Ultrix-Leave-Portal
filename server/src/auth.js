@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import db from './db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const JWT_EXPIRY = '5d';
 
 export function hashPassword(password) {
   return bcrypt.hashSync(password, 10);
@@ -16,7 +17,7 @@ export function signToken(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role, name: user.name },
     JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: JWT_EXPIRY }
   );
 }
 
