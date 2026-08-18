@@ -1,4 +1,17 @@
+import { eachCalendarDay, isWeekendYmd } from './leaveUtils.js';
+
 export const RESTRICTED_HOLIDAYS_PER_YEAR = 2;
+
+export const RH_ONLY_PUBLISHED_DATES =
+  'Restricted holidays can only be taken on published RH dates. You cannot apply a restricted holiday on this day.';
+
+export function rhLimitReachedMessage(used, year = new Date().getFullYear()) {
+  return `You have already used ${used} restricted holiday${Number(used) === 1 ? '' : 's'} in ${year}. Only ${RESTRICTED_HOLIDAYS_PER_YEAR} restricted holidays can be taken per year.`;
+}
+
+export const WEEKEND_LEAVE_BLOCKED = 'Leave cannot be applied on Saturdays or Sundays.';
+export const GENERAL_HOLIDAY_LEAVE_BLOCKED =
+  'Leave cannot be applied on general holidays. This date is already a company holiday.';
 
 export const HOLIDAYS_2026 = [
   { date: '2026-01-01', title: 'New Year', type: 'general' },
@@ -37,38 +50,89 @@ export function holidayNote(type) {
     : 'General holiday';
 }
 
+export async function loadGeneralHolidays(db, startDate, endDate) {
+  const rows = await db
+    .prepare(
+      `SELECT title, start_date, end_date FROM mandatory_leaves
+       WHERE COALESCE(holiday_type, 'general') = 'general'
+         AND end_date >= ? AND start_date <= ?`
+    )
+    .all(startDate, endDate);
+  const dates = new Set();
+  const names = new Map();
+  for (const row of rows) {
+    for (const day of eachCalendarDay(row.start_date, row.end_date)) {
+      dates.add(day);
+      if (!names.has(day)) names.set(day, row.title);
+    }
+  }
+  return { dates, names };
+}
+
+export function blockedWorkingDateMessage(ymd, holidayDates, holidayNames) {
+  if (!ymd) return null;
+  if (isWeekendYmd(ymd)) return WEEKEND_LEAVE_BLOCKED;
+  if (holidayDates?.has(ymd)) {
+    const name = holidayNames?.get(ymd);
+    return name
+      ? `Leave cannot be applied on general holidays. ${name} is already a company holiday.`
+      : GENERAL_HOLIDAY_LEAVE_BLOCKED;
+  }
+  return null;
+}
+
+export function blockedRegularLeaveMessage(startDate, endDate, holidayDates, holidayNames) {
+  return (
+    blockedWorkingDateMessage(startDate, holidayDates, holidayNames) ||
+    (endDate && endDate !== startDate
+      ? blockedWorkingDateMessage(endDate, holidayDates, holidayNames)
+      : null)
+  );
+}
+
+export async function assertRegularLeaveWindow(db, startDate, endDate) {
+  const { dates, names } = await loadGeneralHolidays(db, startDate, endDate);
+  const blocked = blockedRegularLeaveMessage(startDate, endDate, dates, names);
+  if (blocked) {
+    throw Object.assign(new Error(blocked), { status: 400 });
+  }
+  return dates;
+}
+
 export function seedCompanyHolidaysSync(db) {
   const insert = db.prepare(
     `INSERT INTO mandatory_leaves (title, start_date, end_date, note, holiday_type)
      VALUES (?, ?, ?, ?, ?)`
   );
   const find = db.prepare(
-    `SELECT id, holiday_type FROM mandatory_leaves WHERE start_date = ? AND end_date = ? AND title = ?`
+    `SELECT id FROM mandatory_leaves WHERE start_date = ? AND end_date = ?`
   );
-  const updateType = db.prepare(`UPDATE mandatory_leaves SET holiday_type = ? WHERE id = ?`);
+  const update = db.prepare(
+    `UPDATE mandatory_leaves SET title = ?, holiday_type = ?, note = COALESCE(note, ?) WHERE id = ?`
+  );
   for (const holiday of HOLIDAYS_2026) {
-    const existing = find.get(holiday.date, holiday.date, holiday.title);
+    const existing = find.get(holiday.date, holiday.date);
+    const note = holidayNote(holiday.type);
     if (existing) {
-      if (existing.holiday_type !== holiday.type) updateType.run(holiday.type, existing.id);
+      update.run(holiday.title, holiday.type, note, existing.id);
       continue;
     }
-    insert.run(holiday.title, holiday.date, holiday.date, holidayNote(holiday.type), holiday.type);
+    insert.run(holiday.title, holiday.date, holiday.date, note, holiday.type);
   }
 }
 
 export async function seedCompanyHolidays(db) {
   for (const holiday of HOLIDAYS_2026) {
     const existing = await db
-      .prepare(
-        `SELECT id, holiday_type FROM mandatory_leaves WHERE start_date = ? AND end_date = ? AND title = ?`
-      )
-      .get(holiday.date, holiday.date, holiday.title);
+      .prepare(`SELECT id FROM mandatory_leaves WHERE start_date = ? AND end_date = ?`)
+      .get(holiday.date, holiday.date);
+    const note = holidayNote(holiday.type);
     if (existing) {
-      if (existing.holiday_type !== holiday.type) {
-        await db
-          .prepare(`UPDATE mandatory_leaves SET holiday_type = ? WHERE id = ?`)
-          .run(holiday.type, existing.id);
-      }
+      await db
+        .prepare(
+          `UPDATE mandatory_leaves SET title = ?, holiday_type = ?, note = COALESCE(note, ?) WHERE id = ?`
+        )
+        .run(holiday.title, holiday.type, note, existing.id);
       continue;
     }
     await db
@@ -76,6 +140,6 @@ export async function seedCompanyHolidays(db) {
         `INSERT INTO mandatory_leaves (title, start_date, end_date, note, holiday_type)
          VALUES (?, ?, ?, ?, ?)`
       )
-      .run(holiday.title, holiday.date, holiday.date, holidayNote(holiday.type), holiday.type);
+      .run(holiday.title, holiday.date, holiday.date, note, holiday.type);
   }
 }

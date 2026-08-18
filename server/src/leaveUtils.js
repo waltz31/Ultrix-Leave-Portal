@@ -12,6 +12,25 @@ function formatYmd(date) {
   return `${y}-${m}-${d}`;
 }
 
+/** Normalize DB/JSON date values to YYYY-MM-DD. */
+export function asYmd(value) {
+  if (value == null || value === '') return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  return text;
+}
+
+export function isWeekendYmd(value) {
+  const ymd = asYmd(value);
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return false;
+  const dow = new Date(y, m - 1, d).getDay();
+  return dow === 0 || dow === 6;
+}
+
 /** All calendar days (incl. weekends) between two YYYY-MM-DD dates inclusive. */
 export function eachCalendarDay(startDate, endDate) {
   const start = parseDate(startDate);
@@ -139,8 +158,8 @@ export function mapMandatoryLeave(row) {
     userEmail: null,
     employeeNumber: null,
     leaveType: holidayType,
-    startDate: row.start_date,
-    endDate: row.end_date,
+    startDate: asYmd(row.start_date),
+    endDate: asYmd(row.end_date),
     days,
     session: 'full',
     reason: row.note || null,

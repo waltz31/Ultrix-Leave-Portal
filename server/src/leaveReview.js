@@ -7,6 +7,7 @@ import {
   LEAVE_SELECT,
   SESSIONS,
 } from './leaveUtils.js';
+import { assertRegularLeaveWindow } from './holidays.js';
 import { SQL_NOW_IST } from './sqlDialect.js';
 import {
   mailManagerApproved,
@@ -169,17 +170,25 @@ export async function reviewLeaveRequest(opts) {
     let nextEnd = endDate || leave.end_date;
     const nextSession = SESSIONS.includes(session) ? session : leave.session || 'full';
     if (nextSession !== 'full') nextEnd = nextStart;
-    let days;
-    try {
-      days = countLeaveDays(nextStart, nextEnd, nextSession);
-    } catch (err) {
-      throw new LeaveReviewError(400, err.message);
-    }
-    if (days <= 0) {
-      throw new LeaveReviewError(400, 'Request must include at least one weekday');
-    }
     const nextType =
       leaveType && REQUEST_TYPES.includes(leaveType) ? leaveType : leave.leave_type;
+    let days;
+    try {
+      if (nextType === 'restricted') {
+        days = 1;
+      } else {
+        const holidays = await assertRegularLeaveWindow(db, nextStart, nextEnd);
+        days = countLeaveDays(nextStart, nextEnd, nextSession, holidays);
+      }
+    } catch (err) {
+      throw new LeaveReviewError(err.status || 400, err.message);
+    }
+    if (days <= 0) {
+      throw new LeaveReviewError(
+        400,
+        'Leave cannot be applied only on weekends or general holidays. Pick working days.'
+      );
+    }
 
     await db
       .prepare(
@@ -316,12 +325,20 @@ export async function reviewLeaveRequest(opts) {
   if (nextSession !== 'full') nextEnd = nextStart;
   let days;
   try {
-    days = countLeaveDays(nextStart, nextEnd, nextSession);
+    if (nextType === 'restricted') {
+      days = 1;
+    } else {
+      const holidays = await assertRegularLeaveWindow(db, nextStart, nextEnd);
+      days = countLeaveDays(nextStart, nextEnd, nextSession, holidays);
+    }
   } catch (err) {
-    throw new LeaveReviewError(400, err.message);
+    throw new LeaveReviewError(err.status || 400, err.message);
   }
   if (days <= 0) {
-    throw new LeaveReviewError(400, 'Request must include at least one weekday');
+    throw new LeaveReviewError(
+      400,
+      'Leave cannot be applied only on weekends or general holidays. Pick working days.'
+    );
   }
 
   if (isBalanceType(nextType)) {

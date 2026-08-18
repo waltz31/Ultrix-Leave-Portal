@@ -1755,16 +1755,17 @@ export function HrCalendar() {
   return (
     <AppShell title="Team calendar" nav={NAV}>
       <p className="lede">
-        Filter by employee to review overlapping leave. Use + to add leave, or open a chip to delete.
-        Upload holidays below so they appear on everyone’s calendar. Restricted holidays can be
-        taken by employees and managers — maximum 2 per year.
+        Filter by employee to review overlapping leave. Use + on a working day to add leave for an
+        employee. Leave cannot be applied on Saturdays, Sundays, or general holidays. Restricted
+        holidays can be taken only on the published RH dates — maximum 2 per year.
       </p>
 
       <section className="panel mandatory-leave-panel">
         <h2>Company holidays</h2>
         <p className="muted slim">
-          General holidays are company-wide offs. Restricted holidays are optional — each employee
-          or manager may take only 2 restricted holidays per year from the list.
+          General holidays are company-wide offs and already show on every calendar with the holiday
+          name. Restricted holidays are optional — each employee or manager may take only 2 per year,
+          and only on the RH dates in this list.
         </p>
         <form className="mandatory-leave-form" onSubmit={submitMandatory}>
           <label>

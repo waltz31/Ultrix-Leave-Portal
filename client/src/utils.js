@@ -45,9 +45,96 @@ export const APP_LOCALE = 'en-IN';
 /** Parse a leave calendar date `YYYY-MM-DD` without shifting the day. */
 export function parseLeaveDate(iso) {
   if (!iso) return null;
-  const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+  const ymd = toYmd(iso);
+  const [y, m, d] = String(ymd).split('-').map(Number);
   if (!y || !m || !d) return null;
   return new Date(Date.UTC(y, m - 1, d));
+}
+
+export function toYmd(value) {
+  if (value == null || value === '') return '';
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  return text;
+}
+
+export function holidayDateLabel(holiday) {
+  const date = toYmd(holiday?.startDate);
+  const title = holiday?.userName || holiday?.title || 'Holiday';
+  return date ? `${formatDate(date)} — ${title}` : title;
+}
+
+export function isWeekendYmd(value) {
+  const d = parseLeaveDate(value);
+  if (!d) return false;
+  const dow = d.getUTCDay();
+  return dow === 0 || dow === 6;
+}
+
+export function eachYmd(start, end) {
+  const dates = [];
+  const from = parseLeaveDate(start);
+  const to = parseLeaveDate(end || start);
+  if (!from || !to || to < from) return dates;
+  const cur = new Date(from.getTime());
+  while (cur <= to) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+export function generalHolidayMapFromList(items) {
+  const map = new Map();
+  for (const item of items || []) {
+    const type = item.holidayType || item.leaveType;
+    const isGeneral =
+      type === 'general' || (item.isMandatory && type !== 'restricted');
+    if (!isGeneral) continue;
+    const start = toYmd(item.startDate);
+    const end = toYmd(item.endDate) || start;
+    const name = item.userName || item.title || 'General holiday';
+    for (const ymd of eachYmd(start, end)) {
+      if (!map.has(ymd)) map.set(ymd, name);
+    }
+  }
+  return map;
+}
+
+export const WEEKEND_LEAVE_BLOCKED = 'Leave cannot be applied on Saturdays or Sundays.';
+export const RH_ONLY_PUBLISHED_DATES =
+  'Restricted holidays can only be taken on published RH dates. You cannot apply a restricted holiday on this day.';
+
+export function generalHolidayBlockedMessage(name) {
+  return name
+    ? `Leave cannot be applied on general holidays. ${name} is already a company holiday.`
+    : 'Leave cannot be applied on general holidays. This date is already a company holiday.';
+}
+
+export function rhLimitReachedMessage(used, year, limit = 2) {
+  return `You have already used ${used} restricted holiday${Number(used) === 1 ? '' : 's'} in ${year}. Only ${limit} restricted holidays can be taken per year.`;
+}
+
+export function blockedWorkingDateMessage(ymd, generalHolidayMap) {
+  if (!ymd) return null;
+  if (isWeekendYmd(ymd)) return WEEKEND_LEAVE_BLOCKED;
+  if (generalHolidayMap?.has(ymd)) return generalHolidayBlockedMessage(generalHolidayMap.get(ymd));
+  return null;
+}
+
+export function blockedRegularLeaveMessage(startDate, endDate, generalHolidayMap) {
+  return (
+    blockedWorkingDateMessage(startDate, generalHolidayMap) ||
+    (endDate && endDate !== startDate
+      ? blockedWorkingDateMessage(endDate, generalHolidayMap)
+      : null)
+  );
+}
+
+export function isApplyBlockError(message) {
+  return /cannot be applied|restricted holiday|Saturdays or Sundays|already used|published RH/i.test(
+    String(message || '')
+  );
 }
 
 /**

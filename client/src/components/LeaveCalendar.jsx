@@ -24,7 +24,14 @@ import {
   canUserCancel,
   formatDate,
   formatLeaveSpan,
+  holidayDateLabel,
+  toYmd,
+  blockedRegularLeaveMessage,
+  generalHolidayMapFromList,
+  isApplyBlockError,
+  RH_ONLY_PUBLISHED_DATES,
 } from '../utils';
+import ErrorPopup from './ErrorPopup';
 
 function BalanceTooltip({ leave, balances }) {
   const bal = balances || { casual: 0, earned: 0, sick: 0, compensation: 0 };
@@ -82,6 +89,14 @@ function shortTypeLabel(type) {
   return REQUEST_LABELS[type] || type;
 }
 
+function chipMainLabel(leave, showNames) {
+  if (leave.isMandatory) {
+    return leave.userName || (leave.leaveType === 'restricted' ? 'Restricted holiday' : 'General holiday');
+  }
+  if (showNames) return String(leave.userName || '').split(' ')[0];
+  return shortTypeLabel(leave.leaveType);
+}
+
 export default function LeaveCalendar({
   leaves,
   showNames = false,
@@ -107,6 +122,7 @@ export default function LeaveCalendar({
   });
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState('');
+  const [errorPopup, setErrorPopup] = useState(null);
   const popoverRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
@@ -132,6 +148,28 @@ export default function LeaveCalendar({
       (l) => l.isMandatory || String(l.userId) === String(employeeFilter)
     );
   }, [leaves, employeeFilter]);
+
+  const restrictedHolidayOptions = useMemo(
+    () =>
+      (leaves || [])
+        .filter((l) => l.isMandatory && l.leaveType === 'restricted')
+        .slice()
+        .sort((a, b) => toYmd(a.startDate).localeCompare(toYmd(b.startDate))),
+    [leaves]
+  );
+  const restrictedHolidayDates = useMemo(
+    () => new Set(restrictedHolidayOptions.map((h) => toYmd(h.startDate))),
+    [restrictedHolidayOptions]
+  );
+  const generalHolidayMap = useMemo(
+    () => generalHolidayMapFromList(leaves),
+    [leaves]
+  );
+
+  function applyBlockMessage(ymd) {
+    if (restrictedHolidayDates.has(toYmd(ymd))) return null;
+    return blockedRegularLeaveMessage(ymd, ymd, generalHolidayMap);
+  }
 
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 });
@@ -170,11 +208,14 @@ export default function LeaveCalendar({
   }, [selected]);
 
   function leavesOn(day) {
-    return filteredLeaves.filter((leave) => {
-      const start = parseISO(leave.startDate);
-      const end = parseISO(leave.endDate);
-      return isWithinInterval(day, { start, end });
-    });
+    return filteredLeaves
+      .filter((leave) => {
+        const start = parseISO(toYmd(leave.startDate));
+        const end = parseISO(toYmd(leave.endDate) || toYmd(leave.startDate));
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+        return isWithinInterval(day, { start, end });
+      })
+      .sort((a, b) => Number(Boolean(b.isMandatory)) - Number(Boolean(a.isMandatory)));
   }
 
   async function handleCancel(leave, opts = {}) {
@@ -194,14 +235,23 @@ export default function LeaveCalendar({
   }
 
   function openCreate(dayKey = '') {
+    const dayYmd = toYmd(dayKey);
+    const rh = restrictedHolidayOptions.find((h) => toYmd(h.startDate) === dayYmd);
+    if (dayYmd && !rh) {
+      const blocked = applyBlockMessage(dayYmd);
+      if (blocked) {
+        setErrorPopup({ title: 'Cannot apply leave', message: blocked });
+        return;
+      }
+    }
     setCreateErr('');
     setCreateForm({
       userId: employeeFilter || (employeeOptions[0] ? String(employeeOptions[0].id) : ''),
-      leaveType: 'casual',
-      startDate: dayKey,
-      endDate: dayKey,
+      leaveType: rh ? 'restricted' : 'casual',
+      startDate: dayYmd,
+      endDate: dayYmd,
       session: 'full',
-      reason: '',
+      reason: rh ? rh.userName || '' : '',
     });
     setShowCreate(true);
   }
@@ -212,16 +262,40 @@ export default function LeaveCalendar({
     setCreateErr('');
     try {
       const isRestricted = createForm.leaveType === 'restricted';
+      const startDate = toYmd(createForm.startDate);
+      const endDate =
+        isRestricted || createForm.session !== 'full' ? startDate : toYmd(createForm.endDate);
+      if (!createForm.userId) {
+        throw new Error('Select an employee');
+      }
+      if (isRestricted) {
+        if (!startDate || !restrictedHolidayDates.has(startDate)) {
+          throw new Error(RH_ONLY_PUBLISHED_DATES);
+        }
+      } else {
+        const blocked = blockedRegularLeaveMessage(startDate, endDate, generalHolidayMap);
+        if (blocked) throw new Error(blocked);
+      }
       const body = {
         ...createForm,
         userId: Number(createForm.userId),
+        startDate,
         session: isRestricted ? 'full' : createForm.session,
-        endDate: isRestricted || createForm.session !== 'full' ? createForm.startDate : createForm.endDate,
+        endDate,
       };
       await onCreateLeave(body);
       setShowCreate(false);
     } catch (err) {
-      setCreateErr(err.message || 'Could not create leave');
+      const message = err.message || 'Could not create leave';
+      if (isApplyBlockError(message)) {
+        setErrorPopup({
+          title: /already used/i.test(message)
+            ? 'Restricted holiday limit reached'
+            : 'Cannot apply leave',
+          message,
+        });
+      }
+      setCreateErr(message);
     } finally {
       setCreateBusy(false);
     }
@@ -229,6 +303,12 @@ export default function LeaveCalendar({
 
   return (
     <div className="calendar calendar-pro">
+      <ErrorPopup
+        show={Boolean(errorPopup)}
+        title={errorPopup?.title}
+        message={errorPopup?.message}
+        onClose={() => setErrorPopup(null)}
+      />
       <div className="calendar-toolbar">
         <div className="calendar-nav">
           <button
@@ -309,9 +389,10 @@ export default function LeaveCalendar({
       )}
       {canManage && (
         <p className="calendar-hint muted">
-          Use the employee dropdown to focus one person. Tap + to add leave, or open a chip to delete.
-          General holidays (GH, blue) and restricted holidays (RH, pink) stay visible for every employee filter.
-          Saturdays and Sundays are grey company offs.
+          General holidays (blue) already appear with the holiday name. You cannot apply leave on
+          general holidays or Saturdays/Sundays. Restricted holidays (pink) are optional — employees
+          and managers may take only 2 per year, and only on those RH dates.
+          Use + on a working day to add leave, or open a chip to delete.
         </p>
       )}
 
@@ -351,7 +432,7 @@ export default function LeaveCalendar({
                 </span>
                 <div className="day-head-actions">
                   {items.length > 0 && <span className="day-count">{items.length}</span>}
-                  {canCreate && !outside && (
+                  {canCreate && !outside && !applyBlockMessage(dayKey) && (
                     <button
                       type="button"
                       className="calendar-day-add"
@@ -383,6 +464,7 @@ export default function LeaveCalendar({
                         'chip',
                         'leave-chip',
                         `type-${leave.leaveType}`,
+                        leave.isMandatory ? 'is-holiday' : '',
                         showBalances && !leave.isMandatory ? 'has-tip' : '',
                         cancellable || canDelete ? 'chip-cancellable' : '',
                         leave.status && leave.status !== 'approved' ? 'chip-pending' : '',
@@ -413,10 +495,8 @@ export default function LeaveCalendar({
                       }
                     >
                       <span className="leave-chip-main">
-                        {showNames || leave.isMandatory
-                          ? String(leave.userName || 'Mandatory').split(' ')[0]
-                          : shortTypeLabel(leave.leaveType)}
-                        {sessionSuffix(leave.session)}
+                        {chipMainLabel(leave, showNames)}
+                        {!leave.isMandatory && sessionSuffix(leave.session)}
                       </span>
                       {(showNames || leave.isMandatory) && (
                         <span className="leave-chip-sub">{shortTypeLabel(leave.leaveType)}</span>
@@ -549,12 +629,21 @@ export default function LeaveCalendar({
                 <select
                   value={createForm.leaveType}
                   onChange={(e) =>
-                    setCreateForm((f) => ({
-                      ...f,
-                      leaveType: e.target.value,
-                      session: e.target.value === 'restricted' ? 'full' : f.session,
-                      endDate: e.target.value === 'restricted' ? f.startDate : f.endDate,
-                    }))
+                    setCreateForm((f) => {
+                      const leaveType = e.target.value;
+                      const rh =
+                        leaveType === 'restricted'
+                          ? restrictedHolidayOptions.find((h) => toYmd(h.startDate) === toYmd(f.startDate))
+                          : null;
+                      return {
+                        ...f,
+                        leaveType,
+                        session: leaveType === 'restricted' ? 'full' : f.session,
+                        startDate: leaveType === 'restricted' && !rh ? '' : f.startDate,
+                        endDate: leaveType === 'restricted' ? (rh ? toYmd(rh.startDate) : '') : f.endDate,
+                        reason: leaveType === 'restricted' ? rh?.userName || '' : f.reason,
+                      };
+                    })
                   }
                 >
                   {Object.entries(APPLY_LABELS).map(([k, v]) => (
@@ -586,24 +675,68 @@ export default function LeaveCalendar({
               </label>
               )}
               <label>
-                {createForm.leaveType === 'restricted' || createForm.session !== 'full'
-                  ? 'Date'
-                  : 'Start date'}
-                <input
-                  type="date"
-                  value={createForm.startDate}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({
-                      ...f,
-                      startDate: e.target.value,
-                      endDate:
-                        f.leaveType === 'restricted' || f.session !== 'full'
-                          ? e.target.value
-                          : f.endDate || e.target.value,
-                    }))
-                  }
-                  required
-                />
+                {createForm.leaveType === 'restricted'
+                  ? 'Restricted holiday'
+                  : createForm.session !== 'full'
+                    ? 'Date'
+                    : 'Start date'}
+                {createForm.leaveType === 'restricted' ? (
+                  <select
+                    value={createForm.startDate}
+                    onChange={(e) => {
+                      const startDate = e.target.value;
+                      if (startDate && !restrictedHolidayDates.has(startDate)) {
+                        setErrorPopup({
+                          title: 'Cannot apply leave',
+                          message: RH_ONLY_PUBLISHED_DATES,
+                        });
+                        return;
+                      }
+                      const rh = restrictedHolidayOptions.find((h) => toYmd(h.startDate) === startDate);
+                      setCreateForm((f) => ({
+                        ...f,
+                        startDate,
+                        endDate: startDate,
+                        session: 'full',
+                        reason: rh?.userName || f.reason,
+                      }));
+                    }}
+                    required
+                  >
+                    <option value="">Select from the RH list…</option>
+                    {restrictedHolidayOptions.map((h) => (
+                      <option key={h.id} value={toYmd(h.startDate)}>
+                        {holidayDateLabel(h)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="date"
+                    value={createForm.startDate}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      const blocked = blockedRegularLeaveMessage(
+                        value,
+                        createForm.session !== 'full' ? value : createForm.endDate || value,
+                        generalHolidayMap
+                      );
+                      if (blocked) {
+                        setErrorPopup({ title: 'Cannot apply leave', message: blocked });
+                        return;
+                      }
+                      setCreateForm((f) => ({
+                        ...f,
+                        startDate: value,
+                        endDate:
+                          f.session !== 'full'
+                            ? value
+                            : f.endDate || value,
+                      }));
+                    }}
+                    required
+                  />
+                )}
               </label>
               {createForm.leaveType !== 'restricted' && createForm.session === 'full' && (
                 <label>
@@ -611,15 +744,33 @@ export default function LeaveCalendar({
                   <input
                     type="date"
                     value={createForm.endDate}
-                    onChange={(e) => setCreateForm((f) => ({ ...f, endDate: e.target.value }))}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      const blocked = blockedRegularLeaveMessage(
+                        createForm.startDate,
+                        value,
+                        generalHolidayMap
+                      );
+                      if (blocked) {
+                        setErrorPopup({ title: 'Cannot apply leave', message: blocked });
+                        return;
+                      }
+                      setCreateForm((f) => ({ ...f, endDate: value }));
+                    }}
                     required
                   />
                 </label>
               )}
               {createForm.leaveType === 'restricted' && (
                 <p className="muted slim">
-                  Restricted holidays must be a date from the company RH list. Each employee or
-                  manager may take only 2 per year.
+                  Restricted holidays can only be taken on the published RH dates (pink on the
+                  calendar). General holidays are already shown and do not need an application.
+                  Each employee or manager may take only 2 restricted holidays per year.
+                </p>
+              )}
+              {createForm.leaveType === 'restricted' && !restrictedHolidayOptions.length && (
+                <p className="form-error">
+                  No restricted holidays are published yet. Add them under Company holidays first.
                 </p>
               )}
               <label>
@@ -629,7 +780,7 @@ export default function LeaveCalendar({
                   onChange={(e) => setCreateForm((f) => ({ ...f, reason: e.target.value }))}
                 />
               </label>
-              {createErr && <p className="form-error">{createErr}</p>}
+              {createErr && !errorPopup && <p className="form-error">{createErr}</p>}
               <div className="modal-actions">
                 <button type="button" className="btn ghost" onClick={() => setShowCreate(false)}>
                   Cancel

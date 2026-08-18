@@ -25,8 +25,9 @@ import {
   sessionsOverlap,
   eachCalendarDay,
   contiguousRanges,
+  asYmd,
 } from './leaveUtils.js';
-import { parseHolidayType, RESTRICTED_HOLIDAYS_PER_YEAR } from './holidays.js';
+import { parseHolidayType, RESTRICTED_HOLIDAYS_PER_YEAR, RH_ONLY_PUBLISHED_DATES, rhLimitReachedMessage, assertRegularLeaveWindow } from './holidays.js';
 import { notifyLeaveApplied } from './slack.js';
 import { LeaveReviewError, reviewLeaveRequest } from './leaveReview.js';
 import {
@@ -160,21 +161,6 @@ function leaveLabel(type) {
   return `${type} leave`;
 }
 
-async function generalHolidayDatesBetween(startDate, endDate) {
-  const rows = await db
-    .prepare(
-      `SELECT start_date, end_date FROM mandatory_leaves
-       WHERE COALESCE(holiday_type, 'general') = 'general'
-         AND end_date >= ? AND start_date <= ?`
-    )
-    .all(startDate, endDate);
-  const dates = new Set();
-  for (const row of rows) {
-    for (const day of eachCalendarDay(row.start_date, row.end_date)) dates.add(day);
-  }
-  return dates;
-}
-
 async function restrictedUsedDays(userId, year) {
   const row = await db
     .prepare(
@@ -206,17 +192,12 @@ async function assertRestrictedHolidayRequest(userId, startDate, endDate, sessio
   }
   const holiday = await findRestrictedHoliday(startDate);
   if (!holiday) {
-    throw Object.assign(new Error('That date is not a restricted holiday'), { status: 400 });
+    throw Object.assign(new Error(RH_ONLY_PUBLISHED_DATES), { status: 400 });
   }
   const year = Number(startDate.slice(0, 4));
   const used = await restrictedUsedDays(userId, year);
   if (used + 1 > RESTRICTED_HOLIDAYS_PER_YEAR) {
-    throw Object.assign(
-      new Error(
-        `Only ${RESTRICTED_HOLIDAYS_PER_YEAR} restricted holidays can be taken per year (${used} already used in ${year})`
-      ),
-      { status: 400 }
-    );
+    throw Object.assign(new Error(rhLimitReachedMessage(used, year)), { status: 400 });
   }
   return { days: 1, title: holiday.title };
 }
@@ -1419,7 +1400,9 @@ router.delete('/mandatory-leaves/:id', authRequired, hrRequired, async (req, res
 });
 
 router.post('/leaves', authRequired, async (req, res) => {
-  const { leaveType, startDate, endDate, reason, session } = req.body || {};
+  const { leaveType, reason, session } = req.body || {};
+  const startDate = asYmd(req.body?.startDate);
+  const endDate = asYmd(req.body?.endDate);
   const isRestricted = leaveType === 'restricted';
   if (req.user.role === 'hr') {
     return res.status(400).json({ error: 'HR cannot apply for leave from this screen' });
@@ -1433,9 +1416,16 @@ router.post('/leaves', authRequired, async (req, res) => {
 
   const employee = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
 
-  if (!REQUEST_TYPES.includes(leaveType) || !startDate || !endDate) {
+  if (!REQUEST_TYPES.includes(leaveType)) {
     return res.status(400).json({
-      error: 'leaveType (casual/earned/sick/compensation/wfh/restricted), startDate, and endDate are required',
+      error: 'leaveType (casual/earned/sick/compensation/wfh/restricted) is required',
+    });
+  }
+  if (!startDate || !endDate) {
+    return res.status(400).json({
+      error: isRestricted
+        ? 'Select a restricted holiday from the company list. Restricted holidays can only be taken on published RH dates.'
+        : 'Start date and end date are required',
     });
   }
   const leaveSession = isRestricted ? 'full' : SESSIONS.includes(session) ? session : 'full';
@@ -1452,14 +1442,16 @@ router.post('/leaves', authRequired, async (req, res) => {
       );
       days = rh.days;
     } else {
-      const holidays = await generalHolidayDatesBetween(startDate, resolvedEnd);
+      const holidays = await assertRegularLeaveWindow(db, startDate, resolvedEnd);
       days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
     }
   } catch (err) {
     return res.status(err.status || 400).json({ error: err.message });
   }
   if (days <= 0) {
-    return res.status(400).json({ error: 'Request must include at least one working day' });
+    return res.status(400).json({
+      error: 'Leave cannot be applied only on weekends or general holidays. Pick working days.',
+    });
   }
 
   if (isBalanceType(leaveType)) {
@@ -1592,11 +1584,22 @@ router.post('/leaves', authRequired, async (req, res) => {
 
 /** HR: create an approved leave/WFH on behalf of an employee (calendar). */
 router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
-  const { userId, leaveType, startDate, endDate, reason, session } = req.body || {};
+  const { userId, leaveType, reason, session } = req.body || {};
+  const startDate = asYmd(req.body?.startDate);
+  const endDate = asYmd(req.body?.endDate);
   const employeeId = Number(userId);
-  if (!employeeId || !REQUEST_TYPES.includes(leaveType) || !startDate || !endDate) {
+  const isRestrictedAdmin = leaveType === 'restricted';
+  if (!employeeId) {
+    return res.status(400).json({ error: 'Select an employee' });
+  }
+  if (!REQUEST_TYPES.includes(leaveType)) {
+    return res.status(400).json({ error: 'Leave type is required' });
+  }
+  if (!startDate || !endDate) {
     return res.status(400).json({
-      error: 'userId, leaveType, startDate, and endDate are required',
+      error: isRestrictedAdmin
+        ? 'Select a restricted holiday from the company list. Restricted holidays can only be taken on published RH dates.'
+        : 'Start date and end date are required',
     });
   }
 
@@ -1615,14 +1618,16 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
       const rh = await assertRestrictedHolidayRequest(employeeId, startDate, resolvedEnd, leaveSession);
       days = rh.days;
     } else {
-      const holidays = await generalHolidayDatesBetween(startDate, resolvedEnd);
+      const holidays = await assertRegularLeaveWindow(db, startDate, resolvedEnd);
       days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
     }
   } catch (err) {
     return res.status(err.status || 400).json({ error: err.message });
   }
   if (days <= 0) {
-    return res.status(400).json({ error: 'Request must include at least one working day' });
+    return res.status(400).json({
+      error: 'Leave cannot be applied only on weekends or general holidays. Pick working days.',
+    });
   }
 
   if (isBalanceType(leaveType)) {

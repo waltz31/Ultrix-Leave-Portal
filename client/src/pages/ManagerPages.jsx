@@ -6,8 +6,9 @@ import AppShell from '../components/AppShell';
 import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
+import ErrorPopup from '../components/ErrorPopup';
 import { LeaveReportSection, UpcomingLeaveList } from '../components/LeaveReports';
-import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatDate, formatLeaveSpan, isWfh } from '../utils';
+import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, holidayDateLabel, isWfh, RH_ONLY_PUBLISHED_DATES, rhLimitReachedMessage, toYmd } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
@@ -288,6 +289,16 @@ function ManagerRestrictedApply({ onSubmitted }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [errorPopup, setErrorPopup] = useState(null);
+  const rhLimit = holidayData?.restrictedLimit || 2;
+  const rhUsed = holidayData?.restrictedUsed ?? 0;
+  const rhRemaining = rhUsed >= rhLimit;
+  const rhDates = new Set((holidayData?.restricted || []).map((h) => toYmd(h.startDate)));
+
+  function showApplyError(message, title = 'Cannot apply leave') {
+    setErrorPopup({ title, message });
+    setErr(message);
+  }
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -295,12 +306,19 @@ function ManagerRestrictedApply({ onSubmitted }) {
     setMsg('');
     setErr('');
     try {
+      if (rhRemaining) {
+        throw new Error(rhLimitReachedMessage(rhUsed, year, rhLimit));
+      }
+      const ymd = toYmd(startDate);
+      if (!ymd || !rhDates.has(ymd)) {
+        throw new Error(RH_ONLY_PUBLISHED_DATES);
+      }
       await api('/leaves', {
         method: 'POST',
         body: {
           leaveType: 'restricted',
-          startDate,
-          endDate: startDate,
+          startDate: ymd,
+          endDate: ymd,
           session: 'full',
           reason,
         },
@@ -311,7 +329,11 @@ function ManagerRestrictedApply({ onSubmitted }) {
       reloadHolidays();
       onSubmitted?.();
     } catch (error) {
-      setErr(error.message);
+      const message = error.message || 'Could not submit leave';
+      showApplyError(
+        message,
+        /already used/i.test(message) ? 'Restricted holiday limit reached' : 'Cannot apply leave'
+      );
     } finally {
       setBusy(false);
     }
@@ -319,19 +341,46 @@ function ManagerRestrictedApply({ onSubmitted }) {
 
   return (
     <section className="panel mandatory-leave-panel">
+      <ErrorPopup
+        show={Boolean(errorPopup)}
+        title={errorPopup?.title}
+        message={errorPopup?.message}
+        onClose={() => setErrorPopup(null)}
+      />
       <h2>Take a restricted holiday</h2>
       <p className="muted slim">
-        You may take {holidayData?.restrictedLimit || 2} restricted holidays per year from the
-        company list. Used: {holidayData?.restrictedUsed ?? 0}.
+        Restricted holidays can only be taken on the published RH dates below (pink on the calendar).
+        You cannot apply leave on Saturdays, Sundays, or general holidays. You may take {rhLimit}{' '}
+        restricted holidays per year. Used: {rhUsed}.
+        {rhRemaining ? ' You have already used both restricted holidays.' : ''}
       </p>
       <form className="rh-apply-form" onSubmit={onSubmit}>
         <label>
           Restricted holiday
-          <select value={startDate} onChange={(e) => setStartDate(e.target.value)} required>
-            <option value="">Select from the list…</option>
+          <select
+            value={startDate}
+            disabled={rhRemaining}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (rhRemaining) {
+                showApplyError(
+                  rhLimitReachedMessage(rhUsed, year, rhLimit),
+                  'Restricted holiday limit reached'
+                );
+                return;
+              }
+              if (value && !rhDates.has(value)) {
+                showApplyError(RH_ONLY_PUBLISHED_DATES);
+                return;
+              }
+              setStartDate(value);
+            }}
+            required
+          >
+            <option value="">Select a published RH date…</option>
             {(holidayData?.restricted || []).map((h) => (
-              <option key={h.id} value={h.startDate}>
-                {formatDate(h.startDate)} — {h.userName}
+              <option key={h.id} value={toYmd(h.startDate)}>
+                {holidayDateLabel(h)}
               </option>
             ))}
           </select>
@@ -345,13 +394,13 @@ function ManagerRestrictedApply({ onSubmitted }) {
           />
         </label>
         <div className="mandatory-leave-actions">
-          <button className="btn primary" type="submit" disabled={busy || !startDate}>
+          <button className="btn primary" type="submit" disabled={busy || !startDate || rhRemaining}>
             {busy ? 'Submitting…' : 'Submit'}
           </button>
         </div>
       </form>
       {msg && <p className="form-ok">{msg}</p>}
-      {err && <p className="form-error">{err}</p>}
+      {err && !errorPopup && <p className="form-error">{err}</p>}
     </section>
   );
 }
@@ -382,8 +431,9 @@ export function ManagerCalendar() {
   return (
     <AppShell title="Team calendar" nav={NAV}>
       <p className="lede">
-        Approved leave for your team. General holidays are blue, restricted holidays are pink, and
-        Saturdays/Sundays are grey. You can take up to 2 restricted holidays per year.
+        Approved leave for your team. General holidays are blue with the holiday name. Restricted
+        holidays are pink — you can take up to 2 per year, only on those RH dates. Saturdays and
+        Sundays are grey.
       </p>
       <ManagerRestrictedApply onSubmitted={reload} />
       {loading && <p className="muted">Loading…</p>}

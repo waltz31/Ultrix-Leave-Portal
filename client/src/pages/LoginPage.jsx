@@ -36,13 +36,12 @@ export default function LoginPage() {
       <div className="login-content">
         <div className="login-brand">
           <img
-            className="login-logo"
+            className="login-logo login-logo-animated"
             src="/assets/yupnup.svg"
             alt="YupNup"
             width={380}
             height={140}
           />
-          <p className="login-product">Ultrix Leave Portal</p>
         </div>
 
         <div className="login-panel glass">
