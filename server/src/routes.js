@@ -26,8 +26,9 @@ import {
   eachCalendarDay,
   contiguousRanges,
   asYmd,
+  DEFAULT_RESTRICTED_BALANCE,
 } from './leaveUtils.js';
-import { parseHolidayType, RESTRICTED_HOLIDAYS_PER_YEAR, RH_ONLY_PUBLISHED_DATES, rhLimitReachedMessage, assertRegularLeaveWindow } from './holidays.js';
+import { parseHolidayType, RH_ONLY_PUBLISHED_DATES, assertRegularLeaveWindow } from './holidays.js';
 import { notifyLeaveApplied } from './slack.js';
 import { LeaveReviewError, reviewLeaveRequest } from './leaveReview.js';
 import {
@@ -71,17 +72,17 @@ async function getBalance(userId) {
       casual: 0,
       earned: 0,
       sick: 0,
-      compensation: 0,
+      restricted: DEFAULT_RESTRICTED_BALANCE,
     }
   );
 }
 
 async function ensureBalanceRow(userId) {
   await db.prepare(
-    `INSERT INTO leave_balances (user_id, casual, earned, sick, compensation)
-     VALUES (?, 0, 0, 0, 0)
+    `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted)
+     VALUES (?, 0, 0, 0, ?)
      ON CONFLICT(user_id) DO NOTHING`
-  ).run(userId);
+  ).run(userId, DEFAULT_RESTRICTED_BALANCE);
 }
 
 async function getLeaveById(id) {
@@ -155,23 +156,9 @@ function leaveLabel(type) {
   if (type === 'casual') return 'Casual Leave';
   if (type === 'earned') return 'Earned Leave';
   if (type === 'sick') return 'Sick Leave';
-  if (type === 'compensation') return 'Compensation Leave';
-  if (type === 'restricted') return 'Restricted Holiday';
+  if (type === 'restricted') return 'Restricted Leave';
   if (type === 'general') return 'General Holiday';
   return `${type} leave`;
-}
-
-async function restrictedUsedDays(userId, year) {
-  const row = await db
-    .prepare(
-      `SELECT COALESCE(SUM(days), 0) AS days FROM leave_requests
-       WHERE user_id = ?
-         AND leave_type = 'restricted'
-         AND status IN ('pending_manager', 'pending_hr', 'approved')
-         AND start_date >= ? AND start_date <= ?`
-    )
-    .get(userId, `${year}-01-01`, `${year}-12-31`);
-  return Number(row?.days) || 0;
 }
 
 async function findRestrictedHoliday(ymd) {
@@ -186,7 +173,7 @@ async function findRestrictedHoliday(ymd) {
 
 async function assertRestrictedHolidayRequest(userId, startDate, endDate, session) {
   if (session !== 'full' || startDate !== endDate) {
-    throw Object.assign(new Error('Restricted holidays are a single full day from the holiday list'), {
+    throw Object.assign(new Error('Restricted leave is a single full day from the holiday list'), {
       status: 400,
     });
   }
@@ -194,10 +181,16 @@ async function assertRestrictedHolidayRequest(userId, startDate, endDate, sessio
   if (!holiday) {
     throw Object.assign(new Error(RH_ONLY_PUBLISHED_DATES), { status: 400 });
   }
-  const year = Number(startDate.slice(0, 4));
-  const used = await restrictedUsedDays(userId, year);
-  if (used + 1 > RESTRICTED_HOLIDAYS_PER_YEAR) {
-    throw Object.assign(new Error(rhLimitReachedMessage(used, year)), { status: 400 });
+  await ensureBalanceRow(userId);
+  const bal = await getBalance(userId);
+  const available = Number(bal.restricted ?? 0);
+  if (available < 1) {
+    throw Object.assign(
+      new Error(
+        `Insufficient restricted leave balance (${available} available). Each employee starts with ${DEFAULT_RESTRICTED_BALANCE} restricted leaves per year.`
+      ),
+      { status: 400 }
+    );
   }
   return { days: 1, title: holiday.title };
 }
@@ -289,7 +282,7 @@ router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
   if (req.user.role === 'manager') {
     const users = (await db
       .prepare(
-        `SELECT u.*, b.casual, b.earned, b.sick, b.compensation, m.name AS manager_name,
+        `SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
                 m.email AS manager_email,
                 COALESCE((
                   SELECT SUM(lr.days) FROM leave_requests lr
@@ -312,7 +305,7 @@ router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
 
   const users = (await db
     .prepare(
-      `SELECT u.*, b.casual, b.earned, b.sick, b.compensation, m.name AS manager_name,
+      `SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
               m.email AS manager_email,
               COALESCE((
                 SELECT SUM(lr.days) FROM leave_requests lr
@@ -1263,14 +1256,8 @@ router.get('/holidays', authRequired, async (req, res) => {
     )
     .all(`${resolvedYear}-01-01`, `${resolvedYear}-12-31`);
   const holidays = rows.map(mapMandatoryLeave);
-  const used =
-    req.user.role === 'user' || req.user.role === 'manager'
-      ? await restrictedUsedDays(req.user.id, resolvedYear)
-      : 0;
   res.json({
     year: resolvedYear,
-    restrictedLimit: RESTRICTED_HOLIDAYS_PER_YEAR,
-    restrictedUsed: used,
     holidays,
     general: holidays.filter((h) => h.holidayType === 'general'),
     restricted: holidays.filter((h) => h.holidayType === 'restricted'),
@@ -1418,13 +1405,13 @@ router.post('/leaves', authRequired, async (req, res) => {
 
   if (!REQUEST_TYPES.includes(leaveType)) {
     return res.status(400).json({
-      error: 'leaveType (casual/earned/sick/compensation/wfh/restricted) is required',
+      error: 'leaveType (casual/earned/sick/restricted/wfh) is required',
     });
   }
   if (!startDate || !endDate) {
     return res.status(400).json({
       error: isRestricted
-        ? 'Select a restricted holiday from the company list. Restricted holidays can only be taken on published RH dates.'
+        ? 'Select a restricted leave from the company list. Restricted leave can only be taken on published RH dates.'
         : 'Start date and end date are required',
     });
   }
@@ -1598,7 +1585,7 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
   if (!startDate || !endDate) {
     return res.status(400).json({
       error: isRestrictedAdmin
-        ? 'Select a restricted holiday from the company list. Restricted holidays can only be taken on published RH dates.'
+        ? 'Select a restricted leave from the company list. Restricted leave can only be taken on published RH dates.'
         : 'Start date and end date are required',
     });
   }
@@ -2185,7 +2172,7 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     });
   }
 
-  const allTypes = ['casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'];
+  const allTypes = ['casual', 'earned', 'sick', 'restricted', 'wfh'];
   const byType = allTypes.map((type) => {
     const row = byTypeRows.find((r) => r.type === type);
     return { type, days: row ? row.days : 0, count: row ? row.count : 0 };

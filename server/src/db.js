@@ -392,6 +392,92 @@ function createPostgres() {
     }
   }
 
+  async function migrateRestrictedLeaveBalance(client) {
+    await client.query(`
+      ALTER TABLE leave_balances
+      ADD COLUMN IF NOT EXISTS restricted DOUBLE PRECISION
+    `);
+
+    const { rows: balCols } = await client.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'leave_balances'
+        AND column_name IN ('compensation', 'restricted')
+    `);
+    const hasComp = balCols.some((r) => r.column_name === 'compensation');
+
+    if (hasComp) {
+      await client.query(`
+        UPDATE leave_balances
+        SET restricted = CASE
+          WHEN COALESCE(compensation, 0) > 0 THEN compensation
+          WHEN COALESCE(restricted, 0) > 0 THEN restricted
+          ELSE 2
+        END
+      `);
+    } else {
+      await client.query(`
+        UPDATE leave_balances
+        SET restricted = CASE
+          WHEN COALESCE(restricted, 0) > 0 THEN restricted
+          ELSE 2
+        END
+        WHERE restricted IS NULL OR restricted = 0
+      `);
+    }
+
+    await client.query(`
+      UPDATE leave_balances SET restricted = COALESCE(restricted, 2)
+    `);
+    await client.query(`
+      ALTER TABLE leave_balances
+      ALTER COLUMN restricted SET DEFAULT 2
+    `);
+    await client.query(`
+      ALTER TABLE leave_balances
+      ALTER COLUMN restricted SET NOT NULL
+    `);
+    await client.query(`
+      ALTER TABLE leave_balances DROP COLUMN IF EXISTS compensation
+    `);
+
+    await client.query(`
+      UPDATE leave_requests SET leave_type = 'restricted' WHERE leave_type = 'compensation'
+    `);
+    await client.query(`
+      UPDATE balance_credits SET leave_type = 'restricted' WHERE leave_type = 'compensation'
+    `);
+
+    for (const [table, allowed] of [
+      ['leave_requests', "'casual', 'earned', 'sick', 'wfh', 'restricted'"],
+      ['balance_credits', "'casual', 'earned', 'sick', 'restricted'"],
+    ]) {
+      await client.query(`
+        DO $$
+        DECLARE
+          con_name text;
+        BEGIN
+          FOR con_name IN
+            SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            WHERE t.relname = '${table}'
+              AND c.contype = 'c'
+              AND pg_get_constraintdef(c.oid) ILIKE '%leave_type%'
+          LOOP
+            EXECUTE format('ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS %I', con_name);
+          END LOOP;
+          ALTER TABLE ${table}
+            ADD CONSTRAINT ${table}_leave_type_check
+            CHECK (leave_type IN (${allowed}));
+        EXCEPTION
+          WHEN duplicate_object THEN NULL;
+          WHEN undefined_table THEN NULL;
+        END $$;
+      `);
+    }
+  }
+
   async function initSchema() {
     const client = await pool.connect();
     try {
@@ -405,6 +491,7 @@ function createPostgres() {
       await migrateEmployeeProfiles(client);
       await migrateEmployeeAssets(client);
       await migrateCompensationLeave(client);
+      await migrateRestrictedLeaveBalance(client);
       await migrateMandatoryLeaves(client);
       await seedCompanyHolidays(adapter);
       console.log('Connected to Supabase/Postgres');

@@ -7,7 +7,8 @@ import AppShell from '../components/AppShell';
 import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
-import { LeaveExportPanel, LeaveReportSection, UpcomingLeaveList } from '../components/LeaveReports';
+import { LeaveExportPanel, LeaveReportSection } from '../components/LeaveReports';
+import OverviewPanels from '../components/OverviewPanels';
 import EmployeeOnboardingForm, {
   ASSET_CATEGORY_OPTIONS,
   EMPTY_ASSET,
@@ -36,6 +37,7 @@ const NAV = [
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
+  { to: '/hr/reports', label: 'Reports', icon: '/assets/document.png' },
   { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
   { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
@@ -92,20 +94,20 @@ export function HrOverview() {
         </div>
       )}
 
-      <div className="overview-grid">
-        <section className="panel">
-          <h2>Upcoming leave</h2>
-          <UpcomingLeaveList items={report?.upcoming || []} />
-        </section>
-        <section className="panel">
-          <h2>On leave / WFH today</h2>
-          <UpcomingLeaveList
-            items={report?.todayOnLeave || []}
-            emptyText="Nobody on leave or WFH today."
-          />
-        </section>
-      </div>
+      <OverviewPanels
+        todayOnLeave={report?.todayOnLeave || []}
+        teamTitle="Team on leave"
+        calendarTo="/hr/calendar"
+        holidaysTo="/hr/calendar"
+      />
 
+    </AppShell>
+  );
+}
+
+export function HrReports() {
+  return (
+    <AppShell title="Reports" nav={NAV}>
       <LeaveReportSection />
       <LeaveExportPanel />
     </AppShell>
@@ -1433,7 +1435,7 @@ export function HrUsers() {
                   <th className="leave-type-heading">Casual Leave</th>
                   <th className="leave-type-heading">Earned Leave</th>
                   <th className="leave-type-heading">Sick Leave</th>
-                  <th className="leave-type-heading">Compensation</th>
+                  <th className="leave-type-heading">Restricted Leave</th>
                   <th className="leave-type-heading">WFH</th>
                   <th />
                 </tr>
@@ -1458,7 +1460,7 @@ export function HrUsers() {
                     <td>{user.balances.casual}</td>
                     <td>{user.balances.earned}</td>
                     <td>{user.balances.sick}</td>
-                    <td>{user.balances.compensation ?? 0}</td>
+                    <td>{user.balances.restricted ?? 0}</td>
                     <td>{user.wfhDays ?? 0}</td>
                     <td>
                       <div className="row-actions">
@@ -1543,7 +1545,7 @@ export function HrCalendar() {
         balancesByUserId: Object.fromEntries(
           users.map((u) => [
             u.id,
-            u.balances || { casual: 0, earned: 0, sick: 0, compensation: 0 },
+            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2 },
           ])
         ),
       })),

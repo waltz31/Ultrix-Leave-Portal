@@ -24,7 +24,7 @@ const TYPE_COLORS = {
   casual: '#7ec8ff',
   earned: '#64c5c1',
   sick: '#e0b3ff',
-  compensation: '#ff9b7a',
+  restricted: '#e879a8',
   wfh: '#ffd27a',
 };
 
@@ -342,7 +342,7 @@ export function LeaveExportPanel() {
             <option value="casual">Casual Leave</option>
             <option value="earned">Earned Leave</option>
             <option value="sick">Sick Leave</option>
-            <option value="compensation">Compensation Leave</option>
+            <option value="restricted">Restricted Leave</option>
             <option value="wfh">Work from Home</option>
           </select>
         </label>

@@ -46,7 +46,7 @@ export function parseHolidayType(value) {
 
 export function holidayNote(type) {
   return type === 'restricted'
-    ? 'Restricted holiday — employees and managers may take up to 2 per year'
+    ? 'Restricted leave — employees and managers start with 2 per year'
     : 'General holiday';
 }
 

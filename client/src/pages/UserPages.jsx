@@ -6,7 +6,8 @@ import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import ErrorPopup from '../components/ErrorPopup';
-import { LeaveReportCharts, UpcomingLeaveList } from '../components/LeaveReports';
+import OverviewPanels from '../components/OverviewPanels';
+import { LeaveReportCharts } from '../components/LeaveReports';
 import {
   APPLY_LABELS,
   LEAVE_LABELS,
@@ -22,8 +23,8 @@ import {
   blockedRegularLeaveMessage,
   generalHolidayMapFromList,
   isApplyBlockError,
+  insufficientRestrictedBalance,
   RH_ONLY_PUBLISHED_DATES,
-  rhLimitReachedMessage,
 } from '../utils';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
@@ -129,13 +130,20 @@ export function UserHome() {
         </div>
       )}
 
-      <div className="overview-grid">
-        <section className="panel">
-          <h2>Upcoming leave</h2>
-          <UpcomingLeaveList items={report?.upcoming || []} showEmployee={false} />
-        </section>
-        <section className="panel">
-          <h2>Active requests</h2>
+      <OverviewPanels
+        todayOnLeave={report?.todayOnLeave || []}
+        teamTitle="On leave today"
+        calendarTo="/app/calendar"
+        holidaysTo="/app/calendar"
+        canApplyRestricted
+        onRestrictedApplied={() => {
+          reloadLeaves();
+          reloadBalances();
+        }}
+      />
+
+      <section className="panel">
+        <h2>Active requests</h2>
           {!active.length && <p className="empty">No active requests.</p>}
           <div className="stack tight">
             {active.slice(0, 4).map((leave) => (
@@ -162,8 +170,7 @@ export function UserHome() {
               </div>
             ))}
           </div>
-        </section>
-      </div>
+      </section>
 
       {report && (
         <>
@@ -197,9 +204,8 @@ export function UserApply() {
   const wfh = isWfh(form.leaveType);
   const restricted = form.leaveType === 'restricted';
   const halfDay = !restricted && form.session !== 'full';
-  const rhLimit = holidayData?.restrictedLimit || 2;
-  const rhUsed = holidayData?.restrictedUsed ?? 0;
-  const rhRemaining = rhUsed >= rhLimit;
+  const restrictedBalance = balances?.restricted ?? 2;
+  const noRestrictedBalance = restrictedBalance < 1;
   const generalHolidayMap = useMemo(
     () => generalHolidayMapFromList(holidayData?.general || holidayData?.holidays),
     [holidayData]
@@ -249,8 +255,8 @@ export function UserApply() {
         endDate: restricted || halfDay ? toYmd(form.startDate) : toYmd(form.endDate),
       };
       if (restricted) {
-        if (rhRemaining) {
-          throw new Error(rhLimitReachedMessage(rhUsed, appToday().getFullYear(), rhLimit));
+        if (noRestrictedBalance) {
+          throw new Error(insufficientRestrictedBalance(restrictedBalance));
         }
         if (!body.startDate) {
           throw new Error(RH_ONLY_PUBLISHED_DATES);
@@ -265,7 +271,7 @@ export function UserApply() {
       await api('/leaves', { method: 'POST', body });
       setSubmittedPopup({
         message: restricted
-          ? 'Restricted holiday submitted'
+          ? 'Restricted leave submitted'
           : wfh
             ? 'Work from Home submitted'
             : 'Leave submitted',
@@ -290,7 +296,7 @@ export function UserApply() {
       if (isApplyBlockError(message) || restricted) {
         showApplyError(
           message,
-          /already used/i.test(message) ? 'Restricted holiday limit reached' : 'Cannot apply leave'
+          /insufficient restricted leave/i.test(message) ? 'No restricted leave balance' : 'Cannot apply leave'
         );
       } else {
         setErr(message);
@@ -343,10 +349,10 @@ export function UserApply() {
                       aria-checked={form.leaveType === key}
                       className={`apply-type-pill type-${key}${form.leaveType === key ? ' is-selected' : ''}`}
                       onClick={() => {
-                        if (key === 'restricted' && rhRemaining) {
+                        if (key === 'restricted' && noRestrictedBalance) {
                           showApplyError(
-                            rhLimitReachedMessage(rhUsed, appToday().getFullYear(), rhLimit),
-                            'Restricted holiday limit reached'
+                            insufficientRestrictedBalance(restrictedBalance),
+                            'No restricted leave balance'
                           );
                           return;
                         }
@@ -369,15 +375,15 @@ export function UserApply() {
               {restricted ? (
                 <div className="apply-dates">
                   <label className="full">
-                    Restricted holiday
+                    Restricted leave
                     <select
                       value={form.startDate}
                       onChange={(e) => {
                         const value = e.target.value;
-                        if (rhRemaining) {
+                        if (noRestrictedBalance) {
                           showApplyError(
-                            rhLimitReachedMessage(rhUsed, appToday().getFullYear(), rhLimit),
-                            'Restricted holiday limit reached'
+                            insufficientRestrictedBalance(restrictedBalance),
+                            'No restricted leave balance'
                           );
                           return;
                         }
@@ -393,7 +399,7 @@ export function UserApply() {
                         }));
                       }}
                       required
-                      disabled={rhRemaining}
+                      disabled={noRestrictedBalance}
                     >
                       <option value="">Select a published RH date…</option>
                       {(holidayData?.restricted || []).map((h) => (
@@ -407,8 +413,9 @@ export function UserApply() {
                     You can take restricted holidays only on these company RH dates — for example
                     Sankranti/Ponga, Ugadi Festival, Eid-ul-Fitr, Good Friday. General holidays
                     (New Year, Republic Day, Independence Day, and others) already appear on your
-                    calendar. Limit {rhLimit} per year. Used: {rhUsed}.
-                    {rhRemaining ? ' You have already used both restricted holidays.' : ''}
+                    calendar. Balance: {restrictedBalance} restricted leave
+                    {restrictedBalance === 1 ? '' : 's'} remaining.
+                    {noRestrictedBalance ? ' You have no restricted leave balance left.' : ''}
                   </p>
                   {!holidayData?.restricted?.length && (
                     <p className="form-error">
@@ -489,7 +496,7 @@ export function UserApply() {
               <button
                 className="btn primary apply-submit"
                 type="submit"
-                disabled={busy || (restricted && rhRemaining)}
+                disabled={busy || (restricted && noRestrictedBalance)}
               >
                 {busy
                   ? 'Submitting…'
@@ -515,8 +522,8 @@ export function UserApply() {
           )}
           {restricted && (
             <p className="balance-note">
-              Restricted holidays do not use casual/earned/sick balance. You may take only 2 per
-              year, and only on the published RH dates. General holidays are already on the calendar.
+              Restricted leave uses your restricted leave balance (2 per year by default). You can
+              only take it on published RH dates. General holidays are already on the calendar.
             </p>
           )}
           {wfh && (

@@ -34,14 +34,14 @@ db.exec(`
     casual REAL NOT NULL DEFAULT 0,
     earned REAL NOT NULL DEFAULT 0,
     sick REAL NOT NULL DEFAULT 0,
-    compensation REAL NOT NULL DEFAULT 0,
+    restricted REAL NOT NULL DEFAULT 2,
     updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
   );
 
   CREATE TABLE IF NOT EXISTS leave_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted')),
+    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted')),
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     days REAL NOT NULL,
@@ -63,7 +63,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS balance_credits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'compensation')),
+    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted')),
     amount REAL NOT NULL,
     note TEXT,
     credited_by INTEGER NOT NULL REFERENCES users(id),
@@ -92,6 +92,7 @@ migrateEmployeeNumberColumn();
 migrateLeaveRequestsTable();
 migrateLeaveSessionColumn();
 migrateCompensationLeave();
+migrateRestrictedLeaveBalance();
 migrateEmployeeRatingsTable();
 migrateEmployeeRatingsScale();
 migrateEmployeeRatingsUniquePeriod();
@@ -307,6 +308,115 @@ function migrateCompensationLeave() {
       SELECT id, user_id, leave_type, amount, note, credited_by, created_at FROM balance_credits;
       DROP TABLE balance_credits;
       ALTER TABLE balance_credits_comp RENAME TO balance_credits;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+}
+
+function migrateRestrictedLeaveBalance() {
+  const balCols = db.prepare(`PRAGMA table_info(leave_balances)`).all().map((c) => c.name);
+  if (!balCols.includes('restricted')) {
+    db.exec(`ALTER TABLE leave_balances ADD COLUMN restricted REAL NOT NULL DEFAULT 2`);
+    if (balCols.includes('compensation')) {
+      db.exec(`
+        UPDATE leave_balances
+        SET restricted = CASE WHEN compensation > 0 THEN compensation ELSE 2 END
+      `);
+      try {
+        db.exec(`ALTER TABLE leave_balances DROP COLUMN compensation`);
+      } catch {
+        // SQLite without DROP COLUMN support — leave unused compensation column.
+      }
+    }
+  } else if (balCols.includes('compensation')) {
+    db.exec(`
+      UPDATE leave_balances
+      SET restricted = CASE
+        WHEN compensation > 0 THEN compensation
+        WHEN restricted > 0 THEN restricted
+        ELSE 2
+      END
+    `);
+    try {
+      db.exec(`ALTER TABLE leave_balances DROP COLUMN compensation`);
+    } catch {
+      // ignore
+    }
+  }
+
+  db.prepare(
+    `UPDATE leave_requests SET leave_type = 'restricted' WHERE leave_type = 'compensation'`
+  ).run();
+  db.prepare(
+    `UPDATE balance_credits SET leave_type = 'restricted' WHERE leave_type = 'compensation'`
+  ).run();
+
+  const leaveSql = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='leave_requests'`)
+    .get()?.sql;
+  if (leaveSql && leaveSql.includes("'compensation'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE leave_requests_restricted (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted')),
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        days REAL NOT NULL,
+        session TEXT NOT NULL CHECK(session IN ('full', 'morning', 'afternoon')) DEFAULT 'full',
+        reason TEXT,
+        status TEXT NOT NULL CHECK(status IN (
+          'pending_manager', 'pending_hr', 'approved', 'rejected', 'cancelled'
+        )) DEFAULT 'pending_manager',
+        manager_note TEXT,
+        manager_id INTEGER REFERENCES users(id),
+        manager_reviewed_at TEXT,
+        hr_note TEXT,
+        hr_id INTEGER REFERENCES users(id),
+        hr_reviewed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+        updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+      );
+      INSERT INTO leave_requests_restricted (
+        id, user_id, leave_type, start_date, end_date, days, session, reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      )
+      SELECT
+        id, user_id, leave_type, start_date, end_date, days, COALESCE(session, 'full'), reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      FROM leave_requests;
+      DROP TABLE leave_requests;
+      ALTER TABLE leave_requests_restricted RENAME TO leave_requests;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  const creditSql = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='balance_credits'`)
+    .get()?.sql;
+  if (creditSql && creditSql.includes("'compensation'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE balance_credits_restricted (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted')),
+        amount REAL NOT NULL,
+        note TEXT,
+        credited_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+      );
+      INSERT INTO balance_credits_restricted (id, user_id, leave_type, amount, note, credited_by, created_at)
+      SELECT id, user_id, leave_type, amount, note, credited_by, created_at FROM balance_credits;
+      DROP TABLE balance_credits;
+      ALTER TABLE balance_credits_restricted RENAME TO balance_credits;
       COMMIT;
       PRAGMA foreign_keys = ON;
     `);

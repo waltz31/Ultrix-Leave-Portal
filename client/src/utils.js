@@ -2,13 +2,12 @@ export const LEAVE_LABELS = {
   casual: 'Casual Leave',
   earned: 'Earned Leave',
   sick: 'Sick Leave',
-  compensation: 'Compensation Leave',
+  restricted: 'Restricted Leave',
 };
 
 export const APPLY_LABELS = {
   ...LEAVE_LABELS,
   wfh: 'Work from Home',
-  restricted: 'Restricted Holiday',
 };
 
 export const REQUEST_LABELS = {
@@ -111,6 +110,10 @@ export function generalHolidayBlockedMessage(name) {
     : 'Leave cannot be applied on general holidays. This date is already a company holiday.';
 }
 
+export function insufficientRestrictedBalance(available = 0) {
+  return `Insufficient restricted leave balance (${available} available). You start with 2 restricted leaves per year.`;
+}
+
 export function rhLimitReachedMessage(used, year, limit = 2) {
   return `You have already used ${used} restricted holiday${Number(used) === 1 ? '' : 's'} in ${year}. Only ${limit} restricted holidays can be taken per year.`;
 }
@@ -132,7 +135,7 @@ export function blockedRegularLeaveMessage(startDate, endDate, generalHolidayMap
 }
 
 export function isApplyBlockError(message) {
-  return /cannot be applied|restricted holiday|Saturdays or Sundays|already used|published RH/i.test(
+  return /cannot be applied|restricted leave|restricted holiday|Saturdays or Sundays|insufficient|published RH/i.test(
     String(message || '')
   );
 }
@@ -162,6 +165,22 @@ export function formatDate(iso) {
     year: 'numeric',
     timeZone: 'UTC',
   });
+}
+
+/** e.g. "26 Aug Wednesday" for overview holiday rows */
+export function formatOverviewHolidayDate(iso) {
+  const d = parseLeaveDate(iso);
+  if (!d) return '—';
+  const dayMonth = d.toLocaleDateString(APP_LOCALE, {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+  const weekday = d.toLocaleDateString(APP_LOCALE, {
+    weekday: 'long',
+    timeZone: 'UTC',
+  });
+  return `${dayMonth} ${weekday}`;
 }
 
 export function formatDateTime(value) {

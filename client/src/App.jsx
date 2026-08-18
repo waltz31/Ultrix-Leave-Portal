@@ -8,6 +8,7 @@ import {
   HrHistory,
   HrOnboarding,
   HrOverview,
+  HrReports,
   HrUsers,
 } from './pages/HrPages';
 import {
@@ -15,6 +16,7 @@ import {
   ManagerCalendar,
   ManagerHistory,
   ManagerOverview,
+  ManagerReports,
   ManagerSalary,
 } from './pages/ManagerPages';
 import { UserApply, UserCalendar, UserHistory, UserHome, UserSalary } from './pages/UserPages';
@@ -106,6 +108,14 @@ export default function App() {
               </Protected>
             }
           />
+          <Route
+            path="/hr/reports"
+            element={
+              <Protected role="hr">
+                <HrReports />
+              </Protected>
+            }
+          />
 
           <Route
             path="/hr/invoices"
@@ -153,6 +163,14 @@ export default function App() {
             element={
               <Protected role="manager">
                 <ManagerRatings />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/reports"
+            element={
+              <Protected role="manager">
+                <ManagerReports />
               </Protected>
             }
           />

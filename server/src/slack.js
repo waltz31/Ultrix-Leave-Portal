@@ -55,7 +55,7 @@ function typeLabel(leaveType) {
   if (leaveType === 'casual') return 'Casual Leave';
   if (leaveType === 'earned') return 'Earned Leave';
   if (leaveType === 'sick') return 'Sick Leave';
-  if (leaveType === 'compensation') return 'Compensation Leave';
+  if (leaveType === 'restricted') return 'Restricted Leave';
   return leaveType ? `${leaveType} leave` : 'Leave';
 }
 

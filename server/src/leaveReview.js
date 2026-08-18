@@ -6,6 +6,7 @@ import {
   mapLeave,
   LEAVE_SELECT,
   SESSIONS,
+  DEFAULT_RESTRICTED_BALANCE,
 } from './leaveUtils.js';
 import { assertRegularLeaveWindow } from './holidays.js';
 import { SQL_NOW_IST } from './sqlDialect.js';
@@ -36,7 +37,7 @@ function leaveLabel(type) {
   if (type === 'casual') return 'Casual Leave';
   if (type === 'earned') return 'Earned Leave';
   if (type === 'sick') return 'Sick Leave';
-  if (type === 'compensation') return 'Compensation Leave';
+  if (type === 'restricted') return 'Restricted Leave';
   return `${type} leave`;
 }
 
@@ -46,7 +47,7 @@ async function getBalance(userId) {
       casual: 0,
       earned: 0,
       sick: 0,
-      compensation: 0,
+      restricted: DEFAULT_RESTRICTED_BALANCE,
     }
   );
 }
@@ -54,11 +55,11 @@ async function getBalance(userId) {
 async function ensureBalanceRow(userId) {
   await db
     .prepare(
-      `INSERT INTO leave_balances (user_id, casual, earned, sick, compensation)
-       VALUES (?, 0, 0, 0, 0)
+      `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted)
+       VALUES (?, 0, 0, 0, ?)
        ON CONFLICT(user_id) DO NOTHING`
     )
-    .run(userId);
+    .run(userId, DEFAULT_RESTRICTED_BALANCE);
 }
 
 async function getLeaveById(id) {

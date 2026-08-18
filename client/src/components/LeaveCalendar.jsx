@@ -34,7 +34,7 @@ import {
 import ErrorPopup from './ErrorPopup';
 
 function BalanceTooltip({ leave, balances }) {
-  const bal = balances || { casual: 0, earned: 0, sick: 0, compensation: 0 };
+  const bal = balances || { casual: 0, earned: 0, sick: 0, restricted: 2 };
 
   return (
     <div className="cal-tooltip" role="tooltip">
@@ -82,8 +82,7 @@ function shortTypeLabel(type) {
   if (type === 'casual') return 'CL';
   if (type === 'earned') return 'EL';
   if (type === 'sick') return 'SL';
-  if (type === 'compensation') return 'Comp';
-  if (type === 'restricted') return 'RH';
+  if (type === 'restricted') return 'RL';
   if (type === 'general') return 'GH';
   if (type === 'mandatory') return 'GH';
   return REQUEST_LABELS[type] || type;
@@ -289,8 +288,8 @@ export default function LeaveCalendar({
       const message = err.message || 'Could not create leave';
       if (isApplyBlockError(message)) {
         setErrorPopup({
-          title: /already used/i.test(message)
-            ? 'Restricted holiday limit reached'
+          title: /insufficient restricted leave/i.test(message)
+            ? 'No restricted leave balance'
             : 'Cannot apply leave',
           message,
         });
@@ -676,7 +675,7 @@ export default function LeaveCalendar({
               )}
               <label>
                 {createForm.leaveType === 'restricted'
-                  ? 'Restricted holiday'
+                  ? 'Restricted leave'
                   : createForm.session !== 'full'
                     ? 'Date'
                     : 'Start date'}
@@ -763,9 +762,9 @@ export default function LeaveCalendar({
               )}
               {createForm.leaveType === 'restricted' && (
                 <p className="muted slim">
-                  Restricted holidays can only be taken on the published RH dates (pink on the
+                  Restricted leave can only be taken on the published RH dates (pink on the
                   calendar). General holidays are already shown and do not need an application.
-                  Each employee or manager may take only 2 restricted holidays per year.
+                  Each employee starts with 2 restricted leaves per year (deducted from balance on approval).
                 </p>
               )}
               {createForm.leaveType === 'restricted' && !restrictedHolidayOptions.length && (

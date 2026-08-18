@@ -1117,6 +1117,173 @@ textarea:focus {
   margin: 0;
 }
 
+.overview-panel {
+  display: grid;
+  gap: var(--space-sm);
+  align-content: start;
+  min-height: 220px;
+}
+
+.overview-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.overview-panel-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.overview-panel-link {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  text-decoration: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.overview-panel-link:hover {
+  color: #fff;
+  border-color: rgba(100, 197, 193, 0.45);
+}
+
+.overview-empty {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  padding: 12px;
+}
+
+.overview-empty-art {
+  width: min(140px, 70%);
+  height: auto;
+}
+
+.overview-team-list,
+.overview-holiday-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.overview-team-list li,
+.overview-holiday-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.overview-team-list li:last-child,
+.overview-holiday-list li:last-child {
+  border-bottom: none;
+}
+
+.overview-team-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.overview-team-main strong {
+  font-size: 0.98rem;
+}
+
+.overview-team-dates {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.overview-holiday-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.overview-holiday-copy strong {
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.overview-holiday-copy span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
+
+.overview-holiday-apply {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #64c5c1;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.overview-holiday-apply:hover:not(:disabled) {
+  color: #8dd9d6;
+  text-decoration: underline;
+}
+
+.overview-holiday-apply:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.overview-holiday-status {
+  font-size: 0.84rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.overview-holiday-status.is-approved {
+  color: #64c5c1;
+}
+
+.overview-holiday-status.is-pending {
+  color: #ffd27a;
+}
+
+.overview-holiday-status.is-muted {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.shell[data-theme='light'] .overview-panel-link {
+  color: rgba(21, 32, 51, 0.65);
+  border-color: rgba(21, 32, 51, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.shell[data-theme='light'] .overview-holiday-copy span,
+.shell[data-theme='light'] .overview-team-dates {
+  color: rgba(21, 32, 51, 0.62);
+}
+
+.shell[data-theme='light'] .overview-team-list li,
+.shell[data-theme='light'] .overview-holiday-list li {
+  border-bottom-color: rgba(21, 32, 51, 0.1);
+}
+
 .section-title {
   margin: 0 0 var(--space-sm);
   font-size: 1.2rem;
