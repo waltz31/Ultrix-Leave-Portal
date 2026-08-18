@@ -1117,6 +1117,87 @@ textarea:focus {
   margin: 0;
 }
 
+.overview-stack {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.overview-grid-single {
+  grid-template-columns: 1fr;
+}
+
+.overview-holidays-wide {
+  min-height: 0;
+}
+
+.overview-holidays-note {
+  margin: 0 0 4px;
+}
+
+.overview-restricted-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+
+.overview-restricted-balance strong {
+  font-size: 2rem;
+  line-height: 1;
+  background: var(--brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.overview-restricted-balance span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.92rem;
+}
+
+.overview-holiday-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.overview-holiday-table th,
+.overview-holiday-table td {
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  vertical-align: middle;
+}
+
+.overview-holiday-table th {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.72);
+  text-transform: none;
+}
+
+.overview-holiday-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.overview-holiday-row-restricted td:first-child {
+  color: #f4c4d8;
+}
+
+.overview-holiday-action-col {
+  width: 88px;
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.shell[data-theme='light'] .overview-holiday-table th,
+.shell[data-theme='light'] .overview-holiday-table td {
+  border-bottom-color: rgba(21, 32, 51, 0.1);
+}
+
+.shell[data-theme='light'] .overview-restricted-balance span {
+  color: rgba(21, 32, 51, 0.62);
+}
+
 .overview-panel {
   display: grid;
   gap: var(--space-sm);

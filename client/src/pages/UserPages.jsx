@@ -136,6 +136,7 @@ export function UserHome() {
         calendarTo="/app/calendar"
         holidaysTo="/app/calendar"
         canApplyRestricted
+        restrictedBalance={balances?.restricted ?? 2}
         onRestrictedApplied={() => {
           reloadLeaves();
           reloadBalances();

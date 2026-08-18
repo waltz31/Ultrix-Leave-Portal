@@ -167,6 +167,18 @@ export function formatDate(iso) {
   });
 }
 
+/** e.g. "01 Jan 2026" for holiday tables */
+export function formatHolidayTableDate(iso) {
+  const d = parseLeaveDate(iso);
+  if (!d) return '—';
+  return d.toLocaleDateString(APP_LOCALE, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 /** e.g. "26 Aug Wednesday" for overview holiday rows */
 export function formatOverviewHolidayDate(iso) {
   const d = parseLeaveDate(iso);

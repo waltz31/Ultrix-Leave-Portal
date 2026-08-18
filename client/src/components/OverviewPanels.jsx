@@ -5,8 +5,8 @@ import ErrorPopup from './ErrorPopup';
 import {
   REQUEST_LABELS,
   appToday,
+  formatHolidayTableDate,
   formatLeaveSpan,
-  formatOverviewHolidayDate,
   insufficientRestrictedBalance,
   isApplyBlockError,
   toYmd,
@@ -83,7 +83,23 @@ export function TeamOnLeavePanel({ items = [], title = 'Team on leave', calendar
   );
 }
 
-export function UpcomingHolidaysPanel({
+function RestrictedBalancePanel({ balance = 0 }) {
+  return (
+    <section className="panel overview-panel">
+      <h2>Restricted leave</h2>
+      <p className="overview-restricted-balance">
+        <strong>{balance}</strong>
+        <span>days available</span>
+      </p>
+      <p className="muted slim">
+        Apply for restricted holidays from the company list below. Each approval uses 1 day from
+        this balance.
+      </p>
+    </section>
+  );
+}
+
+export function CompanyHolidaysPanel({
   canApplyRestricted = false,
   holidaysTo = null,
   onApplied,
@@ -136,18 +152,19 @@ export function UpcomingHolidaysPanel({
     return map;
   }, [leaves]);
 
-  const upcoming = useMemo(
+  const sortedHolidays = useMemo(
     () =>
-      [...(holidays || [])]
-        .filter((h) => toYmd(h.startDate) >= todayYmd)
-        .sort((a, b) => toYmd(a.startDate).localeCompare(toYmd(b.startDate))),
-    [holidays, todayYmd]
+      [...(holidays || [])].sort((a, b) =>
+        toYmd(a.startDate).localeCompare(toYmd(b.startDate))
+      ),
+    [holidays]
   );
 
   async function applyRestricted(holiday) {
     const ymd = toYmd(holiday.startDate);
     if (!canApplyRestricted || holiday.holidayType !== 'restricted') return;
     if (appliedRhDates.has(ymd)) return;
+    if (ymd < todayYmd) return;
     if (noRestrictedBalance) {
       setErrorPopup({
         title: 'No restricted leave balance',
@@ -187,6 +204,17 @@ export function UpcomingHolidaysPanel({
     const ymd = toYmd(holiday.startDate);
     if (holiday.holidayType !== 'restricted' || !canApplyRestricted) return null;
 
+    if (ymd < todayYmd) {
+      const status = appliedRhDates.get(ymd);
+      if (status === 'approved') {
+        return <span className="overview-holiday-status is-approved">Approved</span>;
+      }
+      if (status === 'pending_manager' || status === 'pending_hr') {
+        return <span className="overview-holiday-status is-pending">Pending</span>;
+      }
+      return <span className="overview-holiday-status is-muted">—</span>;
+    }
+
     const status = appliedRhDates.get(ymd);
     if (status === 'approved') {
       return <span className="overview-holiday-status is-approved">Approved</span>;
@@ -213,35 +241,64 @@ export function UpcomingHolidaysPanel({
   }
 
   return (
-    <section className="panel overview-panel">
+    <section className="panel overview-panel overview-holidays-wide">
       <ErrorPopup
         show={Boolean(errorPopup)}
         title={errorPopup?.title}
         message={errorPopup?.message}
         onClose={() => setErrorPopup(null)}
       />
-      <PanelHead title="Upcoming holidays" to={holidaysTo} />
-      {loading && <p className="muted">Loading holidays…</p>}
-      {!loading && !upcoming.length && (
-        <p className="empty">No upcoming holidays published for this year.</p>
+      <PanelHead title={`Company holidays ${year}`} to={holidaysTo} />
+      {canApplyRestricted && (
+        <p className="muted slim overview-holidays-note">
+          General holidays are fixed on the calendar. Restricted holidays can be applied below —
+          each uses 1 day from your restricted leave balance ({restrictedBalance} remaining).
+        </p>
       )}
-      {!loading && !!upcoming.length && (
-        <ul className="overview-holiday-list">
-          {upcoming.map((holiday) => (
-            <li
-              key={holiday.id || `${holiday.startDate}-${holiday.userName}`}
-              className={
-                holiday.holidayType === 'restricted' ? 'is-restricted' : 'is-general'
-              }
-            >
-              <div className="overview-holiday-copy">
-                <strong>{formatOverviewHolidayDate(holiday.startDate)}</strong>
-                <span>{holiday.userName || holiday.title || 'Holiday'}</span>
-              </div>
-              {actionFor(holiday)}
-            </li>
-          ))}
-        </ul>
+      {loading && <p className="muted">Loading holidays…</p>}
+      {!loading && !sortedHolidays.length && (
+        <p className="empty">No company holidays published for {year} yet.</p>
+      )}
+      {!loading && !!sortedHolidays.length && (
+        <div className="table-wrap">
+          <table className="overview-holiday-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Holiday</th>
+                <th>Holiday Type</th>
+                {canApplyRestricted ? <th className="overview-holiday-action-col">Apply</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {sortedHolidays.map((holiday) => (
+                <tr
+                  key={holiday.id || `${holiday.startDate}-${holiday.userName}`}
+                  className={
+                    holiday.holidayType === 'restricted'
+                      ? 'overview-holiday-row-restricted'
+                      : 'overview-holiday-row-general'
+                  }
+                >
+                  <td>{formatHolidayTableDate(holiday.startDate)}</td>
+                  <td>{holiday.userName || holiday.title || 'Holiday'}</td>
+                  <td>
+                    <span
+                      className={`badge ${
+                        holiday.holidayType === 'restricted' ? 'type-restricted' : 'type-general'
+                      }`}
+                    >
+                      {holiday.holidayType === 'restricted' ? 'Restricted' : 'General'}
+                    </span>
+                  </td>
+                  {canApplyRestricted ? (
+                    <td className="overview-holiday-action-col">{actionFor(holiday)}</td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
@@ -253,15 +310,45 @@ export default function OverviewPanels({
   calendarTo = null,
   holidaysTo = null,
   canApplyRestricted = false,
+  restrictedBalance: restrictedBalanceProp = null,
   onRestrictedApplied,
 }) {
+  const [restrictedBalance, setRestrictedBalance] = useState(restrictedBalanceProp ?? 2);
+
+  useEffect(() => {
+    if (restrictedBalanceProp != null) {
+      setRestrictedBalance(restrictedBalanceProp);
+    }
+  }, [restrictedBalanceProp]);
+
+  useEffect(() => {
+    if (!canApplyRestricted) return;
+    api('/balances/me')
+      .then((d) => setRestrictedBalance(d.balances?.restricted ?? 2))
+      .catch(() => {});
+  }, [canApplyRestricted]);
+
+  function handleApplied() {
+    if (canApplyRestricted) {
+      api('/balances/me')
+        .then((d) => setRestrictedBalance(d.balances?.restricted ?? 2))
+        .catch(() => {});
+    }
+    onRestrictedApplied?.();
+  }
+
   return (
-    <div className="overview-grid">
-      <TeamOnLeavePanel items={todayOnLeave} title={teamTitle} calendarTo={calendarTo} />
-      <UpcomingHolidaysPanel
+    <div className="overview-stack">
+      <div className={`overview-grid${canApplyRestricted ? '' : ' overview-grid-single'}`}>
+        <TeamOnLeavePanel items={todayOnLeave} title={teamTitle} calendarTo={calendarTo} />
+        {canApplyRestricted ? (
+          <RestrictedBalancePanel balance={restrictedBalance} />
+        ) : null}
+      </div>
+      <CompanyHolidaysPanel
         canApplyRestricted={canApplyRestricted}
         holidaysTo={holidaysTo}
-        onApplied={onRestrictedApplied}
+        onApplied={handleApplied}
       />
     </div>
   );
