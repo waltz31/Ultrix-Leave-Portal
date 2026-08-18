@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
-import { format } from 'date-fns';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
@@ -29,6 +28,7 @@ import {
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
 import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh } from '../utils';
+import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
 import * as XLSX from 'xlsx';
 
 const NAV = [
@@ -1614,105 +1614,8 @@ export function HrCalendar() {
     }
   }
 
-  function excelCellToYmd(value) {
-    if (value == null || value === '') return '';
-    if (value instanceof Date && !Number.isNaN(value.getTime())) {
-      return format(value, 'yyyy-MM-dd');
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      const parsed = XLSX.SSF.parse_date_code(value);
-      if (parsed) {
-        return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
-      }
-    }
-    const text = String(value).trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-    const dmy = text.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/);
-    if (dmy) {
-      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
-    }
-    const named = text.match(/^(\d{1,2})\s+([A-Za-z]+)\.?[\s,]+(\d{4})$/);
-    if (named) {
-      const months = {
-        jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
-        may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
-        september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
-      };
-      const month = months[named[2].toLowerCase()];
-      if (month) {
-        return `${named[3]}-${String(month).padStart(2, '0')}-${named[1].padStart(2, '0')}`;
-      }
-    }
-    return text;
-  }
-
-  function cellText(value) {
-    if (value == null) return '';
-    if (value instanceof Date) return format(value, 'yyyy-MM-dd');
-    return String(value).trim();
-  }
-
-  function pickField(row, names) {
-    const entries = Object.entries(row || {});
-    for (const name of names) {
-      const want = name.toLowerCase().replace(/[^a-z0-9]+/g, '');
-      const hit = entries.find(([k]) => String(k).toLowerCase().replace(/[^a-z0-9]+/g, '') === want);
-      if (hit) return hit[1];
-    }
-    return undefined;
-  }
-
-  async function parseMandatoryExcel(file) {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) return [];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
-      defval: '',
-      raw: true,
-    });
-    return rows
-      .map((row) => {
-        const title =
-          cellText(pickField(row, ['holiday', 'title', 'name', 'leave', 'leave title'])) ||
-          'Company holiday';
-        const startRaw = pickField(row, ['date', 'start_date', 'start', 'from']);
-        const endRaw = pickField(row, ['end_date', 'end', 'to']);
-        const startDate = excelCellToYmd(startRaw);
-        const endDate = excelCellToYmd(endRaw) || startDate;
-        const note = cellText(pickField(row, ['note', 'notes', 'reason', 'description']));
-        const typeRaw = cellText(
-          pickField(row, ['holiday type', 'holiday_type', 'type', 'holidayType'])
-        );
-        const holidayType = /restrict|^rh$/i.test(typeRaw.trim()) ? 'restricted' : 'general';
-        return { title, startDate, endDate, note, holidayType };
-      })
-      .filter((r) => r.startDate && !/^slno|serial/i.test(r.title));
-  }
-
   function downloadHolidayTemplate() {
-    const rows = [
-      ['Sl No.', 'Date', 'Holiday', 'Holiday Type'],
-      [1, '01 Jan 2026', 'New Year', 'General'],
-      [2, '15 Jan 2026', 'Sankranti/Ponga', 'Restricted'],
-      [3, '26 Jan 2026', 'Republic Day', 'General'],
-      [4, '04 Mar 2026', 'Holi', 'General'],
-      [5, '19 Mar 2026', 'Ugadi Festival', 'Restricted'],
-      [6, '20 Mar 2026', 'Eid-ul-Fitr', 'Restricted'],
-      [7, '03 Apr 2026', 'Good Friday', 'Restricted'],
-      [8, '14 Apr 2026', 'Tamil New Year', 'Restricted'],
-      [9, '01 May 2026', 'May Day', 'General'],
-      [10, '28 May 2026', 'Bakrid', 'Restricted'],
-      [11, '15 Aug 2026', 'Independence Day', 'General'],
-      [12, '26 Aug 2026', 'Eid e Milad', 'Restricted'],
-      [13, '28 Aug 2026', 'Rakshabandhan', 'Restricted'],
-      [14, '14 Sep 2026', 'Ganesh Chathurthi', 'Restricted'],
-      [15, '02 Oct 2026', 'Gandhi Jayanthi', 'General'],
-      [16, '21 Oct 2026', 'Vijayadasami/Dussehra', 'General'],
-      [17, '10 Nov 2026', 'Balipadyami, Deepavali', 'General'],
-      [18, '24 Nov 2026', 'Guru Nanak Chathurthi', 'Restricted'],
-      [19, '25 Dec 2026', 'Christmas', 'General'],
-    ];
+    const rows = buildHolidayTemplateRows();
     const sheet = XLSX.utils.aoa_to_sheet(rows);
     sheet['!cols'] = [{ wch: 10 }, { wch: 16 }, { wch: 28 }, { wch: 16 }];
     const workbook = XLSX.utils.book_new();
@@ -1728,10 +1631,10 @@ export function HrCalendar() {
     setMandatoryMsg('');
     setErr('');
     try {
-      const leaves = await parseMandatoryExcel(file);
+      const leaves = await parseHolidayFile(file);
       if (!leaves.length) {
         throw new Error(
-          'No valid rows found. Use columns: Sl No., Date, Holiday, Holiday Type (General or Restricted)'
+          'No valid rows found. Upload CSV, XLSX, or Excel (.xls) with columns: Sl No., Date, Holiday, Holiday Type (General or Restricted)'
         );
       }
       const result = await api('/mandatory-leaves/upload', {
@@ -1820,10 +1723,10 @@ export function HrCalendar() {
               Download Excel format
             </button>
             <label className="btn secondary mandatory-upload-btn">
-              {uploadBusy ? 'Uploading…' : 'Upload Excel'}
+              {uploadBusy ? 'Uploading…' : 'Upload CSV / Excel'}
               <input
                 type="file"
-                accept=".xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                accept={HOLIDAY_UPLOAD_ACCEPT}
                 hidden
                 disabled={uploadBusy}
                 onChange={onMandatoryFile}
@@ -1832,8 +1735,9 @@ export function HrCalendar() {
           </div>
         </form>
         <p className="muted slim">
-          Excel columns: <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted).
-          Dates like <code>01 Jan 2026</code> or YYYY-MM-DD.
+          Upload <code>.csv</code>, <code>.xlsx</code>, or <code>.xls</code> with columns{' '}
+          <code>Sl No., Date, Holiday, Holiday Type</code> (General or Restricted). Dates like{' '}
+          <code>01 Jan 2026</code>, <code>01-Jan-2026</code>, or <code>YYYY-MM-DD</code>.
         </p>
         {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
         {!!mandatoryOnCalendar.length && (
