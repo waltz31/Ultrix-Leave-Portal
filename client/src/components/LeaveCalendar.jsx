@@ -7,14 +7,11 @@ import {
   endOfWeek,
   format,
   getMonth,
-  getYear,
   isSameDay,
   isSameMonth,
   isWeekend,
   isWithinInterval,
   parseISO,
-  setMonth,
-  setYear,
   startOfMonth,
   startOfWeek,
   subMonths,
@@ -154,7 +151,6 @@ export default function LeaveCalendar({
   const [createErr, setCreateErr] = useState('');
   const [errorPopup, setErrorPopup] = useState(null);
   const popoverRef = useRef(null);
-  const monthStripRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
   const canDelete = canManage && typeof onDeleteLeave === 'function';
@@ -214,16 +210,6 @@ export default function LeaveCalendar({
   }, [cursor]);
 
   const monthThemeStyle = useMemo(() => monthTheme(cursor), [cursor]);
-
-  const stripMonths = useMemo(() => {
-    const year = getYear(cursor);
-    return Array.from({ length: 12 }, (_, index) => setMonth(setYear(new Date(), year), index));
-  }, [cursor]);
-
-  useEffect(() => {
-    const active = monthStripRef.current?.querySelector('.calendar-month-thumb.is-active');
-    active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-  }, [cursor]);
 
   const selectedLeave = useMemo(
     () => (selected ? filteredLeaves.find((l) => l.id === selected.id) || null : null),
@@ -591,56 +577,6 @@ export default function LeaveCalendar({
             })}
           </div>
         </div>
-      </div>
-
-      <div className="calendar-month-strip-wrap">
-        <button
-          type="button"
-          className="calendar-strip-nav"
-          aria-label="Previous month"
-          onClick={() => setCursor((c) => startOfMonth(subMonths(c, 1)))}
-        >
-          ‹
-        </button>
-        <div className="calendar-month-strip" ref={monthStripRef}>
-          {stripMonths.map((month) => {
-            const theme = monthTheme(month);
-            const active = isSameMonth(month, cursor);
-            return (
-              <button
-                key={format(month, 'yyyy-MM')}
-                type="button"
-                className={`calendar-month-thumb${active ? ' is-active' : ''}`}
-                aria-label={format(month, 'MMMM yyyy')}
-                aria-current={active ? 'true' : undefined}
-                onClick={() => setCursor(startOfMonth(month))}
-              >
-                <div className="calendar-month-thumb-visual">
-                  <img
-                    src={calendarMonthImageUrl(getMonth(month), 'thumb')}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                  />
-                </div>
-                <div
-                  className="calendar-month-thumb-header"
-                  style={{ backgroundColor: theme.header }}
-                >
-                  {format(month, 'MMM').toUpperCase()}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          className="calendar-strip-nav"
-          aria-label="Next month"
-          onClick={() => setCursor((c) => startOfMonth(addMonths(c, 1)))}
-        >
-          ›
-        </button>
       </div>
 
       {selectedLeave && selected && (canCancelLeaves || canDelete) && (
