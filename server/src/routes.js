@@ -36,7 +36,7 @@ import {
   mailCancelled,
 } from './mail.js';
 import { todayIst } from './time.js';
-import { SQL_NOW_IST, SQL_TODAY_IST, isUniqueViolation } from './sqlDialect.js';
+import { SQL_NOW_IST, SQL_TODAY_IST, isPostgres, isUniqueViolation } from './sqlDialect.js';
 import {
   FEED_CATEGORIES,
   MAX_COMMENT_LEN,
@@ -45,7 +45,9 @@ import {
   buildCelebrations,
   countsFromRows,
   emptyCounts,
+  feedSchemaStatements,
   groupReactionRows,
+  isMissingFeedTable,
   normalizeEmoji,
   trendingTagsFromPosts,
 } from './feedUtils.js';
@@ -2835,6 +2837,26 @@ async function toggleFeedReaction({ postId, commentId, userId, emoji }) {
 }
 
 router.get('/feed', authRequired, async (req, res) => {
+  try {
+    await sendFeed(req, res);
+  } catch (err) {
+    if (isMissingFeedTable(err)) {
+      try {
+        for (const sql of feedSchemaStatements(isPostgres)) {
+          await db.exec(sql);
+        }
+        return await sendFeed(req, res);
+      } catch (retryErr) {
+        console.error(retryErr);
+        return res.status(500).json({ error: 'Could not load the feed' });
+      }
+    }
+    console.error(err);
+    return res.status(500).json({ error: 'Could not load the feed' });
+  }
+});
+
+async function sendFeed(req, res) {
   const category = String(req.query.category || 'all').trim();
   const q = String(req.query.q || '').trim().toLowerCase();
   if (category !== 'all' && !FEED_CATEGORIES.includes(category)) {
@@ -2887,7 +2909,7 @@ router.get('/feed', authRequired, async (req, res) => {
     tags: trendingTagsFromPosts(recentForTags),
     celebrations: buildCelebrations(people, todayIst()),
   });
-});
+}
 
 router.post('/feed/posts', authRequired, async (req, res) => {
   const category = String(req.body?.category || 'casual').trim();
@@ -2978,6 +3000,10 @@ router.post('/feed/comments/:id/reactions', authRequired, async (req, res) => {
   });
   if (result.error) return res.status(result.status).json({ error: result.error });
   res.json(result);
+});
+
+router.use((req, res) => {
+  res.status(404).json({ error: `Not found: ${req.method} ${req.path}` });
 });
 
 export default router;

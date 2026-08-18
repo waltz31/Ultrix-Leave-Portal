@@ -11,7 +11,7 @@ const DEFAULT_COLOR_INPUT = '#0b1220';
 
 const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
-  { to: '/app/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
   { to: '/app/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },

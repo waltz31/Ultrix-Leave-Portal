@@ -20,7 +20,7 @@ import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/app', label: 'Home', end: true },
-  { to: '/app/feed', label: 'Feed' },
+  { to: '/feed', label: 'Feed' },
   { to: '/app/apply', label: 'Apply' },
   { to: '/app/calendar', label: 'My calendar' },
   { to: '/app/salary', label: 'Salary' },

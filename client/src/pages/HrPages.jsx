@@ -35,7 +35,7 @@ import * as XLSX from 'xlsx';
 
 const NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },

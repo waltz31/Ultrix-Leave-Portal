@@ -8705,6 +8705,7 @@ body:has(.modal-backdrop) {
   position: relative;
   display: grid;
   gap: 16px;
+  font-size: 1.05rem;
 }
 
 .feed-toast {
@@ -8721,7 +8722,7 @@ body:has(.modal-backdrop) {
   color: var(--shell-popover-fg, #fff);
   border: 1px solid var(--shell-border);
   box-shadow: 0 16px 40px rgba(8, 14, 28, 0.28);
-  font-size: 0.86rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
@@ -8737,6 +8738,7 @@ body:has(.modal-backdrop) {
 .feed-search input,
 .feed-composer textarea,
 .feed-composer select,
+.feed-composer select option,
 .feed-reply input {
   width: 100%;
   background: var(--shell-input-bg);
@@ -8744,6 +8746,13 @@ body:has(.modal-backdrop) {
   border: 1px solid var(--shell-border);
   border-radius: 14px;
   padding: 10px 12px;
+  font-size: 1.05rem;
+}
+
+.feed-composer select,
+.feed-composer select option {
+  font-size: 1.05rem;
+  color-scheme: var(--shell-color-scheme);
 }
 
 .feed-search input::placeholder,
@@ -8798,13 +8807,13 @@ body:has(.modal-backdrop) {
 
 .feed-profile h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.2rem;
 }
 
 .feed-profile > p {
   margin: 4px 0 0;
   color: var(--shell-muted);
-  font-size: 0.82rem;
+  font-size: 0.98rem;
 }
 
 .feed-profile-meta {
@@ -8819,7 +8828,7 @@ body:has(.modal-backdrop) {
 
 .feed-profile-meta span {
   display: block;
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -8829,7 +8838,7 @@ body:has(.modal-backdrop) {
 .feed-profile-meta strong {
   display: block;
   margin-top: 2px;
-  font-size: 0.82rem;
+  font-size: 1rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8838,7 +8847,7 @@ body:has(.modal-backdrop) {
 .feed-channels h4,
 .feed-widget-head h4 {
   margin: 0 0 8px;
-  font-size: 0.7rem;
+  font-size: 0.82rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--shell-muted);
@@ -8856,6 +8865,7 @@ body:has(.modal-backdrop) {
   background: transparent;
   color: var(--shell-fg);
   font-weight: 650;
+  font-size: 1.02rem;
   cursor: pointer;
   text-align: left;
 }
@@ -8868,7 +8878,7 @@ body:has(.modal-backdrop) {
 
 .feed-channel em {
   font-style: normal;
-  font-size: 0.72rem;
+  font-size: 0.88rem;
   font-weight: 800;
   padding: 2px 7px;
   border-radius: 8px;
@@ -8949,7 +8959,7 @@ body:has(.modal-backdrop) {
 .feed-composer-actions label {
   display: grid;
   gap: 4px;
-  font-size: 0.68rem;
+  font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -8957,7 +8967,8 @@ body:has(.modal-backdrop) {
 }
 
 .feed-composer-actions select {
-  min-width: 180px;
+  min-width: 200px;
+  font-size: 1.05rem;
 }
 
 .feed-composer-right {
@@ -8984,21 +8995,21 @@ body:has(.modal-backdrop) {
 .feed-comment-head strong,
 .feed-person strong {
   display: block;
-  font-size: 0.92rem;
+  font-size: 1.05rem;
 }
 
 .feed-post-who span,
 .feed-comment-head span,
 .feed-person span {
   color: var(--shell-muted);
-  font-size: 0.75rem;
+  font-size: 0.9rem;
 }
 
 .feed-badge {
   flex-shrink: 0;
   padding: 3px 8px;
   border-radius: 8px;
-  font-size: 0.68rem;
+  font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -9018,8 +9029,8 @@ body:has(.modal-backdrop) {
 .feed-comment-body p {
   margin: 12px 0 0;
   white-space: pre-wrap;
-  line-height: 1.5;
-  font-size: 0.92rem;
+  line-height: 1.55;
+  font-size: 1.08rem;
 }
 
 .feed-hashtag {
@@ -9061,7 +9072,7 @@ body:has(.modal-backdrop) {
   padding: 6px 10px;
   cursor: pointer;
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: 0.98rem;
 }
 
 .feed-like {
@@ -9072,7 +9083,7 @@ body:has(.modal-backdrop) {
 
 .feed-like.sm,
 .feed-comment-btn {
-  font-size: 0.76rem;
+  font-size: 0.95rem;
 }
 
 .feed-like.is-on {

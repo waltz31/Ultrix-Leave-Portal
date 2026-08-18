@@ -42,6 +42,13 @@ function HomeRedirect() {
   return <Navigate to={homePathForRole(user.role)} replace />;
 }
 
+function FeedScreen() {
+  const { user } = useAuth();
+  if (user?.role === 'hr') return <HrFeed />;
+  if (user?.role === 'manager') return <ManagerFeed />;
+  return <UserFeed />;
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -64,13 +71,16 @@ export default function App() {
           <Route path="/hr/apply" element={<Navigate to="/hr" replace />} />
           <Route path="/hr/salary" element={<Navigate to="/hr" replace />} />
           <Route
-            path="/hr/feed"
+            path="/feed"
             element={
-              <Protected role="hr">
-                <HrFeed />
+              <Protected>
+                <FeedScreen />
               </Protected>
             }
           />
+          <Route path="/hr/feed" element={<Navigate to="/feed" replace />} />
+          <Route path="/manager/feed" element={<Navigate to="/feed" replace />} />
+          <Route path="/app/feed" element={<Navigate to="/feed" replace />} />
           <Route
             path="/hr/approvals"
             element={
@@ -139,14 +149,6 @@ export default function App() {
             }
           />
           <Route
-            path="/manager/feed"
-            element={
-              <Protected role="manager">
-                <ManagerFeed />
-              </Protected>
-            }
-          />
-          <Route
             path="/manager/apply"
             element={
               <Protected role="manager">
@@ -209,14 +211,6 @@ export default function App() {
             element={
               <Protected role="user">
                 <UserHome />
-              </Protected>
-            }
-          />
-          <Route
-            path="/app/feed"
-            element={
-              <Protected role="user">
-                <UserFeed />
               </Protected>
             }
           />

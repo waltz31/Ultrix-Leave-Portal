@@ -266,6 +266,10 @@ export function homePathForRole(role) {
   return '/app';
 }
 
+export function feedPathForRole(_role) {
+  return '/feed';
+}
+
 export function isPendingStatus(status) {
   return status === 'pending_manager' || status === 'pending_hr';
 }

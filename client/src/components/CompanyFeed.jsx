@@ -59,14 +59,16 @@ function HashtagText({ text, onTag }) {
 }
 
 function Avatar({ name, photo, userId, size = 'md' }) {
+  const [broken, setBroken] = useState(false);
   const initials = initialsFromName(name);
   const tone = Number(userId || 0) % 6;
-  if (photo) {
+  if (photo && !broken) {
     return (
       <img
         className={`feed-avatar feed-avatar-${size}`}
         src={avatarSrc(photo)}
         alt=""
+        onError={() => setBroken(true)}
       />
     );
   }

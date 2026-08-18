@@ -15,7 +15,7 @@ import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
   { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
