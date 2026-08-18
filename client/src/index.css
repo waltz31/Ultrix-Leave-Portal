@@ -126,6 +126,16 @@ a {
   justify-items: center;
 }
 
+.login-intro .login-content {
+  min-height: min(100dvh, 100vh);
+  align-content: center;
+  justify-content: center;
+}
+
+.login-ready .login-content {
+  min-height: auto;
+}
+
 .login-brand {
   display: grid;
   gap: 10px;
@@ -140,77 +150,79 @@ a {
   filter: drop-shadow(0 12px 30px rgba(0, 0, 0, 0.4));
   pointer-events: none;
   user-select: none;
-}
-
-.login-logo-flying {
-  position: fixed;
-  z-index: 2;
-  width: min(168px, 30vw);
-  left: 10%;
-  top: 14%;
   transform-origin: center center;
-  animation: login-logo-fly 22s ease-in-out infinite;
-  will-change: left, top, transform;
 }
 
-@keyframes login-logo-fly {
+.login-logo-intro {
+  animation:
+    login-logo-fly-in 5s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+    login-logo-flip 0.8s ease-in-out 5s forwards;
+}
+
+.login-logo-settled {
+  transform: none;
+}
+
+@keyframes login-logo-fly-in {
   0% {
-    left: 8%;
-    top: 10%;
-    transform: rotate(-8deg) scale(0.92);
-    opacity: 0.88;
-  }
-
-  18% {
-    left: 74%;
-    top: 16%;
-    transform: rotate(10deg) scale(1.06);
-    opacity: 1;
-  }
-
-  36% {
-    left: 82%;
-    top: 58%;
-    transform: rotate(-6deg) scale(0.96);
-    opacity: 0.95;
-  }
-
-  54% {
-    left: 52%;
-    top: 78%;
-    transform: rotate(12deg) scale(1.08);
-    opacity: 1;
+    opacity: 0;
+    transform: translate(-95vw, -55vh) scale(0.28) rotate(-22deg);
   }
 
   72% {
-    left: 12%;
-    top: 66%;
-    transform: rotate(-10deg) scale(0.94);
-    opacity: 0.92;
+    opacity: 1;
+    transform: translate(8vw, 4vh) scale(1.1) rotate(6deg);
   }
 
   88% {
-    left: 38%;
-    top: 8%;
-    transform: rotate(7deg) scale(1.02);
-    opacity: 0.98;
+    transform: translate(-2vw, -1vh) scale(0.97) rotate(-2deg);
   }
 
   100% {
-    left: 8%;
-    top: 10%;
-    transform: rotate(-8deg) scale(0.92);
-    opacity: 0.88;
+    opacity: 1;
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+}
+
+@keyframes login-logo-flip {
+  0% {
+    transform: perspective(900px) rotateY(0deg) scale(1);
+  }
+
+  45% {
+    transform: perspective(900px) rotateY(92deg) scale(0.94);
+  }
+
+  100% {
+    transform: perspective(900px) rotateY(0deg) scale(1);
+  }
+}
+
+.login-panel-reveal {
+  animation: login-panel-reveal 0.55s ease forwards;
+}
+
+@keyframes login-panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .login-logo-flying {
+  .login-logo-intro {
     animation: none;
-    left: 50%;
-    top: 18%;
-    transform: translateX(-50%);
     opacity: 1;
+    transform: none;
+  }
+
+  .login-panel-reveal {
+    animation: none;
   }
 }
 
@@ -4484,8 +4496,8 @@ th.leave-type-heading {
     padding: 20px 16px;
   }
 
-  .login-logo-flying {
-    width: min(132px, 36vw);
+  .login-logo {
+    width: min(240px, 72vw);
   }
 
   .login-form {
