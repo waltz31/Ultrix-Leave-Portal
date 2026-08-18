@@ -718,7 +718,11 @@ textarea:focus {
 .shell .notif-item,
 .shell .overview-holiday-date,
 .shell .overview-holiday-name,
-.shell .overview-panel-link:hover {
+.shell .overview-panel-link:hover,
+.shell .page-header h1,
+.shell .welcome-title,
+.shell .welcome-label,
+.shell .welcome-name {
   color: var(--shell-strong);
 }
 
@@ -959,12 +963,8 @@ textarea:focus {
   font-size: clamp(1.55rem, 2.6vw, 2rem);
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: var(--brand-grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--shell-strong, var(--ink));
   text-shadow: none;
-  filter: drop-shadow(0 2px 12px rgba(0, 0, 0, 0.25));
   line-height: 1.2;
 }
 
@@ -973,11 +973,7 @@ textarea:focus {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  background: none !important;
-  -webkit-background-clip: unset !important;
-  background-clip: unset !important;
-  color: inherit !important;
-  filter: none !important;
+  color: var(--shell-strong, var(--ink));
 }
 
 .welcome-icon {
@@ -989,16 +985,13 @@ textarea:focus {
 }
 
 .welcome-label {
-  color: var(--welcome-label);
+  color: var(--shell-strong, var(--welcome-label));
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .welcome-name {
-  background: var(--brand-grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--shell-strong, var(--ink));
   font-weight: 800;
 }
 
@@ -5375,8 +5368,10 @@ body:has(.modal-backdrop) {
   border-color: var(--shell-border);
 }
 
-.shell[data-theme='light'] .page-header h1:not(.welcome-title) {
-  filter: none;
+.shell[data-theme='light'] .page-header h1,
+.shell[data-theme='light'] .welcome-label,
+.shell[data-theme='light'] .welcome-name {
+  color: var(--shell-strong);
 }
 
 @media (max-width: 960px) {
