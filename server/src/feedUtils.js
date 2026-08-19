@@ -1,10 +1,11 @@
-export const FEED_CATEGORIES = ['celebration', 'milestone', 'announcement', 'casual'];
+export const FEED_CATEGORIES = ['celebration', 'milestone', 'announcement', 'casual', 'poll'];
 
 export const FEED_CATEGORY_META = {
   celebration: { label: 'Celebrations', badge: 'Celebration 🎂', emoji: '🎂' },
   milestone: { label: 'Milestones', badge: 'Milestone 🎖️', emoji: '🎖️' },
   announcement: { label: 'Announcements', badge: 'Announcement 📣', emoji: '📣' },
   casual: { label: 'Casual Coffee Chat', badge: 'Casual Chat ☕', emoji: '☕' },
+  poll: { label: 'Polls', badge: 'Poll 📊', emoji: '📊' },
 };
 
 export const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯', '😊', '🥳', '😎', '🙌', '💪', '🌟', '🚀'];
@@ -12,6 +13,9 @@ export const LIKE_EMOJI = '❤️';
 export const MAX_POST_LEN = 2000;
 export const MAX_COMMENT_LEN = 800;
 export const MAX_FEED_IMAGE_CHARS = 2_000_000;
+export const MIN_POLL_OPTIONS = 2;
+export const MAX_POLL_OPTIONS = 6;
+export const MAX_POLL_OPTION_LEN = 80;
 export const HASHTAG_RE = /#[A-Za-z0-9_]{2,40}/g;
 export const EMOJI_FAMILY_URL = 'https://www.emoji.family/api/emojis';
 
@@ -98,6 +102,68 @@ export function normalizeFeedImage(value) {
     throw err;
   }
   return text;
+}
+
+export function normalizePollOptions(raw) {
+  if (raw == null) return null;
+  if (!Array.isArray(raw)) {
+    const err = new Error('Poll options must be a list');
+    err.status = 400;
+    throw err;
+  }
+  const seen = new Set();
+  const options = [];
+  for (const item of raw) {
+    const label = String(item || '')
+      .trim()
+      .replace(/\s+/g, ' ');
+    if (!label) continue;
+    if (label.length > MAX_POLL_OPTION_LEN) {
+      const err = new Error(`Poll options can be at most ${MAX_POLL_OPTION_LEN} characters`);
+      err.status = 400;
+      throw err;
+    }
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(label);
+  }
+  if (!options.length) return null;
+  if (options.length < MIN_POLL_OPTIONS) {
+    const err = new Error('Add at least two poll options');
+    err.status = 400;
+    throw err;
+  }
+  if (options.length > MAX_POLL_OPTIONS) {
+    const err = new Error(`Polls can have at most ${MAX_POLL_OPTIONS} options`);
+    err.status = 400;
+    throw err;
+  }
+  return options;
+}
+
+export function buildPollPayload(poll, options, votes, userId) {
+  if (!poll) return null;
+  const counts = new Map();
+  let myOptionId = null;
+  let total = 0;
+  for (const vote of votes || []) {
+    counts.set(vote.option_id, (counts.get(vote.option_id) || 0) + 1);
+    total += 1;
+    if (Number(vote.user_id) === Number(userId)) myOptionId = vote.option_id;
+  }
+  return {
+    id: poll.id,
+    total,
+    voted: myOptionId != null,
+    myOptionId,
+    options: (options || []).map((option) => ({
+      id: option.id,
+      label: option.label,
+      votes: counts.get(option.id) || 0,
+      mine: myOptionId === option.id,
+    })),
+  };
 }
 
 function nextMonthDay(ymd, todayYmd) {
@@ -237,6 +303,7 @@ export function assembleFeed(postRows, commentRows, postReactionMap, commentReac
       image: row.image_data || null,
       createdAt: row.created_at,
       comments: commentsByPost.get(row.id) || [],
+      poll: null,
       ...mapPerson(row),
       ...withLikeStats(reactions),
     };
@@ -250,6 +317,7 @@ export function emptyCounts() {
     milestone: 0,
     announcement: 0,
     casual: 0,
+    poll: 0,
   };
 }
 
@@ -287,7 +355,7 @@ export function feedSchemaStatements(postgres) {
     `CREATE TABLE IF NOT EXISTS feed_posts (
       ${idCol},
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
+      category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual', 'poll')),
       content TEXT NOT NULL,
       image_data TEXT,
       created_at TEXT NOT NULL DEFAULT (${ts})
@@ -318,6 +386,26 @@ export function feedSchemaStatements(postgres) {
       ON feed_reactions(post_id, user_id, emoji) WHERE post_id IS NOT NULL`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_reactions_comment
       ON feed_reactions(comment_id, user_id, emoji) WHERE comment_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS feed_polls (
+      ${idCol},
+      post_id INTEGER NOT NULL UNIQUE REFERENCES feed_posts(id) ON DELETE CASCADE
+    )`,
+    `CREATE TABLE IF NOT EXISTS feed_poll_options (
+      ${idCol},
+      poll_id INTEGER NOT NULL REFERENCES feed_polls(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_feed_poll_options_poll ON feed_poll_options(poll_id)`,
+    `CREATE TABLE IF NOT EXISTS feed_poll_votes (
+      ${idCol},
+      poll_id INTEGER NOT NULL REFERENCES feed_polls(id) ON DELETE CASCADE,
+      option_id INTEGER NOT NULL REFERENCES feed_poll_options(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (${ts})
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_poll_votes_user ON feed_poll_votes(poll_id, user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_feed_poll_votes_option ON feed_poll_votes(option_id)`,
   ];
 }
 
@@ -328,7 +416,7 @@ export function isMissingFeedTable(err) {
     err?.code === '42703' ||
     /no such table/i.test(msg) ||
     /no such column/i.test(msg) ||
-    (/feed_(posts|comments|reactions)/i.test(msg) && /does not exist|undefined/i.test(msg))
+    (/feed_(posts|comments|reactions|polls|poll_options|poll_votes)/i.test(msg) && /does not exist|undefined/i.test(msg))
   );
 }
 

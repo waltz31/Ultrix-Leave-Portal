@@ -809,7 +809,7 @@ function migrateFeedTables() {
     CREATE TABLE IF NOT EXISTS feed_posts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
+      category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual', 'poll')),
       content TEXT NOT NULL,
       image_data TEXT,
       created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
@@ -842,10 +842,52 @@ function migrateFeedTables() {
       ON feed_reactions(post_id, user_id, emoji) WHERE post_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_reactions_comment
       ON feed_reactions(comment_id, user_id, emoji) WHERE comment_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS feed_polls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL UNIQUE REFERENCES feed_posts(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS feed_poll_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      poll_id INTEGER NOT NULL REFERENCES feed_polls(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_feed_poll_options_poll ON feed_poll_options(poll_id);
+    CREATE TABLE IF NOT EXISTS feed_poll_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      poll_id INTEGER NOT NULL REFERENCES feed_polls(id) ON DELETE CASCADE,
+      option_id INTEGER NOT NULL REFERENCES feed_poll_options(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_poll_votes_user ON feed_poll_votes(poll_id, user_id);
+    CREATE INDEX IF NOT EXISTS idx_feed_poll_votes_option ON feed_poll_votes(option_id);
   `);
   const cols = db.prepare(`PRAGMA table_info(feed_posts)`).all();
   if (!cols.some((col) => col.name === 'image_data')) {
     db.exec(`ALTER TABLE feed_posts ADD COLUMN image_data TEXT`);
+  }
+  const sql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='feed_posts'`).get()?.sql || '';
+  if (sql && !sql.includes("'poll'")) {
+    db.exec(`PRAGMA foreign_keys = OFF`);
+    db.exec(`
+      CREATE TABLE feed_posts_cat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual', 'poll')),
+        content TEXT NOT NULL,
+        image_data TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO feed_posts_cat (id, user_id, category, content, image_data, created_at)
+        SELECT id, user_id, category, content, image_data, created_at FROM feed_posts;
+      DROP TABLE feed_posts;
+      ALTER TABLE feed_posts_cat RENAME TO feed_posts;
+      CREATE INDEX IF NOT EXISTS idx_feed_posts_created ON feed_posts(created_at);
+      CREATE INDEX IF NOT EXISTS idx_feed_posts_category ON feed_posts(category);
+    `);
+    db.exec(`PRAGMA foreign_keys = ON`);
   }
 }
 

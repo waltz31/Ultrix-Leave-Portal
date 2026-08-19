@@ -16,6 +16,7 @@ const CHANNELS = [
   { key: 'milestone', label: 'Milestones 🎖️', emoji: '🎖️' },
   { key: 'announcement', label: 'Announcements 📣', emoji: '📣' },
   { key: 'casual', label: 'Casual Coffee Chat ☕', emoji: '☕' },
+  { key: 'poll', label: 'Polls 📊', emoji: '📊' },
 ];
 
 const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯', '😊', '🥳', '😎', '🙌', '💪', '🌟', '🚀'];
@@ -141,11 +142,12 @@ function Avatar({ name, photo, userId, size = 'md' }) {
   const [broken, setBroken] = useState(false);
   const initials = initialsFromName(name);
   const tone = Number(userId || 0) % 6;
-  if (photo && !broken) {
+  const src = avatarSrc(photo);
+  if (!broken) {
     return (
       <img
-        className={`feed-avatar feed-avatar-${size}`}
-        src={avatarSrc(photo)}
+        className={`feed-avatar feed-avatar-${size}${photo ? '' : ' is-default-avatar'}`}
+        src={src}
         alt=""
         onError={() => setBroken(true)}
       />
@@ -324,6 +326,68 @@ function EmojiPicker({ onPick, label = 'Add emoji' }) {
   );
 }
 
+const POLL_BAR_COLORS = [
+  { fill: 'linear-gradient(90deg, #2563eb, #60a5fa)', glow: 'rgba(37, 99, 235, 0.38)' },
+  { fill: 'linear-gradient(90deg, #ef4444, #fb7185)', glow: 'rgba(239, 68, 68, 0.36)' },
+  { fill: 'linear-gradient(90deg, #16a34a, #4ade80)', glow: 'rgba(22, 163, 74, 0.36)' },
+  { fill: 'linear-gradient(90deg, #7c3aed, #c084fc)', glow: 'rgba(124, 58, 237, 0.36)' },
+  { fill: 'linear-gradient(90deg, #d97706, #fbbf24)', glow: 'rgba(217, 119, 6, 0.36)' },
+  { fill: 'linear-gradient(90deg, #0891b2, #22d3ee)', glow: 'rgba(8, 145, 178, 0.36)' },
+];
+
+function PollCard({ post, busy, onVote }) {
+  const poll = post.poll;
+  const total = poll?.total || 0;
+  const voted = Boolean(poll?.voted);
+  if (!poll?.options?.length) return null;
+  return (
+    <div className="feed-poll-card">
+      <div className="feed-poll-card-head">
+        <h3>{post.content || 'Team poll'}</h3>
+        <p>Asked by {post.author}</p>
+      </div>
+      <div className="feed-poll">
+        {poll.options.map((option, index) => {
+          const pct = total ? Math.round((option.votes / total) * 100) : 0;
+          const color = POLL_BAR_COLORS[index % POLL_BAR_COLORS.length];
+          const scale = pct > 0 ? Math.max(pct / 100, 0.08) : 0;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className={`feed-poll-track${option.mine ? ' is-mine' : ''}${voted ? ' has-results' : ''}${voted && pct >= 28 ? ' is-filled' : ''}${voted && pct >= 62 ? ' is-wide' : ''}`}
+              style={{
+                '--poll-fill': color.fill,
+                '--poll-glow': color.glow,
+                '--poll-scale': scale,
+                '--poll-delay': `${80 + index * 90}ms`,
+              }}
+              disabled={busy}
+              aria-pressed={option.mine}
+              onClick={() => onVote(post.id, option.id)}
+            >
+              {voted && pct > 0 && (
+                <span className="feed-poll-fill" key={`${option.id}-${pct}-${option.mine ? 1 : 0}`} />
+              )}
+              {option.mine && (
+                <span className="feed-poll-check" aria-hidden="true">
+                  ✓
+                </span>
+              )}
+              <span className="feed-poll-label">{option.label}</span>
+              {voted && <span className="feed-poll-pct">{pct}%</span>}
+            </button>
+          );
+        })}
+      </div>
+      <p className="feed-poll-meta">
+        {total} {total === 1 ? 'vote' : 'votes'}
+        {voted ? ' · tap a choice to change or clear' : ' · tap a choice to vote'}
+      </p>
+    </div>
+  );
+}
+
 function ReactionBar({ reactions, onToggle, busy }) {
   const extras = (reactions || []).filter((r) => r.emoji !== LIKE_EMOJI && r.count > 0);
   return (
@@ -351,7 +415,7 @@ export default function CompanyFeed() {
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [posts, setPosts] = useState([]);
-  const [counts, setCounts] = useState({ all: 0, celebration: 0, milestone: 0, announcement: 0, casual: 0 });
+  const [counts, setCounts] = useState({ all: 0, celebration: 0, milestone: 0, announcement: 0, casual: 0, poll: 0 });
   const [tags, setTags] = useState([]);
   const [celebrations, setCelebrations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -360,6 +424,7 @@ export default function CompanyFeed() {
   const [composer, setComposer] = useState('');
   const [composerType, setComposerType] = useState('casual');
   const [composerImage, setComposerImage] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
   const [imageBusy, setImageBusy] = useState(false);
   const [lightbox, setLightbox] = useState('');
   const [posting, setPosting] = useState(false);
@@ -402,7 +467,7 @@ export default function CompanyFeed() {
       const qs = params.toString();
       const data = await api(`/feed${qs ? `?${qs}` : ''}`);
       setPosts(data.posts || []);
-      setCounts(data.counts || { all: 0, celebration: 0, milestone: 0, announcement: 0, casual: 0 });
+      setCounts(data.counts || { all: 0, celebration: 0, milestone: 0, announcement: 0, casual: 0, poll: 0 });
       setTags(data.tags?.length ? data.tags : FALLBACK_TAGS.map((tag) => ({ tag, count: 0 })));
       setCelebrations(data.celebrations || []);
     } catch (err) {
@@ -437,8 +502,20 @@ export default function CompanyFeed() {
   }
 
   async function handleShare() {
-    if (!composer.trim() && !composerImage) {
-      showToast('Write something or attach an image before sharing.');
+    const wantsPoll = composerType === 'poll';
+    const cleanedPoll = wantsPoll
+      ? pollOptions.map((opt) => opt.trim()).filter(Boolean)
+      : [];
+    if (wantsPoll && cleanedPoll.length < 2) {
+      showToast('Add at least two poll options.');
+      return;
+    }
+    if (!composer.trim() && !composerImage && cleanedPoll.length < 2) {
+      showToast('Write something, attach an image, or add a poll before sharing.');
+      return;
+    }
+    if (wantsPoll && !composer.trim()) {
+      showToast('Add a question for the poll.');
       return;
     }
     setPosting(true);
@@ -450,10 +527,12 @@ export default function CompanyFeed() {
           category: composerType,
           content: composer.trim(),
           image: composerImage || null,
+          poll: cleanedPoll.length >= 2 ? { options: cleanedPoll } : null,
         },
       });
       setComposer('');
       setComposerImage('');
+      setPollOptions(['', '']);
       setExpanded((prev) => new Set(prev).add(data.post.id));
       if (category === 'all' || category === composerType) {
         setPosts((list) => [data.post, ...list.filter((p) => p.id !== data.post.id)]);
@@ -463,11 +542,27 @@ export default function CompanyFeed() {
         all: (prev.all || 0) + 1,
         [composerType]: (prev[composerType] || 0) + 1,
       }));
-      showToast('Post shared with the team.');
+      showToast(cleanedPoll.length >= 2 ? 'Poll shared with the team.' : 'Post shared with the team.');
     } catch (err) {
       setError(err.message);
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function votePoll(postId, optionId) {
+    const key = `poll-${postId}`;
+    setBusyKey(key);
+    try {
+      const data = await api(`/feed/posts/${postId}/poll/votes`, {
+        method: 'POST',
+        body: { optionId },
+      });
+      if (data.post) patchPost(postId, data.post);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyKey('');
     }
   }
 
@@ -649,7 +744,11 @@ export default function CompanyFeed() {
                 rows={3}
                 value={composer}
                 onChange={(e) => setComposer(e.target.value)}
-                placeholder="Share a celebration wish, team kudos, or announcement…"
+                placeholder={
+                  composerType === 'poll'
+                    ? 'Ask a question for the team…'
+                    : 'Share a celebration wish, team kudos, or announcement…'
+                }
               />
             </div>
             {composerImage && (
@@ -664,14 +763,56 @@ export default function CompanyFeed() {
                 </button>
               </div>
             )}
+            {composerType === 'poll' && (
+              <div className="feed-poll-editor">
+                {pollOptions.map((option, index) => (
+                  <div key={index} className="feed-poll-editor-row">
+                    <input
+                      value={option}
+                      maxLength={80}
+                      placeholder={`Option ${index + 1}`}
+                      onChange={(e) =>
+                        setPollOptions((list) => list.map((item, i) => (i === index ? e.target.value : item)))
+                      }
+                    />
+                    {pollOptions.length > 2 && (
+                      <button
+                        type="button"
+                        className="feed-poll-remove"
+                        onClick={() => setPollOptions((list) => list.filter((_, i) => i !== index))}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {pollOptions.length < 6 && (
+                  <button
+                    type="button"
+                    className="feed-poll-add"
+                    onClick={() => setPollOptions((list) => [...list, ''])}
+                  >
+                    + Add option
+                  </button>
+                )}
+              </div>
+            )}
             <div className="feed-composer-actions">
               <label>
                 Channel
-                <select value={composerType} onChange={(e) => setComposerType(e.target.value)}>
+                <select
+                  value={composerType}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setComposerType(value);
+                    if (value !== 'poll') setPollOptions(['', '']);
+                  }}
+                >
                   <option value="celebration">Celebration 🎂</option>
                   <option value="milestone">Milestone 🎖️</option>
                   <option value="announcement">Announcement 📣</option>
                   <option value="casual">Casual Chat ☕</option>
+                  <option value="poll">Poll 📊</option>
                 </select>
               </label>
               <div className="feed-composer-right">
@@ -726,7 +867,13 @@ export default function CompanyFeed() {
                   </div>
                   <span className={`feed-badge ${post.category}`}>{post.badgeText}</span>
                 </header>
-                {post.content ? (
+                {post.poll?.options?.length ? (
+                  <PollCard
+                    post={post}
+                    busy={busyKey === `poll-${post.id}`}
+                    onVote={votePoll}
+                  />
+                ) : post.content ? (
                   <p className="feed-post-body">
                     <HashtagText text={post.content} onTag={applyTag} />
                   </p>

@@ -43,6 +43,7 @@ import {
   MAX_POST_LEN,
   assembleFeed,
   buildCelebrations,
+  buildPollPayload,
   compactEmojiCatalog,
   countsFromRows,
   emptyCounts,
@@ -54,6 +55,7 @@ import {
   EMOJI_FAMILY_URL,
   normalizeEmoji,
   normalizeFeedImage,
+  normalizePollOptions,
   trendingTagsFromPosts,
 } from './feedUtils.js';
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
@@ -527,26 +529,60 @@ async function ensureEmployeeProfile(userId) {
   return result.lastInsertRowid;
 }
 
+const PROFILE_LIST_SELECT = `
+  SELECT ep.id AS profile_id, ep.user_id,
+         ep.date_of_birth, ep.gender, ep.personal_email, ep.personal_mobile,
+         ep.address, ep.emergency_contact, ep.nationality, ep.marital_status,
+         ep.date_of_joining, ep.employment_type, ep.department, ep.designation,
+         ep.job_level, ep.location, ep.work_mode, ep.employment_status,
+         ep.probation_period, ep.confirmation_date, ep.employee_category,
+         CASE WHEN ep.profile_photo IS NOT NULL AND ep.profile_photo <> '' THEN 1 ELSE 0 END AS has_photo,
+         u.id AS user_id, u.name, u.email, u.role, u.manager_id, u.employee_number,
+         u.active, u.created_at AS user_created_at,
+         m.name AS manager_name, m.email AS manager_email
+  FROM employee_profiles ep
+  JOIN users u ON u.id = ep.user_id
+  LEFT JOIN users m ON m.id = u.manager_id
+`;
+
 async function ensureManagerProfiles() {
-  const managers = await db
-    .prepare(`SELECT id FROM users WHERE role IN ('manager', 'hr')`)
-    .all();
-  for (const mgr of managers) {
-    await ensureEmployeeProfile(mgr.id);
-  }
+  await db
+    .prepare(
+      `INSERT INTO employee_profiles (user_id, employment_status)
+       SELECT u.id, 'active'
+       FROM users u
+       WHERE u.role IN ('manager', 'hr')
+         AND NOT EXISTS (SELECT 1 FROM employee_profiles ep WHERE ep.user_id = u.id)`
+    )
+    .run();
 }
 
 router.get('/onboarding', authRequired, hrRequired, async (_req, res) => {
   await ensureManagerProfiles();
   const rows = await db
     .prepare(
-      `${PROFILE_SELECT} WHERE u.role IN ('user', 'manager', 'hr') ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
+      `${PROFILE_LIST_SELECT} WHERE u.role IN ('user', 'manager', 'hr') ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
     )
     .all();
-  const assetsByUser = await loadAssetsByUserIds(rows.map((r) => r.user_id));
   res.json({
-    profiles: rows.map((row) => mapProfileWithAssets(row, assetsByUser)),
+    profiles: rows.map((row) =>
+      mapEmployeeProfile(row, { includeSensitive: false, includeIt: false, includePhoto: false })
+    ),
   });
+});
+
+router.post('/onboarding/photos', authRequired, hrRequired, async (req, res) => {
+  const ids = [...new Set((req.body?.userIds || []).map(Number).filter(Boolean))].slice(0, 24);
+  if (!ids.length) return res.json({ photos: {} });
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db
+    .prepare(`SELECT user_id, profile_photo FROM employee_profiles WHERE user_id IN (${placeholders})`)
+    .all(...ids);
+  const photos = {};
+  for (const row of rows) {
+    if (row.profile_photo) photos[row.user_id] = row.profile_photo;
+  }
+  res.json({ photos });
 });
 
 router.get('/onboarding/:userId', authRequired, hrRequired, async (req, res) => {
@@ -1539,11 +1575,14 @@ router.post('/leaves', authRequired, async (req, res) => {
   const startDate = asYmd(req.body?.startDate);
   const endDate = asYmd(req.body?.endDate);
   const isRestricted = leaveType === 'restricted';
+  if (req.user.role === 'hr') {
+    return res.status(400).json({ error: 'HR cannot apply leave for themselves. Add leave for an employee from Team calendar.' });
+  }
   if (req.user.role === 'manager' && !isRestricted) {
     return res.status(400).json({ error: 'Managers can apply only for restricted holidays' });
   }
-  if (req.user.role !== 'user' && req.user.role !== 'manager' && req.user.role !== 'hr') {
-    return res.status(400).json({ error: 'Only employees, managers, and HR can apply' });
+  if (req.user.role !== 'user' && req.user.role !== 'manager') {
+    return res.status(400).json({ error: 'Only employees and managers can apply' });
   }
 
   const employee = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -1617,39 +1656,6 @@ router.post('/leaves', authRequired, async (req, res) => {
   );
   if (overlap) {
     return res.status(409).json({ error: 'Overlapping leave/WFH request already exists' });
-  }
-
-  if (req.user.role === 'hr') {
-    const leaveId = await db.transaction(async () => {
-      if (isBalanceType(leaveType)) {
-        await db
-          .prepare(
-            `UPDATE leave_balances
-             SET ${leaveType} = ${leaveType} - ?, updated_at = ${SQL_NOW_IST}
-             WHERE user_id = ?`
-          )
-          .run(days, req.user.id);
-      }
-      const inserted = await db
-        .prepare(
-          `INSERT INTO leave_requests
-             (user_id, leave_type, start_date, end_date, days, session, reason, status, hr_id, hr_reviewed_at, hr_note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, ${SQL_NOW_IST}, ?)`
-        )
-        .run(
-          req.user.id,
-          leaveType,
-          startDate,
-          resolvedEnd,
-          days,
-          leaveSession,
-          reason?.trim() || null,
-          req.user.id,
-          'Applied by HR'
-        );
-      return inserted.lastInsertRowid;
-    });
-    return res.status(201).json({ leave: mapLeave(await getLeaveById(leaveId)) });
   }
 
   const initialStatus = employee.manager_id ? 'pending_manager' : 'pending_hr';
@@ -1756,6 +1762,9 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
   const isRestrictedAdmin = leaveType === 'restricted';
   if (!employeeId) {
     return res.status(400).json({ error: 'Select an employee' });
+  }
+  if (employeeId === req.user.id) {
+    return res.status(400).json({ error: 'HR cannot apply leave for themselves' });
   }
   if (!REQUEST_TYPES.includes(leaveType)) {
     return res.status(400).json({ error: 'Leave type is required' });
@@ -2784,7 +2793,73 @@ async function hydrateFeedPosts(postRows, userId) {
   const commentIds = comments.map((row) => row.id);
   const postReactions = await loadReactionMap('post_id', postIds, userId);
   const commentReactions = await loadReactionMap('comment_id', commentIds, userId);
-  return assembleFeed(postRows, comments, postReactions, commentReactions);
+  const posts = assembleFeed(postRows, comments, postReactions, commentReactions);
+  return attachPolls(posts, userId);
+}
+
+async function attachPolls(posts, userId) {
+  const postIds = (posts || []).map((post) => post.id).filter(Boolean);
+  if (!postIds.length) return posts;
+  let polls = [];
+  try {
+    polls = await db
+      .prepare(`SELECT id, post_id FROM feed_polls WHERE post_id IN (${sqlIn(postIds)})`)
+      .all(...postIds);
+  } catch (err) {
+    if (isMissingFeedTable(err)) return posts;
+    throw err;
+  }
+  if (!polls.length) return posts;
+  const pollIds = polls.map((row) => row.id);
+  const options = await db
+    .prepare(
+      `SELECT id, poll_id, label, sort_order FROM feed_poll_options
+       WHERE poll_id IN (${sqlIn(pollIds)})
+       ORDER BY sort_order ASC, id ASC`
+    )
+    .all(...pollIds);
+  const votes = await db
+    .prepare(
+      `SELECT poll_id, option_id, user_id FROM feed_poll_votes WHERE poll_id IN (${sqlIn(pollIds)})`
+    )
+    .all(...pollIds);
+  const optionsByPoll = new Map();
+  for (const option of options) {
+    const list = optionsByPoll.get(option.poll_id) || [];
+    list.push(option);
+    optionsByPoll.set(option.poll_id, list);
+  }
+  const votesByPoll = new Map();
+  for (const vote of votes) {
+    const list = votesByPoll.get(vote.poll_id) || [];
+    list.push(vote);
+    votesByPoll.set(vote.poll_id, list);
+  }
+  const pollByPost = new Map(
+    polls.map((poll) => [
+      poll.post_id,
+      buildPollPayload(poll, optionsByPoll.get(poll.id) || [], votesByPoll.get(poll.id) || [], userId),
+    ])
+  );
+  return posts.map((post) => ({ ...post, poll: pollByPost.get(post.id) || null }));
+}
+
+async function insertPollForPost(postId, options) {
+  if (!options?.length) return;
+  const poll = await db.prepare(`INSERT INTO feed_polls (post_id) VALUES (?)`).run(postId);
+  const pollId = poll.lastInsertRowid;
+  for (let i = 0; i < options.length; i += 1) {
+    await db
+      .prepare(`INSERT INTO feed_poll_options (poll_id, label, sort_order) VALUES (?, ?, ?)`)
+      .run(pollId, options[i], i);
+  }
+}
+
+async function ensureFeedSchema() {
+  for (const sql of feedSchemaStatements(isPostgres)) {
+    await db.exec(sql);
+  }
+  await ensureFeedImageColumn(db, isPostgres);
 }
 
 async function getHydratedPost(postId, userId) {
@@ -2879,10 +2954,7 @@ router.get('/feed', authRequired, async (req, res) => {
   } catch (err) {
     if (isMissingFeedTable(err)) {
       try {
-        for (const sql of feedSchemaStatements(isPostgres)) {
-          await db.exec(sql);
-        }
-        await ensureFeedImageColumn(db, isPostgres);
+        await ensureFeedSchema();
         return await sendFeed(req, res);
       } catch (retryErr) {
         console.error(retryErr);
@@ -2956,46 +3028,103 @@ router.post('/feed/posts', authRequired, async (req, res) => {
     return res.status(400).json({ error: 'Choose a feed channel' });
   }
   let imageData = null;
+  let pollOptions = null;
   try {
     imageData = normalizeFeedImage(req.body?.image);
+    pollOptions = normalizePollOptions(req.body?.poll?.options ?? req.body?.pollOptions);
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message });
     throw err;
   }
-  if (!content && !imageData) {
-    return res.status(400).json({ error: 'Write something or attach an image before sharing' });
+  if (!content && !imageData && !pollOptions) {
+    return res.status(400).json({ error: 'Write something, attach an image, or add a poll before sharing' });
+  }
+  if (pollOptions && !content) {
+    return res.status(400).json({ error: 'Add a question for the poll' });
+  }
+  if (category === 'poll' && !pollOptions) {
+    return res.status(400).json({ error: 'Add at least two poll options' });
   }
   if (content.length > MAX_POST_LEN) {
     return res.status(400).json({ error: `Posts can be at most ${MAX_POST_LEN} characters` });
   }
 
-  try {
+  async function createPost() {
     const inserted = await db
       .prepare(
         `INSERT INTO feed_posts (user_id, category, content, image_data, created_at)
          VALUES (?, ?, ?, ?, ${SQL_NOW_IST})`
       )
       .run(req.user.id, category, content, imageData);
-    const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
+    const postId = inserted.lastInsertRowid;
+    if (pollOptions) await insertPollForPost(postId, pollOptions);
+    return getHydratedPost(postId, req.user.id);
+  }
+
+  try {
+    const post = await createPost();
     return res.status(201).json({ post });
   } catch (err) {
     if (isMissingFeedTable(err)) {
       try {
-        for (const sql of feedSchemaStatements(isPostgres)) {
-          await db.exec(sql);
-        }
-        await ensureFeedImageColumn(db, isPostgres);
-        const inserted = await db
-          .prepare(
-            `INSERT INTO feed_posts (user_id, category, content, image_data, created_at)
-             VALUES (?, ?, ?, ?, ${SQL_NOW_IST})`
-          )
-          .run(req.user.id, category, content, imageData);
-        const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
+        await ensureFeedSchema();
+        const post = await createPost();
         return res.status(201).json({ post });
       } catch (retryErr) {
         console.error(retryErr);
         return res.status(500).json({ error: 'Could not share that post' });
+      }
+    }
+    throw err;
+  }
+});
+
+router.post('/feed/posts/:id/poll/votes', authRequired, async (req, res) => {
+  const postId = Number(req.params.id);
+  const optionId = Number(req.body?.optionId);
+  if (!postId || !optionId) {
+    return res.status(400).json({ error: 'Choose a poll option' });
+  }
+
+  async function vote() {
+    const poll = await db.prepare(`SELECT id FROM feed_polls WHERE post_id = ?`).get(postId);
+    if (!poll) return { error: 'Poll not found', status: 404 };
+    const option = await db
+      .prepare(`SELECT id FROM feed_poll_options WHERE id = ? AND poll_id = ?`)
+      .get(optionId, poll.id);
+    if (!option) return { error: 'That option is not on this poll', status: 400 };
+    const existing = await db
+      .prepare(`SELECT id, option_id FROM feed_poll_votes WHERE poll_id = ? AND user_id = ?`)
+      .get(poll.id, req.user.id);
+    if (existing?.option_id === optionId) {
+      await db.prepare(`DELETE FROM feed_poll_votes WHERE id = ?`).run(existing.id);
+    } else if (existing) {
+      await db.prepare(`UPDATE feed_poll_votes SET option_id = ? WHERE id = ?`).run(optionId, existing.id);
+    } else {
+      await db
+        .prepare(
+          `INSERT INTO feed_poll_votes (poll_id, option_id, user_id, created_at)
+           VALUES (?, ?, ?, ${SQL_NOW_IST})`
+        )
+        .run(poll.id, optionId, req.user.id);
+    }
+    return { post: await getHydratedPost(postId, req.user.id) };
+  }
+
+  try {
+    const result = await vote();
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    return res.json(result);
+  } catch (err) {
+    if (isMissingFeedTable(err)) {
+      try {
+        await ensureFeedSchema();
+        const result = await vote();
+        if (result.error) return res.status(result.status).json({ error: result.error });
+        return res.json(result);
+      } catch (retryErr) {
+        console.error(retryErr);
+        return res.status(500).json({ error: 'Could not save that vote' });
       }
     }
     throw err;

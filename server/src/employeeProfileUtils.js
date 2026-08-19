@@ -96,6 +96,10 @@ export function mapEmployeeProfile(row, options = {}) {
   if (!row) return null;
   const includeSensitive = options.includeSensitive !== false;
   const includeIt = options.includeIt !== false;
+  const includePhoto = options.includePhoto !== false;
+  const hasPhoto = includePhoto
+    ? Boolean(row.profile_photo)
+    : Boolean(row.has_photo === true || row.has_photo === 1 || row.has_photo === '1');
 
   const payroll = {
     structure: payStructureKind(row.employment_type),
@@ -145,8 +149,9 @@ export function mapEmployeeProfile(row, options = {}) {
       emergencyContact: row.emergency_contact || null,
       nationality: row.nationality || null,
       maritalStatus: row.marital_status || null,
-      profilePhoto: row.profile_photo || null,
+      profilePhoto: includePhoto ? row.profile_photo || null : null,
     },
+    hasPhoto,
     employment: {
       dateOfJoining: row.date_of_joining || null,
       employmentType: row.employment_type || null,

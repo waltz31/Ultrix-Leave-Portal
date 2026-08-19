@@ -69,7 +69,7 @@ function useLoad(loader, deps = []) {
     reload();
   }, [reload]);
 
-  return { data, error, loading, reload };
+  return { data, setData, error, loading, reload };
 }
 
 export function HrOverview() {
@@ -107,7 +107,7 @@ export function HrOverview() {
         teamTitle="Team on leave"
         calendarTo="/hr/calendar"
         holidaysTo="/hr/calendar"
-        canApplyRestricted
+        canApplyRestricted={false}
       />
 
       <LeaveReportSection />
@@ -382,7 +382,7 @@ function ProfileCardMenu({ items = [] }) {
 }
 
 export function HrOnboarding() {
-  const { data: profiles, error, loading, reload } = useLoad(() =>
+  const { data: profiles, setData: setProfiles, error, loading, reload } = useLoad(() =>
     api('/onboarding').then((d) => d.profiles)
   );
   const { data: managers, reload: reloadManagers } = useLoad(() =>
@@ -400,6 +400,44 @@ export function HrOnboarding() {
   const [selected, setSelected] = useState(null);
   const [createdNotice, setCreatedNotice] = useState(null);
   const [bulkResult, setBulkResult] = useState(null);
+  const fetchingPhotos = useRef(new Set());
+
+  useEffect(() => {
+    if (loading) fetchingPhotos.current.clear();
+  }, [loading]);
+
+  useEffect(() => {
+    const missing = (profiles || [])
+      .filter((p) => p.hasPhoto && !p.personal?.profilePhoto && !fetchingPhotos.current.has(p.userId))
+      .map((p) => p.userId);
+    if (!missing.length) return;
+    missing.forEach((id) => fetchingPhotos.current.add(id));
+    (async () => {
+      const chunkSize = 8;
+      for (let i = 0; i < missing.length; i += chunkSize) {
+        const userIds = missing.slice(i, i + chunkSize);
+        try {
+          const { photos } = await api('/onboarding/photos', {
+            method: 'POST',
+            body: { userIds },
+          });
+          if (!photos) continue;
+          setProfiles((list) =>
+            (list || []).map((profile) => {
+              const photo = photos[profile.userId] ?? photos[String(profile.userId)];
+              if (!photo || profile.personal?.profilePhoto) return profile;
+              return {
+                ...profile,
+                personal: { ...profile.personal, profilePhoto: photo },
+              };
+            })
+          );
+        } catch {
+          userIds.forEach((id) => fetchingPhotos.current.delete(id));
+        }
+      }
+    })();
+  }, [profiles, setProfiles]);
 
   function blankForm() {
     return { ...EMPTY_ONBOARDING_FORM, assets: [{ ...EMPTY_ASSET }] };
@@ -541,13 +579,42 @@ export function HrOnboarding() {
     }
   }
 
-  function openEdit(profile) {
+  async function loadFullProfile(userId) {
+    const { profile } = await api(`/onboarding/${userId}`);
+    setProfiles((list) =>
+      (list || []).map((item) => (item.userId === profile.userId ? { ...item, ...profile } : item))
+    );
+    return profile;
+  }
+
+  async function openView(profile) {
     setErr('');
     setMsg('');
-    setSelected(null);
-    setEditingUserId(profile.userId);
-    setForm(profileToForm(profile));
-    setShowForm(true);
+    setBusy(true);
+    try {
+      setSelected(await loadFullProfile(profile.userId));
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openEdit(profile) {
+    setErr('');
+    setMsg('');
+    setBusy(true);
+    try {
+      const full = await loadFullProfile(profile.userId);
+      setSelected(null);
+      setEditingUserId(full.userId);
+      setForm(profileToForm(full));
+      setShowForm(true);
+    } catch (error) {
+      setErr(error.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   function labelFrom(options, value) {
@@ -681,7 +748,7 @@ export function HrOnboarding() {
                 menu={
                   <ProfileCardMenu
                     items={[
-                      { label: 'View profile', onClick: () => setSelected(p) },
+                      { label: 'View profile', onClick: () => openView(p) },
                       { label: 'Edit', onClick: () => openEdit(p) },
                       ...(p.role !== 'manager'
                         ? [{ label: 'Delete', onClick: () => deleteProfile(p), danger: true }]
@@ -1304,6 +1371,7 @@ export function HrUsers() {
 }
 
 export function HrCalendar() {
+  const { user } = useAuth();
   const now = appToday();
   const year = now.getFullYear();
   const from = `${year}-01-01`;
@@ -1515,7 +1583,7 @@ export function HrCalendar() {
           leaves={data.leaves}
           showNames
           balancesByUserId={data.balancesByUserId}
-          employees={data.users}
+          employees={(data.users || []).filter((u) => u.id !== user?.id)}
           canManage
           busyId={busyId}
           onCreateLeave={createLeave}
