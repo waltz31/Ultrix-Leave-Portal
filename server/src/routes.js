@@ -43,12 +43,17 @@ import {
   MAX_POST_LEN,
   assembleFeed,
   buildCelebrations,
+  compactEmojiCatalog,
   countsFromRows,
   emptyCounts,
+  fallbackEmojiCatalog,
   feedSchemaStatements,
   groupReactionRows,
   isMissingFeedTable,
+  ensureFeedImageColumn,
+  EMOJI_FAMILY_URL,
   normalizeEmoji,
+  normalizeFeedImage,
   trendingTagsFromPosts,
 } from './feedUtils.js';
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
@@ -2731,7 +2736,7 @@ router.get('/invoices/:id/pdf', authRequired, async (req, res) => {
 });
 
 const FEED_POST_SELECT = `
-  SELECT fp.id, fp.user_id, fp.category, fp.content, fp.created_at,
+  SELECT fp.id, fp.user_id, fp.category, fp.content, fp.image_data, fp.created_at,
          u.name AS author_name, u.role AS author_role,
          ep.profile_photo, ep.designation, ep.department
   FROM feed_posts fp
@@ -2836,6 +2841,38 @@ async function toggleFeedReaction({ postId, commentId, userId, emoji }) {
   };
 }
 
+let emojiCatalogCache = { at: 0, payload: null };
+const EMOJI_CACHE_MS = 12 * 60 * 60 * 1000;
+
+async function getEmojiCatalog() {
+  if (emojiCatalogCache.payload && Date.now() - emojiCatalogCache.at < EMOJI_CACHE_MS) {
+    return emojiCatalogCache.payload;
+  }
+  try {
+    const res = await fetch(EMOJI_FAMILY_URL, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'UltrixLeavePortal/1.0',
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) throw new Error(`Emoji API ${res.status}`);
+    const rows = await res.json();
+    const payload = { source: 'emoji.family', ...compactEmojiCatalog(rows) };
+    if (!payload.groups.length) throw new Error('Empty emoji catalog');
+    emojiCatalogCache = { at: Date.now(), payload };
+    return payload;
+  } catch (err) {
+    console.error('Emoji catalog fetch failed:', err.message || err);
+    if (emojiCatalogCache.payload) return emojiCatalogCache.payload;
+    return fallbackEmojiCatalog();
+  }
+}
+
+router.get('/feed/emojis', authRequired, async (_req, res) => {
+  res.json(await getEmojiCatalog());
+});
+
 router.get('/feed', authRequired, async (req, res) => {
   try {
     await sendFeed(req, res);
@@ -2845,6 +2882,7 @@ router.get('/feed', authRequired, async (req, res) => {
         for (const sql of feedSchemaStatements(isPostgres)) {
           await db.exec(sql);
         }
+        await ensureFeedImageColumn(db, isPostgres);
         return await sendFeed(req, res);
       } catch (retryErr) {
         console.error(retryErr);
@@ -2917,21 +2955,51 @@ router.post('/feed/posts', authRequired, async (req, res) => {
   if (!FEED_CATEGORIES.includes(category)) {
     return res.status(400).json({ error: 'Choose a feed channel' });
   }
-  if (!content) {
-    return res.status(400).json({ error: 'Write something before sharing' });
+  let imageData = null;
+  try {
+    imageData = normalizeFeedImage(req.body?.image);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  if (!content && !imageData) {
+    return res.status(400).json({ error: 'Write something or attach an image before sharing' });
   }
   if (content.length > MAX_POST_LEN) {
     return res.status(400).json({ error: `Posts can be at most ${MAX_POST_LEN} characters` });
   }
 
-  const inserted = await db
-    .prepare(
-      `INSERT INTO feed_posts (user_id, category, content, created_at)
-       VALUES (?, ?, ?, ${SQL_NOW_IST})`
-    )
-    .run(req.user.id, category, content);
-  const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
-  res.status(201).json({ post });
+  try {
+    const inserted = await db
+      .prepare(
+        `INSERT INTO feed_posts (user_id, category, content, image_data, created_at)
+         VALUES (?, ?, ?, ?, ${SQL_NOW_IST})`
+      )
+      .run(req.user.id, category, content, imageData);
+    const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
+    return res.status(201).json({ post });
+  } catch (err) {
+    if (isMissingFeedTable(err)) {
+      try {
+        for (const sql of feedSchemaStatements(isPostgres)) {
+          await db.exec(sql);
+        }
+        await ensureFeedImageColumn(db, isPostgres);
+        const inserted = await db
+          .prepare(
+            `INSERT INTO feed_posts (user_id, category, content, image_data, created_at)
+             VALUES (?, ?, ?, ?, ${SQL_NOW_IST})`
+          )
+          .run(req.user.id, category, content, imageData);
+        const post = await getHydratedPost(inserted.lastInsertRowid, req.user.id);
+        return res.status(201).json({ post });
+      } catch (retryErr) {
+        console.error(retryErr);
+        return res.status(500).json({ error: 'Could not share that post' });
+      }
+    }
+    throw err;
+  }
 });
 
 router.delete('/feed/posts/:id', authRequired, async (req, res) => {

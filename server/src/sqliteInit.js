@@ -811,6 +811,7 @@ function migrateFeedTables() {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
       content TEXT NOT NULL,
+      image_data TEXT,
       created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
     );
     CREATE INDEX IF NOT EXISTS idx_feed_posts_created ON feed_posts(created_at);
@@ -842,6 +843,10 @@ function migrateFeedTables() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_feed_reactions_comment
       ON feed_reactions(comment_id, user_id, emoji) WHERE comment_id IS NOT NULL;
   `);
+  const cols = db.prepare(`PRAGMA table_info(feed_posts)`).all();
+  if (!cols.some((col) => col.name === 'image_data')) {
+    db.exec(`ALTER TABLE feed_posts ADD COLUMN image_data TEXT`);
+  }
 }
 
 export default db;

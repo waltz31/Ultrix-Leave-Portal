@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { useTheme } from '../theme';
 import {
   ROLE_LABELS,
   avatarSrc,
@@ -16,9 +18,86 @@ const CHANNELS = [
   { key: 'casual', label: 'Casual Coffee Chat ☕', emoji: '☕' },
 ];
 
-const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯'];
+const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯', '😊', '🥳', '😎', '🙌', '💪', '🌟', '🚀'];
 const LIKE_EMOJI = '❤️';
 const FALLBACK_TAGS = ['#TeamCelebrations', '#WorkAnniversary', '#Announcements', '#DesignSync'];
+const FALLBACK_EMOJI_GROUPS = [
+  { key: 'frequent', label: 'Frequent', emojis: FEED_EMOJIS.map((emoji) => ({ emoji, annotation: '' })) },
+];
+
+let emojiCatalogPromise = null;
+const MAX_FEED_IMAGE_EDGE = 1600;
+const MAX_FEED_IMAGE_CHARS = 1_800_000;
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read that image'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function compressFeedImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_FEED_IMAGE_EDGE / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Could not process that image'));
+        return;
+      }
+      ctx.fillStyle = '#0b1220';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      let quality = 0.84;
+      let out = canvas.toDataURL('image/jpeg', quality);
+      while (out.length > MAX_FEED_IMAGE_CHARS && quality > 0.48) {
+        quality -= 0.08;
+        out = canvas.toDataURL('image/jpeg', quality);
+      }
+      if (out.length > MAX_FEED_IMAGE_CHARS) {
+        reject(new Error('Could not compress that image enough. Try a smaller photo.'));
+        return;
+      }
+      resolve(out);
+    };
+    img.onerror = () => reject(new Error('Could not read that image'));
+    img.src = dataUrl;
+  });
+}
+
+async function prepareFeedImage(file) {
+  if (!file) return '';
+  if (!/^image\/(jpeg|jpg|png|gif|webp)$/i.test(file.type)) {
+    throw new Error('Please choose a JPG, PNG, GIF, or WebP image.');
+  }
+  if (file.size > 12 * 1024 * 1024) {
+    throw new Error('Image must be under 12 MB.');
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  if (dataUrl.length <= MAX_FEED_IMAGE_CHARS) return dataUrl;
+  return compressFeedImage(dataUrl);
+}
+
+function loadEmojiCatalog() {
+  if (!emojiCatalogPromise) {
+    emojiCatalogPromise = api('/feed/emojis')
+      .then((data) => ({
+        source: data.source || 'emoji.family',
+        groups: Array.isArray(data.groups) && data.groups.length ? data.groups : FALLBACK_EMOJI_GROUPS,
+      }))
+      .catch(() => {
+        emojiCatalogPromise = null;
+        return { source: 'fallback', groups: FALLBACK_EMOJI_GROUPS };
+      });
+  }
+  return emojiCatalogPromise;
+}
 
 function initialsFromName(name) {
   const parts = String(name || '')
@@ -80,17 +159,154 @@ function Avatar({ name, photo, userId, size = 'md' }) {
 }
 
 function EmojiPicker({ onPick, label = 'Add emoji' }) {
+  const { mode } = useTheme();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [groupKey, setGroupKey] = useState('all');
+  const [catalog, setCatalog] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [coords, setCoords] = useState(null);
   const wrapRef = useRef(null);
+  const popRef = useRef(null);
+  const searchRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
     function onDoc(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (wrapRef.current?.contains(e.target) || popRef.current?.contains(e.target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    setLoading(!catalog);
+    loadEmojiCatalog()
+      .then((data) => {
+        if (!cancelled) setCatalog(data);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    const t = setTimeout(() => searchRef.current?.focus(), 40);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [open, catalog]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setCoords(null);
+      return undefined;
+    }
+    function place() {
+      const trigger = wrapRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(360, window.innerWidth - 16);
+      const gap = 8;
+      const spaceBelow = window.innerHeight - rect.bottom - gap - 8;
+      const spaceAbove = rect.top - gap - 8;
+      const openBelow = spaceBelow >= 260 || spaceBelow >= spaceAbove;
+      const maxHeight = Math.min(420, Math.max(220, openBelow ? spaceBelow : spaceAbove));
+      let left = rect.right - width;
+      left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+      let top = openBelow ? rect.bottom + gap : rect.top - maxHeight - gap;
+      top = Math.max(8, Math.min(top, window.innerHeight - maxHeight - 8));
+      setCoords({ top, left, width, maxHeight });
+    }
+    place();
+    window.addEventListener('resize', place);
+    document.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      document.removeEventListener('scroll', place, true);
+    };
+  }, [open]);
+
+  const groups = catalog?.groups || FALLBACK_EMOJI_GROUPS;
+  const needle = query.trim().toLowerCase();
+  const visibleEmojis = useMemo(() => {
+    const pool = (groupKey === 'all' ? groups.flatMap((g) => g.emojis) : groups.find((g) => g.key === groupKey)?.emojis) || [];
+    if (!needle) return pool;
+    return pool.filter(
+      (item) =>
+        item.emoji.includes(query.trim()) ||
+        String(item.annotation || '').toLowerCase().includes(needle)
+    );
+  }, [groups, groupKey, needle, query]);
+
+  const picker = open && coords
+    ? createPortal(
+        <div
+          ref={popRef}
+          className="feed-emoji-pop"
+          data-theme={mode}
+          role="dialog"
+          aria-label="Emoji picker"
+          style={{
+            top: coords.top,
+            left: coords.left,
+            width: coords.width,
+            maxHeight: coords.maxHeight,
+          }}
+        >
+          <input
+            ref={searchRef}
+            type="search"
+            className="feed-emoji-search"
+            placeholder="Search emoji…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div className="feed-emoji-groups">
+            <button
+              type="button"
+              className={groupKey === 'all' ? 'is-on' : ''}
+              onClick={() => setGroupKey('all')}
+            >
+              All
+            </button>
+            {groups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className={groupKey === group.key ? 'is-on' : ''}
+                onClick={() => setGroupKey(group.key)}
+              >
+                {group.label}
+              </button>
+            ))}
+          </div>
+          <div className="feed-emoji-grid" role="listbox">
+            {loading && <p className="muted slim">Loading emoji…</p>}
+            {!loading && visibleEmojis.length === 0 && (
+              <p className="muted slim">No emoji match that search.</p>
+            )}
+            {visibleEmojis.map((item) => (
+              <button
+                key={`${item.emoji}-${item.annotation}`}
+                type="button"
+                className="feed-emoji-opt"
+                title={item.annotation || item.emoji}
+                onClick={() => {
+                  onPick(item.emoji);
+                  setOpen(false);
+                  setQuery('');
+                }}
+              >
+                {item.emoji}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
 
   return (
     <div className="feed-emoji-wrap" ref={wrapRef}>
@@ -103,23 +319,7 @@ function EmojiPicker({ onPick, label = 'Add emoji' }) {
       >
         😊
       </button>
-      {open && (
-        <div className="feed-emoji-pop" role="listbox" aria-label="Emoji picker">
-          {FEED_EMOJIS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              className="feed-emoji-opt"
-              onClick={() => {
-                onPick(emoji);
-                setOpen(false);
-              }}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      )}
+      {picker}
     </div>
   );
 }
@@ -159,11 +359,15 @@ export default function CompanyFeed() {
   const [toast, setToast] = useState('');
   const [composer, setComposer] = useState('');
   const [composerType, setComposerType] = useState('casual');
+  const [composerImage, setComposerImage] = useState('');
+  const [imageBusy, setImageBusy] = useState(false);
+  const [lightbox, setLightbox] = useState('');
   const [posting, setPosting] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [drafts, setDrafts] = useState({});
   const [busyKey, setBusyKey] = useState('');
   const composerRef = useRef(null);
+  const imageInputRef = useRef(null);
   const toastTimer = useRef(null);
 
   const showToast = useCallback((message) => {
@@ -173,6 +377,15 @@ export default function CompanyFeed() {
   }, []);
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  useEffect(() => {
+    if (!lightbox) return undefined;
+    function onKey(e) {
+      if (e.key === 'Escape') setLightbox('');
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [lightbox]);
 
   useEffect(() => {
     const t = setTimeout(() => setQuery(search.trim()), search.trim() ? 220 : 0);
@@ -224,8 +437,8 @@ export default function CompanyFeed() {
   }
 
   async function handleShare() {
-    if (!composer.trim()) {
-      showToast('Write something before sharing.');
+    if (!composer.trim() && !composerImage) {
+      showToast('Write something or attach an image before sharing.');
       return;
     }
     setPosting(true);
@@ -233,9 +446,14 @@ export default function CompanyFeed() {
     try {
       const data = await api('/feed/posts', {
         method: 'POST',
-        body: { category: composerType, content: composer.trim() },
+        body: {
+          category: composerType,
+          content: composer.trim(),
+          image: composerImage || null,
+        },
       });
       setComposer('');
+      setComposerImage('');
       setExpanded((prev) => new Set(prev).add(data.post.id));
       if (category === 'all' || category === composerType) {
         setPosts((list) => [data.post, ...list.filter((p) => p.id !== data.post.id)]);
@@ -250,6 +468,21 @@ export default function CompanyFeed() {
       setError(err.message);
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function handleImagePick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImageBusy(true);
+    setError('');
+    try {
+      setComposerImage(await prepareFeedImage(file));
+    } catch (err) {
+      showToast(err.message || 'Could not attach that image.');
+    } finally {
+      setImageBusy(false);
     }
   }
 
@@ -419,6 +652,18 @@ export default function CompanyFeed() {
                 placeholder="Share a celebration wish, team kudos, or announcement…"
               />
             </div>
+            {composerImage && (
+              <div className="feed-composer-preview">
+                <img src={composerImage} alt="Attachment preview" />
+                <button
+                  type="button"
+                  className="feed-composer-preview-remove"
+                  onClick={() => setComposerImage('')}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
             <div className="feed-composer-actions">
               <label>
                 Channel
@@ -430,6 +675,21 @@ export default function CompanyFeed() {
                 </select>
               </label>
               <div className="feed-composer-right">
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  className="sr-only"
+                  onChange={handleImagePick}
+                />
+                <button
+                  type="button"
+                  className="feed-image-toggle"
+                  disabled={imageBusy || posting}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  {imageBusy ? 'Uploading…' : composerImage ? 'Change photo' : 'Add photo'}
+                </button>
                 <EmojiPicker
                   onPick={(emoji) => {
                     setComposer((value) => insertEmoji(value, emoji, composerRef.current));
@@ -437,7 +697,7 @@ export default function CompanyFeed() {
                   }}
                   label="Insert emoji in post"
                 />
-                <button type="button" className="btn primary" disabled={posting} onClick={handleShare}>
+                <button type="button" className="btn primary" disabled={posting || imageBusy} onClick={handleShare}>
                   Share Post
                 </button>
               </div>
@@ -466,9 +726,21 @@ export default function CompanyFeed() {
                   </div>
                   <span className={`feed-badge ${post.category}`}>{post.badgeText}</span>
                 </header>
-                <p className="feed-post-body">
-                  <HashtagText text={post.content} onTag={applyTag} />
-                </p>
+                {post.content ? (
+                  <p className="feed-post-body">
+                    <HashtagText text={post.content} onTag={applyTag} />
+                  </p>
+                ) : null}
+                {post.image ? (
+                  <button
+                    type="button"
+                    className="feed-post-image"
+                    onClick={() => setLightbox(post.image)}
+                    aria-label="View attached photo"
+                  >
+                    <img src={post.image} alt="" />
+                  </button>
+                ) : null}
                 <div className="feed-post-actions">
                   <button
                     type="button"
@@ -610,6 +882,20 @@ export default function CompanyFeed() {
           </section>
         </aside>
       </div>
+
+      {lightbox
+        ? createPortal(
+            <button
+              type="button"
+              className="feed-lightbox"
+              onClick={() => setLightbox('')}
+              aria-label="Close photo"
+            >
+              <img src={lightbox} alt="" />
+            </button>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

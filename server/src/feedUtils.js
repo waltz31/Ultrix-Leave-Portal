@@ -7,11 +7,26 @@ export const FEED_CATEGORY_META = {
   casual: { label: 'Casual Coffee Chat', badge: 'Casual Chat ☕', emoji: '☕' },
 };
 
-export const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯'];
+export const FEED_EMOJIS = ['❤️', '👍', '🎉', '👏', '😂', '🎂', '☕', '🔥', '💯', '😊', '🥳', '😎', '🙌', '💪', '🌟', '🚀'];
 export const LIKE_EMOJI = '❤️';
 export const MAX_POST_LEN = 2000;
 export const MAX_COMMENT_LEN = 800;
+export const MAX_FEED_IMAGE_CHARS = 2_000_000;
 export const HASHTAG_RE = /#[A-Za-z0-9_]{2,40}/g;
+export const EMOJI_FAMILY_URL = 'https://www.emoji.family/api/emojis';
+
+export const EMOJI_GROUP_LABELS = {
+  'smileys-emotion': 'Smileys',
+  'people-body': 'People',
+  'animals-nature': 'Animals',
+  'food-drink': 'Food',
+  'travel-places': 'Travel',
+  'activities': 'Activities',
+  'objects': 'Objects',
+  'symbols': 'Symbols',
+};
+
+export const EMOJI_GROUP_ORDER = Object.keys(EMOJI_GROUP_LABELS);
 
 export function initialsFromName(name) {
   const parts = String(name || '')
@@ -25,11 +40,64 @@ export function initialsFromName(name) {
 
 export function normalizeEmoji(value) {
   const raw = String(value || '').trim();
-  return FEED_EMOJIS.includes(raw) ? raw : null;
+  if (!raw || raw.length > 16) return null;
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return null;
+  if (/^[A-Za-z0-9 .,!?'"\-_/]+$/.test(raw)) return null;
+  return raw;
+}
+
+export function compactEmojiCatalog(rows) {
+  const byGroup = new Map(EMOJI_GROUP_ORDER.map((key) => [key, []]));
+  for (const row of rows || []) {
+    const emoji = String(row?.emoji || '').trim();
+    const group = row?.group;
+    if (!emoji || !byGroup.has(group)) continue;
+    if (row.variation || row.group === 'component') continue;
+    byGroup.get(group).push({
+      emoji,
+      annotation: String(row.annotation || '').trim(),
+    });
+  }
+  return {
+    groups: EMOJI_GROUP_ORDER.map((key) => ({
+      key,
+      label: EMOJI_GROUP_LABELS[key],
+      emojis: byGroup.get(key) || [],
+    })).filter((group) => group.emojis.length),
+  };
+}
+
+export function fallbackEmojiCatalog() {
+  return {
+    source: 'fallback',
+    groups: [
+      {
+        key: 'frequent',
+        label: 'Frequent',
+        emojis: FEED_EMOJIS.map((emoji) => ({ emoji, annotation: '' })),
+      },
+    ],
+  };
 }
 
 export function extractHashtags(text) {
   return Array.from(String(text || '').matchAll(HASHTAG_RE), (m) => m[0]);
+}
+
+export function normalizeFeedImage(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const text = String(value);
+  if (!/^data:image\/(jpeg|jpg|png|gif|webp);base64,/i.test(text)) {
+    const err = new Error('Post image must be a JPG, PNG, GIF, or WebP');
+    err.status = 400;
+    throw err;
+  }
+  if (text.length > MAX_FEED_IMAGE_CHARS) {
+    const err = new Error('Post image is too large (max about 1.5MB)');
+    err.status = 400;
+    throw err;
+  }
+  return text;
 }
 
 function nextMonthDay(ymd, todayYmd) {
@@ -166,6 +234,7 @@ export function assembleFeed(postRows, commentRows, postReactionMap, commentReac
       category: row.category,
       badgeText: FEED_CATEGORY_META[row.category]?.badge || row.category,
       content: row.content,
+      image: row.image_data || null,
       createdAt: row.created_at,
       comments: commentsByPost.get(row.id) || [],
       ...mapPerson(row),
@@ -220,6 +289,7 @@ export function feedSchemaStatements(postgres) {
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
       content TEXT NOT NULL,
+      image_data TEXT,
       created_at TEXT NOT NULL DEFAULT (${ts})
     )`,
     `CREATE INDEX IF NOT EXISTS idx_feed_posts_created ON feed_posts(created_at)`,
@@ -255,7 +325,20 @@ export function isMissingFeedTable(err) {
   const msg = String(err?.message || err || '');
   return (
     err?.code === '42P01' ||
+    err?.code === '42703' ||
     /no such table/i.test(msg) ||
+    /no such column/i.test(msg) ||
     (/feed_(posts|comments|reactions)/i.test(msg) && /does not exist|undefined/i.test(msg))
   );
+}
+
+export async function ensureFeedImageColumn(db, postgres) {
+  if (postgres) {
+    await db.exec(`ALTER TABLE feed_posts ADD COLUMN IF NOT EXISTS image_data TEXT`);
+    return;
+  }
+  const cols = await db.prepare(`PRAGMA table_info(feed_posts)`).all();
+  if (!cols?.some((col) => String(col.name) === 'image_data')) {
+    await db.exec(`ALTER TABLE feed_posts ADD COLUMN image_data TEXT`);
+  }
 }

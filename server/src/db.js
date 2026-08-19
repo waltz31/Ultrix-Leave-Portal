@@ -387,9 +387,11 @@ function createPostgres() {
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         category TEXT NOT NULL CHECK(category IN ('celebration', 'milestone', 'announcement', 'casual')),
         content TEXT NOT NULL,
+        image_data TEXT,
         created_at TEXT NOT NULL DEFAULT to_char((now() AT TIME ZONE 'Asia/Kolkata'), 'YYYY-MM-DD HH24:MI:SS')
       )
     `);
+    await client.query(`ALTER TABLE feed_posts ADD COLUMN IF NOT EXISTS image_data TEXT`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_feed_posts_created ON feed_posts(created_at)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_feed_posts_category ON feed_posts(category)`);
     await client.query(`
