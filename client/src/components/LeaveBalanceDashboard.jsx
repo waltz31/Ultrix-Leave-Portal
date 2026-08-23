@@ -23,7 +23,6 @@ import {
   toYmd,
 } from '../utils';
 
-const RING = { r: 26, c: 2 * Math.PI * 26 };
 const BALANCE_CARDS = [
   { key: 'earned', label: 'Earned Leave', tone: 'indigo' },
   { key: 'sick', label: 'Sick Leave', tone: 'amber' },
@@ -61,8 +60,7 @@ function usageFor(leaves, type, remaining) {
     .filter((leave) => leave.leaveType === type && leave.status === 'approved')
     .reduce((sum, leave) => sum + Number(leave.days || 0), 0);
   const allocated = Math.max(remaining + used, remaining, 0);
-  const ratio = allocated > 0 ? Math.max(0, Math.min(1, remaining / allocated)) : 0;
-  return { remaining, used, allocated, ratio };
+  return { remaining, used, allocated };
 }
 
 const EMPTY_FORM = {
@@ -474,7 +472,6 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
         <div className={`leave-dash-cards${restrictedOnly ? ' is-single' : ''}`}>
           {cards.map((card) => {
             const stats = usageFor(leaves, card.key, Number(balances?.[card.key] ?? 0));
-            const offset = RING.c - stats.ratio * RING.c;
             return (
               <article key={card.key} className={`leave-dash-card tone-${card.tone}`}>
                 <div>
@@ -488,20 +485,6 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
                     {' · '}
                     Used: {Number(stats.used).toFixed(stats.used % 1 ? 1 : 0)}
                   </p>
-                </div>
-                <div className="leave-dash-ring" aria-hidden>
-                  <svg viewBox="0 0 64 64">
-                    <circle className="leave-dash-ring-bg" cx="32" cy="32" r={RING.r} />
-                    <circle
-                      className="leave-dash-ring-fg"
-                      cx="32"
-                      cy="32"
-                      r={RING.r}
-                      strokeDasharray={RING.c}
-                      strokeDashoffset={offset}
-                    />
-                  </svg>
-                  <span>{Math.round(stats.ratio * 100)}%</span>
                 </div>
               </article>
             );

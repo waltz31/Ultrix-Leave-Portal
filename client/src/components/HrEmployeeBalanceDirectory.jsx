@@ -1,12 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ROLE_LABELS } from '../utils';
 
-const MINI_RING = { r: 22, c: 2 * Math.PI * 22 };
-const RING_METRICS = [
-  { key: 'earned', label: 'Earned', tone: 'earned' },
-  { key: 'sick', label: 'Sick', tone: 'sick' },
-  { key: 'casual', label: 'Casual', tone: 'casual' },
-  { key: 'restricted', label: 'Restricted', tone: 'restricted' },
+const LEAVE_TILES = [
+  { key: 'earned', label: 'Earned Leave', tone: 'earned' },
+  { key: 'sick', label: 'Sick Leave', tone: 'sick' },
+  { key: 'casual', label: 'Casual Leave', tone: 'casual' },
+  { key: 'restricted', label: 'Restricted Leave', tone: 'restricted' },
 ];
 const AVATAR_TONES = 6;
 
@@ -29,27 +28,51 @@ function metricStats(user, key) {
   const remaining = Number(user.balances?.[key] ?? 0);
   const used = Number(user.usage?.[key] ?? 0);
   const allocated = Math.max(remaining + used, remaining, 0);
-  const ratio = allocated > 0 ? Math.max(0, Math.min(1, remaining / allocated)) : 0;
-  return { remaining, used, allocated, ratio };
+  return { remaining, used, allocated };
 }
 
-function MiniRing({ ratio, tone }) {
-  const offset = MINI_RING.c - ratio * MINI_RING.c;
-  return (
-    <div className={`hr-bal-ring tone-${tone}`} aria-hidden>
-      <svg viewBox="0 0 56 56">
-        <circle className="hr-bal-ring-bg" cx="28" cy="28" r={MINI_RING.r} />
-        <circle
-          className="hr-bal-ring-fg"
-          cx="28"
-          cy="28"
-          r={MINI_RING.r}
-          strokeDasharray={MINI_RING.c}
-          strokeDashoffset={offset}
-        />
+function LeaveTypeIcon({ tone }) {
+  const props = {
+    viewBox: '0 0 24 24',
+    width: '18',
+    height: '18',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: '1.8',
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': true,
+  };
+  if (tone === 'earned') {
+    return (
+      <svg {...props}>
+        <rect x="3.5" y="5" width="17" height="15" rx="2.2" />
+        <path d="M8 3.5v3M16 3.5v3M3.5 10h17" />
+        <path d="M8.5 14.5 10.7 16.5 15.5 12.5" />
       </svg>
-      <span>{Math.round(ratio * 100)}%</span>
-    </div>
+    );
+  }
+  if (tone === 'sick') {
+    return (
+      <svg {...props}>
+        <path d="M12 3.5 19.5 7v5.2c0 4.4-3 7.4-7.5 8.8C8 19.6 4.5 16.6 4.5 12.2V7L12 3.5Z" />
+        <path d="M12 9.5v5M9.5 12h5" />
+      </svg>
+    );
+  }
+  if (tone === 'casual') {
+    return (
+      <svg {...props}>
+        <path d="M12 13a7 7 0 0 1-7-6h14a7 7 0 0 1-7 6Z" />
+        <path d="M12 13v7M9.5 20.5h5" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...props}>
+      <rect x="5" y="11" width="14" height="9.5" rx="2" />
+      <path d="M8 11V8.2a4 4 0 0 1 8 0V11" />
+    </svg>
   );
 }
 
@@ -71,7 +94,6 @@ export default function HrEmployeeBalanceDirectory({ users = [], renderMenu, emp
       <div className="hr-bal-dir-head">
         <div>
           <h2>Employee leave balances</h2>
-          <p className="muted">Remaining days for each leave type, with used vs allocated.</p>
         </div>
         <label className="hr-bal-search">
           <span className="sr-only">Search staff members</span>
@@ -122,20 +144,29 @@ export default function HrEmployeeBalanceDirectory({ users = [], renderMenu, emp
                   <div className="hr-bal-card-tools">{renderMenu?.(user)}</div>
                 </header>
                 <div className="hr-bal-metrics">
-                  {RING_METRICS.map((metric) => {
+                  {LEAVE_TILES.map((metric) => {
                     const stats = metricStats(user, metric.key);
                     return (
                       <div key={metric.key} className={`hr-bal-metric tone-${metric.tone}`}>
-                        <span className="hr-bal-pill">{metric.label}</span>
-                        <div className="hr-bal-metric-body">
-                          <div className="hr-bal-metric-copy">
+                        <div className="hr-bal-tile-head">
+                          <span className="hr-bal-type-icon">
+                            <LeaveTypeIcon tone={metric.tone} />
+                          </span>
+                          <strong>{metric.label}</strong>
+                        </div>
+                        <div className="hr-bal-tile-stats">
+                          <div className="hr-bal-stat is-available">
                             <strong>{fmtDays(stats.remaining)}</strong>
-                            <em>days left</em>
-                            <small>
-                              {fmtDays(stats.allocated)} allocated · {fmtDays(stats.used)} used
-                            </small>
+                            <span>days available</span>
                           </div>
-                          <MiniRing ratio={stats.ratio} tone={metric.tone} />
+                          <div className="hr-bal-stat">
+                            <span>Used</span>
+                            <em>{fmtDays(stats.used)}</em>
+                          </div>
+                          <div className="hr-bal-stat">
+                            <span>Allocated</span>
+                            <em>{fmtDays(stats.allocated)}</em>
+                          </div>
                         </div>
                       </div>
                     );

@@ -652,6 +652,7 @@ export default function AppShell({ title, nav, children }) {
   const [managerCelebrate, setManagerCelebrate] = useState(false);
   const [creditNotice, setCreditNotice] = useState(null);
   const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [unreadByPath, setUnreadByPath] = useState({});
   const [mobileOpen, setMobileOpen] = useState(false);
   const navRef = useRef(null);
   const [indicator, setIndicator] = useState({ y: 0, h: 44, visible: false });
@@ -679,7 +680,7 @@ export default function AppShell({ title, nav, children }) {
 
   useLayoutEffect(() => {
     moveIndicator();
-  }, [location.pathname, collapsed, sidebarNav, mobileOpen, moveIndicator]);
+  }, [location.pathname, collapsed, sidebarNav, mobileOpen, moveIndicator, unreadByPath, pendingApprovals]);
 
   useEffect(() => {
     const onResize = () => moveIndicator();
@@ -692,12 +693,25 @@ export default function AppShell({ title, nav, children }) {
   }, [location.pathname]);
 
   useEffect(() => {
-    if (user?.role !== 'manager' && user?.role !== 'hr') {
-      setPendingApprovals(0);
-      return undefined;
-    }
     let cancelled = false;
-    async function loadPending() {
+    async function loadBadges() {
+      try {
+        const notes = await api('/notifications');
+        if (cancelled) return;
+        const counts = {};
+        for (const n of notes.notifications || []) {
+          if (n.read) continue;
+          const path = pathForNotification(user?.role, n.type);
+          counts[path] = (counts[path] || 0) + 1;
+        }
+        setUnreadByPath(counts);
+      } catch {
+        if (!cancelled) setUnreadByPath({});
+      }
+      if (user?.role !== 'manager' && user?.role !== 'hr') {
+        if (!cancelled) setPendingApprovals(0);
+        return;
+      }
       try {
         const stats = await api('/dashboard/stats');
         if (cancelled) return;
@@ -710,8 +724,8 @@ export default function AppShell({ title, nav, children }) {
         // ignore
       }
     }
-    loadPending();
-    const timer = setInterval(loadPending, 15000);
+    loadBadges();
+    const timer = setInterval(loadBadges, 15000);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -719,10 +733,14 @@ export default function AppShell({ title, nav, children }) {
   }, [user?.role, location.pathname]);
 
   function navBadgeFor(item) {
-    if (!pendingApprovals) return null;
-    if (user?.role === 'manager' && item.to === '/manager/approvals') return pendingApprovals;
-    if (user?.role === 'hr' && item.to === '/hr/approvals') return pendingApprovals;
-    return null;
+    const fromNotes = unreadByPath[item.to] || 0;
+    const fromQueue =
+      (user?.role === 'manager' && item.to === '/manager/approvals') ||
+      (user?.role === 'hr' && item.to === '/hr/approvals')
+        ? pendingApprovals
+        : 0;
+    const count = Math.max(fromNotes, fromQueue);
+    return count || null;
   }
 
   function toggleCollapsed() {
@@ -798,7 +816,7 @@ export default function AppShell({ title, nav, children }) {
             <span />
           </button>
         </div>
-        <div className="sidebar-nav-stage" ref={navRef} onMouseLeave={() => moveIndicator()}>
+        <div className="sidebar-nav-stage" ref={navRef}>
           <span
             className={`sidebar-indicator${indicator.visible ? ' is-on' : ''}`}
             style={{ transform: `translateY(${indicator.y}px)`, height: indicator.h }}
@@ -815,14 +833,6 @@ export default function AppShell({ title, nav, children }) {
                   title={item.label}
                   className="sidebar-link"
                   style={{ '--i': index }}
-                  onMouseEnter={(e) => {
-                    if (e.currentTarget.classList.contains('active')) return;
-                    moveIndicator(e.currentTarget);
-                  }}
-                  onFocus={(e) => {
-                    if (e.currentTarget.classList.contains('active')) return;
-                    moveIndicator(e.currentTarget);
-                  }}
                 >
                   <span className="sidebar-link-icon">
                     <NavGlyph label={item.label} />

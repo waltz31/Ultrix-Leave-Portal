@@ -1,22 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { format, isSameDay, isWeekend } from 'date-fns';
 import { avatarSrc } from '../utils';
+import { getPortalRoot } from '../portalRoot';
 
 const PAGE_SIZES = [7, 10, 25, 50];
-
-const LEGEND = [
-  { code: 'P', label: 'Present', kind: 'present' },
-  { code: 'A', label: 'Absent', kind: 'absent' },
-  { code: 'L', label: 'Late', kind: 'late' },
-  { code: 'CL', label: 'Casual Leave', kind: 'leave-casual' },
-  { code: 'PL', label: 'Privileged Leave', kind: 'leave-earned' },
-  { code: 'SL', label: 'Sick Leave', kind: 'leave-sick' },
-  { code: 'RL', label: 'Restricted Leave', kind: 'leave-restricted' },
-  { code: 'WFH', label: 'Work from Home', kind: 'leave-wfh' },
-  { code: 'WO', label: 'Weekly Off', kind: 'weekoff' },
-  { code: 'HOL', label: 'Holiday', kind: 'holiday' },
-  { code: 'HD', label: 'Half Day', kind: 'halfday' },
-];
 
 function visiblePages(current, total) {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -84,6 +72,7 @@ export default function TeamRosterCalendar({
   const [pageSize, setPageSize] = useState(10);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [tip, setTip] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -136,7 +125,10 @@ export default function TeamRosterCalendar({
       node.scrollLeft = 0;
     }
     syncScrollButtons();
-    const onScroll = () => syncScrollButtons();
+    const onScroll = () => {
+      hideTip();
+      syncScrollButtons();
+    };
     node.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', syncScrollButtons);
     return () => {
@@ -149,6 +141,23 @@ export default function TeamRosterCalendar({
     const node = scrollRef.current;
     if (!node) return;
     node.scrollBy({ left: dir * Math.max(240, node.clientWidth * 0.45), behavior: 'smooth' });
+  }
+
+  function showTip(event, text) {
+    if (!text) {
+      setTip(null);
+      return;
+    }
+    const box = event.currentTarget.getBoundingClientRect();
+    setTip({
+      text,
+      x: Math.round(box.left + box.width / 2),
+      y: Math.round(box.bottom + 8),
+    });
+  }
+
+  function hideTip() {
+    setTip(null);
   }
 
   const dayCount = days?.length || 0;
@@ -187,16 +196,15 @@ export default function TeamRosterCalendar({
 
       <div className="roster-board">
         <div className="roster-scroll-wrap">
-          {canScrollLeft && (
-            <button
-              type="button"
-              className="roster-shift is-left"
-              onClick={() => scrollDates(-1)}
-              aria-label="Scroll dates left"
-            >
-              ‹
-            </button>
-          )}
+          <button
+            type="button"
+            className={`roster-shift is-left${canScrollLeft ? '' : ' is-disabled'}`}
+            disabled={!canScrollLeft}
+            onClick={() => scrollDates(-1)}
+            aria-label="Scroll dates left"
+          >
+            ‹
+          </button>
           <div className="roster-scroll" ref={scrollRef}>
             <div className="roster-grid" style={{ '--roster-days': String(dayCount) }}>
               <div className="roster-head">
@@ -257,12 +265,14 @@ export default function TeamRosterCalendar({
                           .filter(Boolean)
                           .join(' ')}
                         aria-label={hint}
-                        title={cell.label || hint}
+                        onMouseEnter={(event) => showTip(event, cell.label)}
+                        onMouseLeave={hideTip}
+                        onFocus={(event) => showTip(event, cell.label)}
+                        onBlur={hideTip}
                         onClick={interactive ? () => onCellClick(employee, day, cell) : undefined}
                       >
                         <StatusMark cell={cell} />
                         {cell.time ? <span className="roster-time">{cell.time}</span> : null}
-                        {cell.label ? <span className="roster-tip">{cell.label}</span> : null}
                       </Tag>
                     );
                   })}
@@ -270,16 +280,15 @@ export default function TeamRosterCalendar({
               ))}
             </div>
           </div>
-          {canScrollRight && (
-            <button
-              type="button"
-              className="roster-shift is-right"
-              onClick={() => scrollDates(1)}
-              aria-label="Scroll dates right"
-            >
-              ›
-            </button>
-          )}
+          <button
+            type="button"
+            className={`roster-shift is-right${canScrollRight ? '' : ' is-disabled'}`}
+            disabled={!canScrollRight}
+            onClick={() => scrollDates(1)}
+            aria-label="Scroll dates right"
+          >
+            ›
+          </button>
         </div>
 
         <div className="roster-pager">
@@ -334,26 +343,18 @@ export default function TeamRosterCalendar({
           </label>
         </div>
       </div>
-
-      <div className="roster-legend" aria-label="Attendance legend">
-        {LEGEND.map((item) => (
-          <span key={item.code} className="roster-legend-item" title={item.label}>
-            {item.kind === 'halfday' ? (
-              <i className="roster-hd-dot" />
-            ) : item.kind === 'weekoff' ? (
-              <span className="roster-wo">WO</span>
-            ) : (
-              <span
-                className={`roster-mark is-${item.kind} is-${
-                  ['present', 'absent', 'late'].includes(item.kind) ? 'circle' : 'square'
-                }`}
-              >
-                {item.code}
-              </span>
-            )}
-          </span>
-        ))}
-      </div>
+      {tip &&
+        getPortalRoot() &&
+        createPortal(
+          <div
+            className="roster-tip"
+            style={{ left: tip.x, top: tip.y }}
+            role="tooltip"
+          >
+            {tip.text}
+          </div>,
+          getPortalRoot()
+        )}
     </div>
   );
 }

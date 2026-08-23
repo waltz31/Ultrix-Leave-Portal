@@ -1177,7 +1177,6 @@ export function HrUsers() {
       <div className="leave-mgmt-stack">
       <section className="panel leave-mgmt-credit">
         <div className="leave-credit-head">
-          <p className="leave-credit-kicker">Leave balances</p>
           <h2>Credit leave balance</h2>
         </div>
         <form className="leave-credit-form" onSubmit={creditBalance}>
