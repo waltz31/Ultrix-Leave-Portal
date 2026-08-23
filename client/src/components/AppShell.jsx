@@ -8,6 +8,11 @@ import ApprovedCelebration from './ApprovedCelebration';
 import StatusCelebration from './StatusCelebration';
 
 const DEFAULT_COLOR_INPUT = '#0b1220';
+const NOTIFICATIONS_UPDATED = 'ultrix-notifications-updated';
+
+function emitNotificationsUpdated() {
+  window.dispatchEvent(new Event(NOTIFICATIONS_UPDATED));
+}
 
 const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
@@ -186,7 +191,11 @@ function NotificationBell({ onApprovedNotice, onBalanceCredited, onManagerApprov
   useEffect(() => {
     loadNotifications();
     const timer = setInterval(loadNotifications, 15000);
-    return () => clearInterval(timer);
+    window.addEventListener(NOTIFICATIONS_UPDATED, loadNotifications);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(NOTIFICATIONS_UPDATED, loadNotifications);
+    };
   }, [location.pathname]);
 
   useEffect(() => {
@@ -692,36 +701,48 @@ export default function AppShell({ title, nav, children }) {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  const recountUnread = useCallback((list) => {
+    const counts = {};
+    for (const n of list || []) {
+      if (n.read) continue;
+      const path = pathForNotification(user?.role, n.type);
+      counts[path] = (counts[path] || 0) + 1;
+    }
+    setUnreadByPath(counts);
+  }, [user?.role]);
+
+  const markPathRead = useCallback(
+    async (pathname) => {
+      if (!pathname) return;
+      try {
+        const notes = await api('/notifications');
+        const ids = (notes.notifications || [])
+          .filter((n) => !n.read && pathForNotification(user?.role, n.type) === pathname)
+          .map((n) => n.id);
+        if (ids.length) {
+          await api('/notifications/read', { method: 'PATCH', body: { ids } });
+          emitNotificationsUpdated();
+        }
+        const remaining = (notes.notifications || []).map((n) =>
+          ids.includes(n.id) ? { ...n, read: true } : n
+        );
+        recountUnread(remaining);
+      } catch {
+        // ignore
+      }
+    },
+    [user?.role, recountUnread]
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function loadBadges() {
       try {
         const notes = await api('/notifications');
         if (cancelled) return;
-        const counts = {};
-        for (const n of notes.notifications || []) {
-          if (n.read) continue;
-          const path = pathForNotification(user?.role, n.type);
-          counts[path] = (counts[path] || 0) + 1;
-        }
-        setUnreadByPath(counts);
+        recountUnread(notes.notifications || []);
       } catch {
         if (!cancelled) setUnreadByPath({});
-      }
-      if (user?.role !== 'manager' && user?.role !== 'hr') {
-        if (!cancelled) setPendingApprovals(0);
-        return;
-      }
-      try {
-        const stats = await api('/dashboard/stats');
-        if (cancelled) return;
-        const count =
-          user.role === 'manager'
-            ? Number(stats.pendingManager || 0)
-            : Number(stats.pendingHr || 0);
-        setPendingApprovals(count);
-      } catch {
-        // ignore
       }
     }
     loadBadges();
@@ -730,16 +751,14 @@ export default function AppShell({ title, nav, children }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [user?.role, location.pathname]);
+  }, [user?.role, recountUnread]);
+
+  useEffect(() => {
+    markPathRead(location.pathname);
+  }, [location.pathname, markPathRead]);
 
   function navBadgeFor(item) {
-    const fromNotes = unreadByPath[item.to] || 0;
-    const fromQueue =
-      (user?.role === 'manager' && item.to === '/manager/approvals') ||
-      (user?.role === 'hr' && item.to === '/hr/approvals')
-        ? pendingApprovals
-        : 0;
-    const count = Math.max(fromNotes, fromQueue);
+    const count = unreadByPath[item.to] || 0;
     return count || null;
   }
 
@@ -833,6 +852,7 @@ export default function AppShell({ title, nav, children }) {
                   title={item.label}
                   className="sidebar-link"
                   style={{ '--i': index }}
+                  onClick={() => markPathRead(item.to)}
                 >
                   <span className="sidebar-link-icon">
                     <NavGlyph label={item.label} />

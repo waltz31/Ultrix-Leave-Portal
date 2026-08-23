@@ -11567,27 +11567,42 @@ html[data-theme='light'] .rmb-sheet,
 
 .history-layout {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  gap: 18px;
 }
 
 .history-side-tabs {
-  display: grid;
-  gap: 8px;
-  position: sticky;
-  top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  position: static;
 }
 
 .history-side-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
   text-align: left;
-  border: 1px solid var(--shell-border, var(--line));
-  background: var(--shell-panel-bg, var(--surface));
+  border: 1px solid var(--shell-border, rgba(255, 255, 255, 0.28));
+  background: transparent;
   color: var(--shell-strong, var(--ink));
   border-radius: 12px;
-  padding: 12px 14px;
+  padding: 10px 16px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.history-tab-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.history-tab-divider {
+  width: 1px;
+  height: 22px;
+  background: currentColor;
+  opacity: 0.32;
+  flex-shrink: 0;
 }
 
 .history-side-tab.is-active {
@@ -11606,12 +11621,13 @@ html[data-theme='light'] .rmb-sheet,
 }
 
 @media (max-width: 800px) {
-  .history-layout {
-    grid-template-columns: 1fr;
-  }
   .history-side-tabs {
-    position: static;
+    display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .history-side-tab {
+    justify-content: center;
   }
 }
 
