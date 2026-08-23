@@ -32,3 +32,23 @@ services:
         sync: false
       - key: SLACK_SIGNING_SECRET
         sync: false
+      - key: ATT4U_ENABLED
+        value: "true"
+      - key: ATT4U_SOAP_URL
+        value: http://att4u.com/stan/WebApiService.asmx
+      - key: ATT4U_USER
+        value: Api
+      - key: ATT4U_PASSWORD
+        sync: false
+      - key: ATT4U_SERIAL
+        value: NFZ8245103695
+      - key: ATT4U_PORTAL_URL
+        value: http://www.att4u.com/STAN
+      - key: ATT4U_PORTAL_USER
+        value: essl
+      - key: ATT4U_PORTAL_PASSWORD
+        sync: false
+      - key: ATT4U_LOOKBACK_DAYS
+        value: "7"
+      - key: ATT4U_POLL_MS
+        value: "4000"

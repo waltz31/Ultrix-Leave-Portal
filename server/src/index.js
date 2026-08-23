@@ -1,5 +1,5 @@
 import './time.js';
-import 'dotenv/config';
+import './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
 import db from './db.js';

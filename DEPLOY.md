@@ -73,8 +73,16 @@ postgresql://postgres.xxxx:PASSWORD@aws-0-ap-south-1.pooler.supabase.com:6543/po
    | `TZ` | `Asia/Kolkata` |
    | `NODE_ENV` | `production` |
    | `NODE_VERSION` | `22` |
+   | `ATT4U_PASSWORD` | Punch Web API password (same as local `server/.env`) |
+   | `ATT4U_PORTAL_PASSWORD` | att4u portal password (same as local `server/.env`) |
+   | `ATT4U_USER` | `Api` |
+   | `ATT4U_PORTAL_USER` | `essl` |
+   | `ATT4U_SERIAL` | device serial from `server/.env.example` |
+   | `ATT4U_ENABLED` | `true` |
 
    Optional mail: `MAIL_ENABLED`, `SMTP_*`, `MAIL_FROM` (see `server/.env.example`).
+
+   Without `ATT4U_PASSWORD` or `ATT4U_PORTAL_PASSWORD` on Render, Attendance shows “Punch API password is not configured on the server.” `.env` is gitignored and is not deployed.
 
 4. Deploy. Copy the service URL, e.g. `https://ultrix-leave-api.onrender.com` (no trailing slash).
 5. Check `https://YOUR-API.onrender.com/api/health` — you should see `{ "ok": true, ... }`.
