@@ -11,13 +11,21 @@ import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import CompanyFeed from '../components/CompanyFeed';
 import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
+import PunchBoard from '../components/PunchBoard';
+import RegularizationInbox from '../components/RegularizationInbox';
+import HistoryWorkspace from '../components/HistoryWorkspace';
+import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
+import RegularizationHistoryPanel from '../components/RegularizationHistoryPanel';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
 
 const NAV = [
   { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/manager/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
+  { to: '/manager/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
   { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
   { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
+  { to: '/manager/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
   { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
@@ -77,11 +85,28 @@ export function ManagerOverview() {
         teamTitle="Team on leave"
         calendarTo="/manager/calendar"
         holidaysTo="/manager/calendar"
+        attendanceTo="/manager/attendance"
         canApplyRestricted
       />
 
       <LeaveReportSection />
 
+    </AppShell>
+  );
+}
+
+export function ManagerAttendance() {
+  return (
+    <AppShell title="Attendance" nav={NAV}>
+      <PunchBoard teamView />
+    </AppShell>
+  );
+}
+
+export function ManagerRegularization() {
+  return (
+    <AppShell title="Regularization" nav={NAV}>
+      <RegularizationInbox />
     </AppShell>
   );
 }
@@ -321,6 +346,7 @@ export function ManagerCalendar() {
         <LeaveCalendar
           leaves={data.leaves}
           showNames
+          layout="roster"
           balancesByUserId={data.balancesByUserId}
           employees={data.users}
         />
@@ -330,45 +356,12 @@ export function ManagerCalendar() {
 }
 
 export function ManagerHistory() {
-  const [status, setStatus] = useState('all');
-  const { data, error, loading } = useLoad(
-    () => api(`/leaves?status=${status}`).then((d) => d.leaves),
-    [status]
-  );
-
   return (
-    <AppShell title="Team history" nav={NAV}>
-      <div className="filters">
-        <label>
-          Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="all">All</option>
-            <option value="pending_manager">Awaiting manager</option>
-            <option value="pending_hr">Awaiting HR</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </label>
-      </div>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      <div className="stack tight">
-        {(data || []).map((leave) => (
-          <section key={leave.id} className="panel">
-            <div className="row-between">
-              <div>
-                <strong className="employee-name">{leave.userName}</strong> ·{' '}
-                {REQUEST_LABELS[leave.leaveType]} · {formatLeaveSpan(leave)}
-              </div>
-              <span className={`badge status-${leave.status}`}>
-                {STATUS_LABELS[leave.status]}
-              </span>
-            </div>
-            <ApprovalProgress leave={leave} compact />
-          </section>
-        ))}
-      </div>
+    <AppShell title="History" nav={NAV}>
+      <HistoryWorkspace
+        leave={<LeaveHistoryPanel showEmployee />}
+        regularization={<RegularizationHistoryPanel />}
+      />
     </AppShell>
   );
 }

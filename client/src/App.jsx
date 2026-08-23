@@ -4,25 +4,34 @@ import { ThemeProvider } from './theme';
 import LoginPage from './pages/LoginPage';
 import {
   HrApprovals,
+  HrAttendance,
   HrCalendar,
   HrFeed,
   HrHistory,
   HrOnboarding,
   HrOverview,
+  HrRegularization,
   HrUsers,
 } from './pages/HrPages';
 import {
   ManagerApprovals,
   ManagerApply,
+  ManagerAttendance,
   ManagerCalendar,
   ManagerFeed,
   ManagerHistory,
   ManagerOverview,
+  ManagerRegularization,
   ManagerSalary,
 } from './pages/ManagerPages';
-import { UserApply, UserCalendar, UserFeed, UserHistory, UserHome, UserSalary } from './pages/UserPages';
+import { UserApply, UserAttendance, UserCalendar, UserFeed, UserHistory, UserHome, UserSalary } from './pages/UserPages';
 import { UserRatings, ManagerRatings, HrRatings } from './pages/RatingsPages';
 import { EmployeeInvoices, ManagerInvoices, HrInvoices } from './pages/InvoicePages';
+import {
+  UserReimbursements,
+  ManagerReimbursements,
+  HrReimbursements,
+} from './pages/ReimbursementPages';
 import { homePathForRole } from './utils';
 
 function Protected({ role, children }) {
@@ -90,6 +99,22 @@ export default function App() {
             }
           />
           <Route
+            path="/hr/attendance"
+            element={
+              <Protected role="hr">
+                <HrAttendance />
+              </Protected>
+            }
+          />
+          <Route
+            path="/hr/regularization"
+            element={
+              <Protected role="hr">
+                <HrRegularization />
+              </Protected>
+            }
+          />
+          <Route
             path="/hr/onboarding"
             element={
               <Protected role="hr">
@@ -139,12 +164,36 @@ export default function App() {
               </Protected>
             }
           />
+          <Route
+            path="/hr/reimbursements"
+            element={
+              <Protected role="hr">
+                <HrReimbursements />
+              </Protected>
+            }
+          />
 
           <Route
             path="/manager"
             element={
               <Protected role="manager">
                 <ManagerOverview />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/attendance"
+            element={
+              <Protected role="manager">
+                <ManagerAttendance />
+              </Protected>
+            }
+          />
+          <Route
+            path="/manager/regularization"
+            element={
+              <Protected role="manager">
+                <ManagerRegularization />
               </Protected>
             }
           />
@@ -205,12 +254,28 @@ export default function App() {
               </Protected>
             }
           />
+          <Route
+            path="/manager/reimbursements"
+            element={
+              <Protected role="manager">
+                <ManagerReimbursements />
+              </Protected>
+            }
+          />
 
           <Route
             path="/app"
             element={
               <Protected role="user">
                 <UserHome />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/attendance"
+            element={
+              <Protected role="user">
+                <UserAttendance />
               </Protected>
             }
           />
@@ -259,6 +324,14 @@ export default function App() {
             element={
               <Protected role="user">
                 <EmployeeInvoices />
+              </Protected>
+            }
+          />
+          <Route
+            path="/app/reimbursements"
+            element={
+              <Protected role="user">
+                <UserReimbursements />
               </Protected>
             }
           />

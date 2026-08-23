@@ -12,7 +12,9 @@ const DEFAULT_COLOR_INPUT = '#0b1220';
 const USER_ICONS = [
   { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
   { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/app/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
   { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
+  { to: '/app/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
   { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
   { to: '/app/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
   { to: '/app/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
@@ -58,7 +60,7 @@ function NavGlyph({ label }) {
       </svg>
     );
   }
-  if (key.includes('salary') || key.includes('invoice')) {
+  if (key.includes('salary') || key.includes('invoice') || key.includes('reimburs')) {
     return (
       <svg {...common}>
         <rect x="5" y="3.5" width="14" height="17" rx="2" {...stroke} />
@@ -107,6 +109,23 @@ function NavGlyph({ label }) {
       </svg>
     );
   }
+  if (key.includes('regular')) {
+    return (
+      <svg {...common}>
+        <rect x="4" y="4.5" width="16" height="15" rx="2.2" {...stroke} />
+        <path d="M8 3.5v3M16 3.5v3M4 10h16" {...stroke} />
+        <path d="M9 14.5 11 16.5 15.5 12.5" {...stroke} />
+      </svg>
+    );
+  }
+  if (key.includes('attendance') || key.includes('punch')) {
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="7.5" {...stroke} />
+        <path d="M12 8v4.2l2.6 1.5" {...stroke} />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <circle cx="12" cy="12" r="7.5" {...stroke} />
@@ -115,6 +134,16 @@ function NavGlyph({ label }) {
 }
 
 function pathForNotification(role, type) {
+  if (String(type || '').startsWith('attendance_regularize')) {
+    if (role === 'hr') return '/hr/regularization';
+    if (role === 'manager') return '/manager/regularization';
+    return '/app/attendance';
+  }
+  if (String(type || '').startsWith('reimbursement_')) {
+    if (role === 'hr') return '/hr/reimbursements';
+    if (role === 'manager') return '/manager/reimbursements';
+    return '/app/reimbursements';
+  }
   if (role === 'manager') {
     if (type === 'pending_manager') return '/manager/approvals';
     if (type === 'approved' || type === 'cancelled') return '/manager/calendar';
@@ -123,6 +152,7 @@ function pathForNotification(role, type) {
   if (role === 'hr') {
     if (type === 'pending_hr') return '/hr/approvals';
     if (type === 'approved' || type === 'cancelled') return '/hr/calendar';
+    if (type === 'invoice_submitted') return '/hr/invoices';
     return '/hr/history';
   }
   if (type === 'approved') return '/app/calendar';
@@ -639,14 +669,12 @@ export default function AppShell({ title, nav, children }) {
     const nav = navRef.current;
     const target = el || nav?.querySelector('.sidebar-link.active');
     if (!nav || !target) {
-      setIndicator((s) => ({ ...s, visible: false }));
+      setIndicator((s) => (s.visible ? { ...s, visible: false } : s));
       return;
     }
-    setIndicator({
-      y: target.offsetTop,
-      h: target.offsetHeight,
-      visible: true,
-    });
+    const y = target.offsetTop;
+    const h = target.offsetHeight;
+    setIndicator((s) => (s.y === y && s.h === h && s.visible ? s : { y, h, visible: true }));
   }, []);
 
   useLayoutEffect(() => {
@@ -787,8 +815,14 @@ export default function AppShell({ title, nav, children }) {
                   title={item.label}
                   className="sidebar-link"
                   style={{ '--i': index }}
-                  onMouseEnter={(e) => moveIndicator(e.currentTarget)}
-                  onFocus={(e) => moveIndicator(e.currentTarget)}
+                  onMouseEnter={(e) => {
+                    if (e.currentTarget.classList.contains('active')) return;
+                    moveIndicator(e.currentTarget);
+                  }}
+                  onFocus={(e) => {
+                    if (e.currentTarget.classList.contains('active')) return;
+                    moveIndicator(e.currentTarget);
+                  }}
                 >
                   <span className="sidebar-link-icon">
                     <NavGlyph label={item.label} />

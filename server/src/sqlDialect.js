@@ -36,6 +36,10 @@ export function translateSql(sql) {
   );
   s = s.replace(/ON CONFLICT\(user_id\)/gi, 'ON CONFLICT (user_id)');
   s = s.replace(/ON CONFLICT\(key\)/gi, 'ON CONFLICT (key)');
+  s = s.replace(
+    /ON CONFLICT\(device_user_code, punched_at, serial_number\)/gi,
+    'ON CONFLICT (device_user_code, punched_at, serial_number)'
+  );
   return s;
 }
 

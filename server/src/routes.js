@@ -36,6 +36,28 @@ import {
   mailCancelled,
 } from './mail.js';
 import { todayIst } from './time.js';
+import {
+  mapPunch,
+  punchStatus,
+  summarizeDaySessions,
+  syncPunchesSafe,
+  EXPECTED_WORK_MINUTES,
+  formatWorkHours,
+  isIstWeekday,
+  isRegularizeEligible,
+  isShortWorkDay,
+  workMinutesBetween,
+} from './punchSync.js';
+import { buildAttendanceOverview } from './attendanceOverview.js';
+import {
+  REGULARIZE_SELECT,
+  applyApprovedOverride,
+  averageApprovalDays,
+  mapRegularization,
+  monthDateRange,
+  normalizeIstStamp,
+  regularizeScope,
+} from './attendanceRegularize.js';
 import { SQL_NOW_IST, SQL_TODAY_IST, isPostgres, isUniqueViolation } from './sqlDialect.js';
 import {
   FEED_CATEGORIES,
@@ -61,6 +83,13 @@ import {
 import { mapRating, RATING_SELECT } from './ratingUtils.js';
 import { mapInvoice, validateInvoicePayload, INVOICE_SELECT, INVOICE_RETENTION_NOTICE } from './invoiceUtils.js';
 import { purgeExpiredInvoices } from './invoiceCleanup.js';
+import {
+  CATEGORY_LABELS,
+  REIMBURSEMENT_SELECT,
+  REIMBURSEMENT_STATUSES,
+  mapReimbursement,
+  validateReimbursementPayload,
+} from './reimbursementUtils.js';
 import {
   EMPLOYMENT_TYPES,
   WORK_MODES,
@@ -115,12 +144,12 @@ async function getLeaveById(id) {
   return await db.prepare(`${LEAVE_SELECT} WHERE lr.id = ?`).get(id);
 }
 
-async function notifyUser({ userId, leaveId, type, title, message }) {
+async function notifyUser({ userId, leaveId, reimbursementId, type, title, message }) {
   if (!userId) return;
   await db.prepare(
-    `INSERT INTO notifications (user_id, leave_id, type, title, message)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(userId, leaveId ?? null, type, title, message);
+    `INSERT INTO notifications (user_id, leave_id, reimbursement_id, type, title, message)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(userId, leaveId ?? null, reimbursementId ?? null, type, title, message);
 }
 
 async function notifyMany(userIds, payload) {
@@ -2124,7 +2153,7 @@ router.patch('/leaves/:id/cancel', authRequired, async (req, res) => {
 router.get('/notifications', authRequired, async (req, res) => {
   const notifications = (await db
     .prepare(
-      `SELECT id, leave_id, type, title, message, read, created_at
+      `SELECT id, leave_id, reimbursement_id, type, title, message, read, created_at
        FROM notifications
        WHERE user_id = ?
        ORDER BY created_at DESC
@@ -2134,6 +2163,7 @@ router.get('/notifications', authRequired, async (req, res) => {
     .map((n) => ({
       id: n.id,
       leaveId: n.leave_id,
+      reimbursementId: n.reimbursement_id,
       type: n.type,
       title: n.title,
       message: n.message,
@@ -3197,6 +3227,779 @@ router.post('/feed/comments/:id/reactions', authRequired, async (req, res) => {
   });
   if (result.error) return res.status(result.status).json({ error: result.error });
   res.json(result);
+});
+
+router.get('/attendance/overview', authRequired, hrRequired, async (req, res) => {
+  const overview = await buildAttendanceOverview(db, {
+    date: req.query.date,
+    location: req.query.location,
+    department: req.query.department,
+  });
+  res.json({ overview, status: await punchStatus() });
+});
+
+router.get('/punches/status', authRequired, async (_req, res) => {
+  res.json({ status: await punchStatus() });
+});
+
+router.post('/punches/sync', authRequired, hrRequired, async (_req, res) => {
+  const result = await syncPunchesSafe();
+  const status = await punchStatus();
+  if (!result.ok && !result.skipped) {
+    return res.status(502).json({ error: result.error || 'Punch sync failed', status, result });
+  }
+  res.json({ result, status });
+});
+
+router.get('/punches', authRequired, async (req, res) => {
+  const refresh = String(req.query.refresh || '') === '1';
+  if (refresh) {
+    await syncPunchesSafe();
+  }
+  const date = String(req.query.date || todayIst()).slice(0, 10);
+  const from = String(req.query.from || date).slice(0, 10);
+  const to = String(req.query.to || date).slice(0, 10);
+  const rows = await db
+    .prepare(
+      `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
+              p.serial_number, p.direction, u.name AS user_name, u.employee_number
+       FROM punch_logs p
+       LEFT JOIN users u ON u.id = p.user_id
+       WHERE p.punch_date >= ? AND p.punch_date <= ?
+       ORDER BY p.punched_at DESC`
+    )
+    .all(from, to);
+
+  let visible = rows;
+  if (req.user.role === 'user') {
+    visible = rows.filter((r) => r.user_id === req.user.id);
+  } else if (req.user.role === 'manager') {
+    const team = await db
+      .prepare(`SELECT id FROM users WHERE manager_id = ? OR id = ?`)
+      .all(req.user.id, req.user.id);
+    const ids = new Set(team.map((t) => t.id));
+    visible = rows.filter((r) => r.user_id && ids.has(r.user_id));
+  }
+
+  const punches = mergeSessionsWithOverrides(
+    summarizeDaySessions(visible.map(mapPunch)),
+    await loadApprovedOverrides(from, to, req.user.role === 'user' ? req.user.id : null)
+  );
+  const pending = await db
+    .prepare(
+      `SELECT user_id, punch_date FROM attendance_regularizations
+       WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
+    )
+    .all(from, to);
+  const pendingKeys = new Set(pending.map((p) => `${p.user_id}|${p.punch_date}`));
+  const today = todayIst();
+  res.json({
+    from,
+    to,
+    punches: punches.map((session) => ({
+      ...session,
+      regularizePending: session.userId
+        ? pendingKeys.has(`${session.userId}|${session.punchDate}`)
+        : false,
+      canRegularize:
+        req.user.role === 'user' &&
+        session.userId === req.user.id &&
+        isRegularizeEligible(session, today) &&
+        !pendingKeys.has(`${session.userId}|${session.punchDate}`),
+    })),
+    status: await punchStatus(),
+  });
+});
+
+// ——— Attendance calendar + regularizations ———
+async function loadPunchRows(from, to) {
+  return await db
+    .prepare(
+      `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
+              p.serial_number, p.direction, u.name AS user_name, u.employee_number
+       FROM punch_logs p
+       LEFT JOIN users u ON u.id = p.user_id
+       WHERE p.punch_date >= ? AND p.punch_date <= ?
+       ORDER BY p.punched_at ASC`
+    )
+    .all(from, to);
+}
+
+async function loadApprovedOverrides(from, to, userId = null) {
+  const params = [from, to];
+  let sql = `SELECT user_id, punch_date, proposed_punch_in, proposed_punch_out
+             FROM attendance_regularizations
+             WHERE status = 'approved' AND punch_date >= ? AND punch_date <= ?`;
+  if (userId) {
+    sql += ` AND user_id = ?`;
+    params.push(userId);
+  }
+  return await db.prepare(sql).all(...params);
+}
+
+function mergeSessionsWithOverrides(sessions, overrides) {
+  const map = new Map(
+    overrides.map((o) => [`${o.user_id}|${o.punch_date}`, o])
+  );
+  return sessions.map((session) => {
+    if (!session.userId) return session;
+    const ov = map.get(`${session.userId}|${session.punchDate}`);
+    return ov ? applyApprovedOverride(session, ov) : session;
+  });
+}
+
+router.get('/attendance/calendar', authRequired, async (req, res) => {
+  const from = String(req.query.from || todayIst()).slice(0, 10);
+  const to = String(req.query.to || from).slice(0, 10);
+  const filterUserId = req.query.userId ? Number(req.query.userId) : null;
+  const rows = await loadPunchRows(from, to);
+
+  let visible = rows;
+  if (req.user.role === 'user') {
+    visible = rows.filter((r) => r.user_id === req.user.id);
+  } else if (req.user.role === 'manager') {
+    const team = await db
+      .prepare(`SELECT id FROM users WHERE manager_id = ? OR id = ?`)
+      .all(req.user.id, req.user.id);
+    const ids = new Set(team.map((t) => t.id));
+    visible = rows.filter((r) => r.user_id && ids.has(r.user_id));
+    if (filterUserId) {
+      visible = visible.filter((r) => r.user_id === filterUserId);
+    }
+  } else if (filterUserId) {
+    visible = rows.filter((r) => r.user_id === filterUserId);
+  }
+
+  let sessions = summarizeDaySessions(visible.map(mapPunch));
+  const overrides = await loadApprovedOverrides(
+    from,
+    to,
+    req.user.role === 'user'
+      ? req.user.id
+      : req.user.role === 'manager' && filterUserId
+        ? filterUserId
+        : req.user.role === 'hr' && filterUserId
+          ? filterUserId
+          : null
+  );
+  sessions = mergeSessionsWithOverrides(sessions, overrides);
+
+  const pending = await db
+    .prepare(
+      `SELECT user_id, punch_date FROM attendance_regularizations
+       WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
+    )
+    .all(from, to);
+  const pendingKeys = new Set(pending.map((p) => `${p.user_id}|${p.punch_date}`));
+
+  sessions = sessions.map((s) => ({
+    ...s,
+    regularizePending: s.userId ? pendingKeys.has(`${s.userId}|${s.punchDate}`) : false,
+    canRegularize:
+      req.user.role === 'user' &&
+      s.userId === req.user.id &&
+      isRegularizeEligible(s, todayIst()) &&
+      !pendingKeys.has(`${s.userId}|${s.punchDate}`),
+  }));
+
+  res.json({
+    from,
+    to,
+    expectedWorkMinutes: EXPECTED_WORK_MINUTES,
+    sessions,
+  });
+});
+
+router.get('/attendance/regularizations', authRequired, async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase();
+  const search = String(req.query.search || '').trim().toLowerCase();
+  const department = String(req.query.department || '').trim();
+  const reason = String(req.query.reason || '').trim();
+  const month = monthDateRange(todayIst());
+  const from = String(req.query.from || month.start).slice(0, 10);
+  const to = String(req.query.to || month.end).slice(0, 10);
+
+  const scope = regularizeScope(req.user);
+  const clauses = [...scope.clauses];
+  const params = [...scope.params];
+  clauses.push("r.status = 'pending'");
+  if (status === 'changes_requested') {
+    clauses.push("COALESCE(r.hr_note, '') != '' AND r.hr_id IS NOT NULL");
+  } else if (status === 'pending') {
+    clauses.push("(COALESCE(r.hr_note, '') = '' OR r.hr_id IS NULL)");
+  }
+  if (department) {
+    clauses.push('ep.department = ?');
+    params.push(department);
+  }
+  if (reason) {
+    clauses.push('r.reason = ?');
+    params.push(reason);
+  }
+  if (search) {
+    const like = `%${search}%`;
+    clauses.push(
+      `(LOWER(u.name) LIKE ? OR LOWER(COALESCE(u.employee_number, '')) LIKE ? OR LOWER(COALESCE(u.email, '')) LIKE ?)`
+    );
+    params.push(like, like, like);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = await db
+    .prepare(`${REGULARIZE_SELECT} ${where} ORDER BY r.created_at DESC, r.id DESC`)
+    .all(...params);
+
+  const statClauses = [...scope.clauses];
+  const statParams = [...scope.params];
+  const statWhere = statClauses.length ? `WHERE ${statClauses.join(' AND ')}` : '';
+  const scopedRows = await db
+    .prepare(`${REGULARIZE_SELECT} ${statWhere}`)
+    .all(...statParams);
+  const monthRows = scopedRows.filter(
+    (row) => String(row.punch_date) >= month.start && String(row.punch_date) <= month.end
+  );
+  const stats = {
+    total: monthRows.length,
+    pending: scopedRows.filter((row) => row.status === 'pending').length,
+    approved: monthRows.filter((row) => row.status === 'approved').length,
+    rejected: monthRows.filter((row) => row.status === 'rejected').length,
+    avgApprovalDays: averageApprovalDays(monthRows),
+  };
+  const departments = [
+    ...new Set(scopedRows.map((row) => row.department).filter(Boolean)),
+  ].sort();
+  const reasons = [...new Set(scopedRows.map((row) => row.reason).filter(Boolean))].sort();
+
+  const decided = scopedRows
+    .filter((row) => row.status === 'approved' || row.status === 'rejected')
+    .sort((a, b) =>
+      String(b.hr_reviewed_at || b.updated_at || '').localeCompare(
+        String(a.hr_reviewed_at || a.updated_at || '')
+      )
+    );
+  const history = decided.slice(0, 20).map(mapRegularization);
+  const lastApprovedRow = decided.find((row) => row.status === 'approved') || null;
+  const lastApprovedByUser = {};
+  for (const row of decided.filter((item) => item.status === 'approved')) {
+    if (lastApprovedByUser[row.user_id]) continue;
+    lastApprovedByUser[row.user_id] = mapRegularization(row);
+  }
+
+  res.json({
+    regularizations: rows.map(mapRegularization),
+    stats,
+    departments,
+    reasons,
+    history,
+    lastApproved: lastApprovedRow ? mapRegularization(lastApprovedRow) : null,
+    lastApprovedByUser,
+    from,
+    to,
+  });
+});
+
+router.post('/attendance/regularizations', authRequired, async (req, res) => {
+  if (req.user.role !== 'user') {
+    return res.status(403).json({ error: 'Only employees can request regularization' });
+  }
+  const punchDate = String(req.body?.punchDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(punchDate)) {
+    return res.status(400).json({ error: 'Valid punch date is required' });
+  }
+  if (punchDate > todayIst()) {
+    return res.status(400).json({ error: 'Regularization cannot be requested for a future date' });
+  }
+  if (!isIstWeekday(punchDate)) {
+    return res.status(400).json({ error: 'Regularization is allowed on weekdays only' });
+  }
+  const reason = String(req.body?.reason || '').trim().slice(0, 500);
+  if (!reason) return res.status(400).json({ error: 'Reason is required' });
+
+  const proposedPunchIn = normalizeIstStamp(req.body?.proposedPunchIn, punchDate);
+  const proposedPunchOut = normalizeIstStamp(req.body?.proposedPunchOut, punchDate);
+  if (!proposedPunchIn || !proposedPunchOut) {
+    return res.status(400).json({ error: 'Proposed punch in and punch out times are required' });
+  }
+  const proposedWork = workMinutesBetween(proposedPunchIn, proposedPunchOut);
+  if (proposedWork == null || proposedWork <= 0) {
+    return res.status(400).json({ error: 'Proposed punch out must be after punch in' });
+  }
+
+  const rows = await loadPunchRows(punchDate, punchDate);
+  const mine = rows.filter((r) => r.user_id === req.user.id);
+  const sessions = summarizeDaySessions(mine.map(mapPunch));
+  const session = sessions[0] || null;
+  if (!session) {
+    return res.status(400).json({ error: 'No attendance found for this date' });
+  }
+  if (!isRegularizeEligible(session, todayIst())) {
+    return res.status(400).json({
+      error: 'Regularization is only for weekday attendance under 9 hours, and not for future dates',
+    });
+  }
+
+  const existingPending = await db
+    .prepare(
+      `SELECT id FROM attendance_regularizations
+       WHERE user_id = ? AND punch_date = ? AND status = 'pending'`
+    )
+    .get(req.user.id, punchDate);
+  if (existingPending) {
+    return res.status(409).json({ error: 'A pending regularization already exists for this date' });
+  }
+
+  let result;
+  try {
+    result = await db
+      .prepare(
+        `INSERT INTO attendance_regularizations
+           (user_id, punch_date, current_punch_in, current_punch_out, current_work_minutes,
+            proposed_punch_in, proposed_punch_out, reason, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+      )
+      .run(
+        req.user.id,
+        punchDate,
+        session?.punchIn || null,
+        session?.punchOut || null,
+        session?.workMinutes ?? null,
+        proposedPunchIn,
+        proposedPunchOut,
+        reason
+      );
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(409).json({ error: 'A pending regularization already exists for this date' });
+    }
+    throw err;
+  }
+
+  const row = await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(result.lastInsertRowid);
+  const regularization = mapRegularization(row);
+  const hoursNote = session?.workHours
+    ? `${session.workHours} → ${formatWorkHours(proposedWork)}`
+    : formatWorkHours(proposedWork);
+  await notifyMany(await getHrIds(), {
+    type: 'attendance_regularize_pending',
+    title: 'Attendance regularization',
+    message: `${req.user.name} requested regularization for ${punchDate} (${hoursNote}).`,
+  });
+  const requester = await db
+    .prepare(`SELECT manager_id FROM users WHERE id = ?`)
+    .get(req.user.id);
+  if (requester?.manager_id) {
+    await notifyUser({
+      userId: requester.manager_id,
+      type: 'attendance_regularize_pending',
+      title: 'Attendance regularization',
+      message: `${req.user.name} requested regularization for ${punchDate}.`,
+    });
+  }
+  await notifyUser({
+    userId: req.user.id,
+    type: 'attendance_regularize_submitted',
+    title: 'Regularization request sent',
+    message: `Your regularization request for ${punchDate} was sent for approval.`,
+  });
+  res.status(201).json({ regularization });
+});
+
+router.patch('/attendance/regularizations/:id/cancel', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(id);
+  if (!row || Number(row.user_id) !== Number(req.user.id)) {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+  if (row.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending requests can be cancelled' });
+  }
+  await db
+    .prepare(
+      `UPDATE attendance_regularizations
+       SET status = 'cancelled', updated_at = ${SQL_NOW_IST}
+       WHERE id = ?`
+    )
+    .run(id);
+  res.json({
+    regularization: mapRegularization(
+      await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(id)
+    ),
+  });
+});
+
+router.patch('/attendance/regularizations/:id/review', authRequired, async (req, res) => {
+  if (req.user.role !== 'hr' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Not allowed to review regularization requests' });
+  }
+  const id = Number(req.params.id);
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const note = String(req.body?.note || '').trim().slice(0, 500);
+  const row = await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(id);
+  if (!row) return res.status(404).json({ error: 'Request not found' });
+  if (Number(row.user_id) === Number(req.user.id)) {
+    return res.status(403).json({ error: 'You cannot review your own request' });
+  }
+  if (req.user.role === 'manager') {
+    const employee = await db.prepare(`SELECT manager_id FROM users WHERE id = ?`).get(row.user_id);
+    if (Number(employee?.manager_id) !== Number(req.user.id)) {
+      return res.status(403).json({ error: 'You can only review your team\'s requests' });
+    }
+  }
+  if (row.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending requests can be reviewed' });
+  }
+  if (action === 'changes') {
+    if (!note) {
+      return res.status(400).json({ error: 'Add a note when requesting changes' });
+    }
+    await db
+      .prepare(
+        `UPDATE attendance_regularizations
+         SET hr_note = ?, hr_id = ?, updated_at = ${SQL_NOW_IST}
+         WHERE id = ?`
+      )
+      .run(note, req.user.id, id);
+    await notifyUser({
+      userId: row.user_id,
+      type: 'attendance_regularize_changes',
+      title: 'Regularization needs changes',
+      message: `Your regularization for ${row.punch_date} needs changes: ${note}`,
+    });
+    return res.json({
+      regularization: mapRegularization(
+        await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(id)
+      ),
+    });
+  }
+  if (action !== 'approve' && action !== 'reject') {
+    return res.status(400).json({ error: 'Action must be approve, reject, or changes' });
+  }
+  const nextStatus = action === 'approve' ? 'approved' : 'rejected';
+
+  if (action === 'approve') {
+    // Drop older approved override for same day so unique index allows the new one
+    await db
+      .prepare(
+        `UPDATE attendance_regularizations
+         SET status = 'cancelled', updated_at = ${SQL_NOW_IST}
+         WHERE user_id = ? AND punch_date = ? AND status = 'approved' AND id != ?`
+      )
+      .run(row.user_id, row.punch_date, id);
+  }
+
+  await db
+    .prepare(
+      `UPDATE attendance_regularizations
+       SET status = ?, hr_note = ?, hr_id = ?, hr_reviewed_at = ${SQL_NOW_IST},
+           updated_at = ${SQL_NOW_IST}
+       WHERE id = ?`
+    )
+    .run(nextStatus, note || null, req.user.id, id);
+
+  const updated = mapRegularization(
+    await db.prepare(`${REGULARIZE_SELECT} WHERE r.id = ?`).get(id)
+  );
+  await notifyUser({
+    userId: row.user_id,
+    type:
+      action === 'approve'
+        ? 'attendance_regularize_approved'
+        : 'attendance_regularize_rejected',
+    title:
+      action === 'approve'
+        ? 'Attendance regularization approved'
+        : 'Attendance regularization rejected',
+    message:
+      action === 'approve'
+        ? `Your regularization for ${row.punch_date} was approved.`
+        : `Your regularization for ${row.punch_date} was rejected.`,
+  });
+  res.json({ regularization: updated });
+});
+
+// ——— Reimbursements ———
+async function getReimbursementById(id, { includeReceipt = false } = {}) {
+  const select = includeReceipt
+    ? REIMBURSEMENT_SELECT.replace(
+        'CASE WHEN r.receipt_data IS NOT NULL AND length(r.receipt_data) > 0 THEN 1 ELSE 0 END AS has_receipt,\n         r.receipt_name, r.receipt_mime, r.status,',
+        `CASE WHEN r.receipt_data IS NOT NULL AND length(r.receipt_data) > 0 THEN 1 ELSE 0 END AS has_receipt,
+         r.receipt_data, r.receipt_name, r.receipt_mime, r.status,`
+      )
+    : REIMBURSEMENT_SELECT;
+  return await db.prepare(`${select} WHERE r.id = ?`).get(id);
+}
+
+async function nextReimbursementCode() {
+  const year = todayIst().slice(0, 4);
+  const prefix = `RMB-${year}-`;
+  const row = await db
+    .prepare(
+      `SELECT request_code FROM reimbursement_requests
+       WHERE request_code LIKE ?
+       ORDER BY request_code DESC
+       LIMIT 1`
+    )
+    .get(`${prefix}%`);
+  let seq = 1;
+  if (row?.request_code) {
+    const n = Number(String(row.request_code).split('-').pop());
+    if (Number.isFinite(n)) seq = n + 1;
+  }
+  return `${prefix}${String(seq).padStart(3, '0')}`;
+}
+
+function canViewReimbursement(user, row) {
+  if (!row) return false;
+  if (user.role === 'hr') return true;
+  return Number(row.user_id) === Number(user.id);
+}
+
+router.get('/reimbursements/stats', authRequired, async (req, res) => {
+  const year = String(req.query.year || todayIst().slice(0, 4));
+  const params = [`${year}-%`];
+  let where = `expense_date LIKE ? AND status != 'cancelled'`;
+  if (req.user.role !== 'hr') {
+    where += ` AND user_id = ?`;
+    params.push(req.user.id);
+  }
+  const rows = await db
+    .prepare(
+      `SELECT status, COUNT(*) AS c, COALESCE(SUM(amount), 0) AS total
+       FROM reimbursement_requests
+       WHERE ${where}
+       GROUP BY status`
+    )
+    .all(...params);
+
+  const byStatus = Object.fromEntries(
+    REIMBURSEMENT_STATUSES.filter((s) => s !== 'cancelled').map((s) => [
+      s,
+      { count: 0, amount: 0 },
+    ])
+  );
+  for (const row of rows) {
+    if (!byStatus[row.status]) continue;
+    byStatus[row.status] = {
+      count: Number(row.c || 0),
+      amount: Number(row.total || 0),
+    };
+  }
+  const totalRequests = Object.values(byStatus).reduce((sum, s) => sum + s.count, 0);
+  const approvedAmount = byStatus.approved.amount + byStatus.reimbursed.amount;
+  res.json({
+    year,
+    totalRequests,
+    byStatus,
+    kpis: {
+      totalRequests,
+      approved: byStatus.approved.count + byStatus.reimbursed.count,
+      approvedAmount,
+      pending: byStatus.pending.count,
+      pendingAmount: byStatus.pending.amount,
+      rejected: byStatus.rejected.count,
+      rejectedAmount: byStatus.rejected.amount,
+      totalReimbursed: byStatus.reimbursed.amount,
+    },
+  });
+});
+
+router.get('/reimbursements', authRequired, async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase();
+  const params = [];
+  const clauses = [];
+  if (req.user.role !== 'hr') {
+    clauses.push('r.user_id = ?');
+    params.push(req.user.id);
+  }
+  if (status && status !== 'all') {
+    if (!REIMBURSEMENT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status filter' });
+    }
+    clauses.push('r.status = ?');
+    params.push(status);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = await db
+    .prepare(`${REIMBURSEMENT_SELECT} ${where} ORDER BY r.created_at DESC, r.id DESC`)
+    .all(...params);
+  res.json({ reimbursements: rows.map((row) => mapReimbursement(row)) });
+});
+
+router.post('/reimbursements', authRequired, async (req, res) => {
+  if (req.user.role !== 'user' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Only employees and managers can submit reimbursements' });
+  }
+  const validated = validateReimbursementPayload(req.body || {});
+  if (validated.error) return res.status(400).json({ error: validated.error });
+  const { data } = validated;
+
+  let requestCode = await nextReimbursementCode();
+  let result;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      result = await db
+        .prepare(
+          `INSERT INTO reimbursement_requests
+             (request_code, user_id, category, expense_date, description, amount,
+              payment_mode, currency, notes, receipt_data, receipt_name, receipt_mime, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+        )
+        .run(
+          requestCode,
+          req.user.id,
+          data.category,
+          data.expenseDate,
+          data.description,
+          data.amount,
+          data.paymentMode,
+          data.currency,
+          data.notes || null,
+          data.receiptData,
+          data.receiptName,
+          data.receiptMime
+        );
+      break;
+    } catch (err) {
+      if (isUniqueViolation(err) && attempt < 4) {
+        requestCode = await nextReimbursementCode();
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  const row = await getReimbursementById(result.lastInsertRowid);
+  const reimbursement = mapReimbursement(row);
+  const categoryLabel = CATEGORY_LABELS[data.category] || data.category;
+  await notifyMany(await getHrIds(), {
+    reimbursementId: reimbursement.id,
+    type: 'reimbursement_pending',
+    title: 'New reimbursement request',
+    message: `${req.user.name} submitted ${requestCode} (${categoryLabel}, ₹${data.amount.toLocaleString('en-IN')}).`,
+  });
+  res.status(201).json({ reimbursement });
+});
+
+router.get('/reimbursements/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await getReimbursementById(id, { includeReceipt: true });
+  if (!row || !canViewReimbursement(req.user, row)) {
+    return res.status(404).json({ error: 'Reimbursement not found' });
+  }
+  res.json({ reimbursement: mapReimbursement(row, { includeReceipt: true }) });
+});
+
+router.get('/reimbursements/:id/receipt', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await db
+    .prepare(
+      `SELECT id, user_id, receipt_data, receipt_name, receipt_mime FROM reimbursement_requests WHERE id = ?`
+    )
+    .get(id);
+  if (!row || !canViewReimbursement(req.user, row) || !row.receipt_data) {
+    return res.status(404).json({ error: 'Receipt not found' });
+  }
+  res.json({
+    receiptData: row.receipt_data,
+    receiptName: row.receipt_name,
+    receiptMime: row.receipt_mime,
+  });
+});
+
+router.patch('/reimbursements/:id/cancel', authRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const row = await getReimbursementById(id);
+  if (!row || Number(row.user_id) !== Number(req.user.id)) {
+    return res.status(404).json({ error: 'Reimbursement not found' });
+  }
+  if (row.status !== 'pending') {
+    return res.status(400).json({ error: 'Only pending requests can be cancelled' });
+  }
+  await db
+    .prepare(
+      `UPDATE reimbursement_requests
+       SET status = 'cancelled', updated_at = ${SQL_NOW_IST}
+       WHERE id = ?`
+    )
+    .run(id);
+  const updated = mapReimbursement(await getReimbursementById(id));
+  await notifyMany(await getHrIds(), {
+    reimbursementId: id,
+    type: 'reimbursement_cancelled',
+    title: 'Reimbursement cancelled',
+    message: `${req.user.name} cancelled ${updated.requestCode}.`,
+  });
+  res.json({ reimbursement: updated });
+});
+
+router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const note = String(req.body?.note || '').trim().slice(0, 500);
+  const row = await getReimbursementById(id);
+  if (!row) return res.status(404).json({ error: 'Reimbursement not found' });
+
+  let nextStatus = null;
+  let notifyType = null;
+  let title = '';
+  let message = '';
+  if (action === 'approve') {
+    if (row.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requests can be approved' });
+    }
+    nextStatus = 'approved';
+    notifyType = 'reimbursement_approved';
+    title = 'Reimbursement approved';
+    message = `Your request ${row.request_code} was approved by HR.`;
+  } else if (action === 'reject') {
+    if (row.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requests can be rejected' });
+    }
+    nextStatus = 'rejected';
+    notifyType = 'reimbursement_rejected';
+    title = 'Reimbursement rejected';
+    message = `Your request ${row.request_code} was rejected by HR.`;
+  } else if (action === 'reimburse') {
+    if (row.status !== 'approved') {
+      return res.status(400).json({ error: 'Only approved requests can be marked reimbursed' });
+    }
+    nextStatus = 'reimbursed';
+    notifyType = 'reimbursement_reimbursed';
+    title = 'Reimbursement paid';
+    message = `Your request ${row.request_code} has been reimbursed.`;
+  } else {
+    return res.status(400).json({ error: 'Action must be approve, reject, or reimburse' });
+  }
+
+  if (action === 'reimburse') {
+    await db
+      .prepare(
+        `UPDATE reimbursement_requests
+         SET status = ?, hr_note = COALESCE(NULLIF(?, ''), hr_note),
+             hr_id = ?, hr_reviewed_at = COALESCE(hr_reviewed_at, ${SQL_NOW_IST}),
+             reimbursed_at = ${SQL_NOW_IST}, updated_at = ${SQL_NOW_IST}
+         WHERE id = ?`
+      )
+      .run(nextStatus, note, req.user.id, id);
+  } else {
+    await db
+      .prepare(
+        `UPDATE reimbursement_requests
+         SET status = ?, hr_note = ?, hr_id = ?, hr_reviewed_at = ${SQL_NOW_IST},
+             updated_at = ${SQL_NOW_IST}
+         WHERE id = ?`
+      )
+      .run(nextStatus, note || null, req.user.id, id);
+  }
+
+  const updated = mapReimbursement(await getReimbursementById(id));
+  await notifyUser({
+    userId: row.user_id,
+    reimbursementId: id,
+    type: notifyType,
+    title,
+    message: note ? `${message} Note: ${note}` : message,
+  });
+  res.json({ reimbursement: updated });
 });
 
 router.use((req, res) => {

@@ -514,7 +514,7 @@ export default function EmployeeOnboardingForm({
           <div className="form-grid">
             <label>
               Employee ID
-              <input {...field('employeeNumber')} maxLength={40} placeholder="e.g. EMP001" />
+              <input {...field('employeeNumber')} maxLength={40} placeholder="Must match punch device Emp Code" />
             </label>
             <label>
               Full name

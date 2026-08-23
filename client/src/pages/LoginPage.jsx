@@ -20,7 +20,7 @@ export default function LoginPage() {
       setIntroDone(true);
       return undefined;
     }
-    const fallback = window.setTimeout(() => setIntroDone(true), 6500);
+    const fallback = window.setTimeout(() => setIntroDone(true), 2000);
     return () => window.clearTimeout(fallback);
   }, []);
 

@@ -104,6 +104,72 @@ migrateEmployeeAssetsTable();
 migrateMandatoryLeavesTable();
 migrateHolidayTypes();
 migrateFeedTables();
+migratePunchLogsTable();
+migrateReimbursementsTable();
+migrateAttendanceRegularizationsTable();
+
+function migrateAttendanceRegularizationsTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attendance_regularizations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      punch_date TEXT NOT NULL,
+      current_punch_in TEXT,
+      current_punch_out TEXT,
+      current_work_minutes REAL,
+      proposed_punch_in TEXT NOT NULL,
+      proposed_punch_out TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled')) DEFAULT 'pending',
+      hr_note TEXT,
+      hr_id INTEGER REFERENCES users(id),
+      hr_reviewed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+      updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE INDEX IF NOT EXISTS idx_att_reg_user_date ON attendance_regularizations(user_id, punch_date);
+    CREATE INDEX IF NOT EXISTS idx_att_reg_status ON attendance_regularizations(status, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_att_reg_pending_day
+      ON attendance_regularizations(user_id, punch_date) WHERE status = 'pending';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_att_reg_approved_day
+      ON attendance_regularizations(user_id, punch_date) WHERE status = 'approved';
+  `);
+}
+
+function migrateReimbursementsTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reimbursement_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      request_code TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      category TEXT NOT NULL CHECK (category IN ('travel', 'meal', 'office_supplies', 'internet', 'other')),
+      expense_date TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payment_mode TEXT NOT NULL CHECK (payment_mode IN ('self', 'company')) DEFAULT 'self',
+      currency TEXT NOT NULL DEFAULT 'INR',
+      notes TEXT,
+      receipt_data TEXT,
+      receipt_name TEXT,
+      receipt_mime TEXT,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'reimbursed', 'cancelled')) DEFAULT 'pending',
+      hr_note TEXT,
+      hr_id INTEGER REFERENCES users(id),
+      hr_reviewed_at TEXT,
+      reimbursed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+      updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE INDEX IF NOT EXISTS idx_reimbursements_user ON reimbursement_requests(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_reimbursements_status ON reimbursement_requests(status, created_at);
+  `);
+  const cols = db.prepare(`PRAGMA table_info(notifications)`).all();
+  if (!cols.some((c) => c.name === 'reimbursement_id')) {
+    db.exec(
+      `ALTER TABLE notifications ADD COLUMN reimbursement_id INTEGER REFERENCES reimbursement_requests(id) ON DELETE CASCADE`
+    );
+  }
+}
 
 function migrateInvoiceSubmitterDeleted() {
   const cols = db.prepare(`PRAGMA table_info(invoices)`).all();
@@ -802,6 +868,26 @@ function migrateHolidayTypes() {
   }
 
   seedCompanyHolidaysSync(db);
+}
+
+function migratePunchLogsTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS punch_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      device_user_code TEXT NOT NULL,
+      punched_at TEXT NOT NULL,
+      punch_date TEXT NOT NULL,
+      serial_number TEXT NOT NULL DEFAULT '',
+      direction TEXT NOT NULL DEFAULT '',
+      raw_line TEXT,
+      created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_punch_logs_unique
+      ON punch_logs(device_user_code, punched_at, serial_number);
+    CREATE INDEX IF NOT EXISTS idx_punch_logs_date ON punch_logs(punch_date, punched_at);
+    CREATE INDEX IF NOT EXISTS idx_punch_logs_user ON punch_logs(user_id, punch_date);
+  `);
 }
 
 function migrateFeedTables() {

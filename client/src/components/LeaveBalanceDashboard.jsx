@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { getPortalRoot } from '../portalRoot';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
 import {
@@ -246,22 +248,206 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
     }
   }
 
+  const portalRoot = getPortalRoot();
+  const overlays = portalRoot
+      ? createPortal(
+          <>
+            <ErrorPopup
+              show={Boolean(errorPopup)}
+              title={errorPopup?.title}
+              message={errorPopup?.message}
+              onClose={() => setErrorPopup(null)}
+            />
+            <StatusCelebration
+              show={Boolean(submittedPopup)}
+              onDone={() => setSubmittedPopup(null)}
+              message={submittedPopup?.message || 'Request submitted'}
+              detail={submittedPopup?.detail || ''}
+              imageSrc={submittedPopup?.imageSrc || '/assets/request-submitted.gif'}
+              durationMs={3200}
+            />
+            {showModal ? (
+              <div
+                className="modal-backdrop leave-dash-backdrop"
+                onClick={() => setShowModal(false)}
+              >
+                <div
+                  className="leave-dash-modal"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="leave-dash-modal-title"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <header>
+                    <h3 id="leave-dash-modal-title">Request Leave Time Off</h3>
+                    <button
+                      type="button"
+                      className="leave-dash-close"
+                      onClick={() => setShowModal(false)}
+                      aria-label="Close"
+                    >
+                      ×
+                    </button>
+                  </header>
+                  {modalError ? <p className="leave-dash-modal-error">{modalError}</p> : null}
+                  <form onSubmit={onSubmit}>
+                    <label>
+                      <span className="leave-dash-field-label">Leave category type</span>
+                      <select
+                        value={form.leaveType}
+                        onChange={(event) => setType(event.target.value)}
+                        required
+                      >
+                        {typeOptions.map(([key, label]) => {
+                          const left = key === 'wfh' ? null : Number(balances?.[key] ?? 0);
+                          return (
+                            <option key={key} value={key}>
+                              {left == null ? label : `${label} (${left} days left)`}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </label>
+
+                    {restricted ? (
+                      <label>
+                        <span className="leave-dash-field-label">Restricted leave</span>
+                        <select
+                          value={form.startDate}
+                          required
+                          disabled={noRestrictedBalance}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (noRestrictedBalance) {
+                              showApplyError(
+                                insufficientRestrictedBalance(restrictedBalance),
+                                'No restricted leave balance'
+                              );
+                              return;
+                            }
+                            if (value && !rhDates.has(value)) {
+                              showApplyError(RH_ONLY_PUBLISHED_DATES);
+                              return;
+                            }
+                            setForm((current) => ({
+                              ...current,
+                              startDate: value,
+                              endDate: value,
+                              session: 'full',
+                            }));
+                          }}
+                        >
+                          <option value="">Select a published RH date…</option>
+                          {(holidayData?.restricted || []).map((holiday) => (
+                            <option key={holiday.id} value={toYmd(holiday.startDate)}>
+                              {holidayDateLabel(holiday)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <>
+                        {!wfh && (
+                          <label>
+                            <span className="leave-dash-field-label">Session</span>
+                            <select
+                              value={form.session}
+                              onChange={(event) => {
+                                const session = event.target.value;
+                                setForm((current) => ({
+                                  ...current,
+                                  session,
+                                  endDate:
+                                    session !== 'full'
+                                      ? current.startDate || current.endDate
+                                      : current.endDate,
+                                }));
+                              }}
+                            >
+                              {Object.entries(SESSION_LABELS).map(([key, label]) => (
+                                <option key={key} value={key}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        <div className="leave-dash-dates">
+                          <label>
+                            <span className="leave-dash-field-label">
+                              {halfDay ? 'Date' : 'Start date'}
+                            </span>
+                            <input
+                              type="date"
+                              value={form.startDate}
+                              required
+                              onChange={(event) => pickWorkingDate('startDate', event.target.value)}
+                            />
+                          </label>
+                          {!halfDay && (
+                            <label>
+                              <span className="leave-dash-field-label">End date</span>
+                              <input
+                                type="date"
+                                value={form.endDate}
+                                min={form.startDate || undefined}
+                                required
+                                onChange={(event) => pickWorkingDate('endDate', event.target.value)}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    <label>
+                      <span className="leave-dash-field-label">Total duration days requested</span>
+                      <input
+                        readOnly
+                        value={requestedDays ? String(requestedDays) : ''}
+                        placeholder="e.g. 2"
+                      />
+                    </label>
+
+                    <label>
+                      <span className="leave-dash-field-label">Notes</span>
+                      <textarea
+                        rows={2}
+                        value={form.reason}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, reason: event.target.value }))
+                        }
+                        placeholder="Optional"
+                      />
+                    </label>
+
+                    <div className="leave-dash-modal-actions">
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setShowModal(false)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn primary"
+                        disabled={busy || (restricted && noRestrictedBalance)}
+                      >
+                        {busy ? 'Submitting…' : 'Submit Request'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            ) : null}
+          </>,
+          portalRoot
+        )
+      : null;
   return (
     <section className="leave-dash">
-      <ErrorPopup
-        show={Boolean(errorPopup)}
-        title={errorPopup?.title}
-        message={errorPopup?.message}
-        onClose={() => setErrorPopup(null)}
-      />
-      <StatusCelebration
-        show={Boolean(submittedPopup)}
-        onDone={() => setSubmittedPopup(null)}
-        message={submittedPopup?.message || 'Request submitted'}
-        detail={submittedPopup?.detail || ''}
-        imageSrc={submittedPopup?.imageSrc || '/assets/request-submitted.gif'}
-        durationMs={3200}
-      />
+      {overlays}
 
       <header className="leave-dash-head">
         <div className="leave-dash-who">
@@ -362,159 +548,6 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
           </div>
         )}
       </div>
-
-      {showModal && (
-        <div className="modal-backdrop leave-dash-backdrop" onClick={() => setShowModal(false)}>
-          <div
-            className="leave-dash-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="leave-dash-modal-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header>
-              <h3 id="leave-dash-modal-title">Request Leave Time Off</h3>
-              <button type="button" className="leave-dash-close" onClick={() => setShowModal(false)} aria-label="Close">
-                ×
-              </button>
-            </header>
-            {modalError ? <p className="leave-dash-modal-error">{modalError}</p> : null}
-            <form onSubmit={onSubmit}>
-              <label>
-                Leave category type
-                <select value={form.leaveType} onChange={(event) => setType(event.target.value)} required>
-                  {typeOptions.map(([key, label]) => {
-                    const left = key === 'wfh' ? null : Number(balances?.[key] ?? 0);
-                    return (
-                      <option key={key} value={key}>
-                        {left == null ? label : `${label} (${left} days left)`}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
-
-              {restricted ? (
-                <label>
-                  Restricted leave
-                  <select
-                    value={form.startDate}
-                    required
-                    disabled={noRestrictedBalance}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (noRestrictedBalance) {
-                        showApplyError(
-                          insufficientRestrictedBalance(restrictedBalance),
-                          'No restricted leave balance'
-                        );
-                        return;
-                      }
-                      if (value && !rhDates.has(value)) {
-                        showApplyError(RH_ONLY_PUBLISHED_DATES);
-                        return;
-                      }
-                      setForm((current) => ({
-                        ...current,
-                        startDate: value,
-                        endDate: value,
-                        session: 'full',
-                      }));
-                    }}
-                  >
-                    <option value="">Select a published RH date…</option>
-                    {(holidayData?.restricted || []).map((holiday) => (
-                      <option key={holiday.id} value={toYmd(holiday.startDate)}>
-                        {holidayDateLabel(holiday)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <>
-                  {!wfh && (
-                    <label>
-                      Session
-                      <select
-                        value={form.session}
-                        onChange={(event) => {
-                          const session = event.target.value;
-                          setForm((current) => ({
-                            ...current,
-                            session,
-                            endDate: session !== 'full' ? current.startDate || current.endDate : current.endDate,
-                          }));
-                        }}
-                      >
-                        {Object.entries(SESSION_LABELS).map(([key, label]) => (
-                          <option key={key} value={key}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <div className="leave-dash-dates">
-                    <label>
-                      {halfDay ? 'Date' : 'Start date'}
-                      <input
-                        type="date"
-                        value={form.startDate}
-                        required
-                        onChange={(event) => pickWorkingDate('startDate', event.target.value)}
-                      />
-                    </label>
-                    {!halfDay && (
-                      <label>
-                        End date
-                        <input
-                          type="date"
-                          value={form.endDate}
-                          min={form.startDate || undefined}
-                          required
-                          onChange={(event) => pickWorkingDate('endDate', event.target.value)}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </>
-              )}
-
-              <label>
-                Total duration days requested
-                <input
-                  readOnly
-                  value={requestedDays ? String(requestedDays) : ''}
-                  placeholder="e.g. 2"
-                />
-              </label>
-
-              <label>
-                Notes
-                <textarea
-                  rows={2}
-                  value={form.reason}
-                  onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))}
-                  placeholder="Optional"
-                />
-              </label>
-
-              <div className="leave-dash-modal-actions">
-                <button type="button" className="btn secondary" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn primary"
-                  disabled={busy || (restricted && noRestrictedBalance)}
-                >
-                  {busy ? 'Submitting…' : 'Submit Request'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

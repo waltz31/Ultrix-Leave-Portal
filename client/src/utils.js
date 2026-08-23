@@ -244,6 +244,55 @@ export function formatDateTime(value) {
   });
 }
 
+/** Expected in-time is 11:00 IST. Before noon = on time, 12:xx = late, 1pm+ = very late. */
+export function punchInLateness(value) {
+  const parsed = parseAppDateTime(value);
+  let hour = null;
+  if (parsed) {
+    hour = Number(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: APP_TIMEZONE,
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }).format(parsed)
+    );
+  } else {
+    const match = String(value || '').match(/(\d{1,2}):(\d{2})/);
+    if (match) hour = Number(match[1]);
+  }
+  if (hour == null || Number.isNaN(hour)) return null;
+  if (hour < 12) return 'on-time';
+  if (hour < 13) return 'late';
+  return 'very-late';
+}
+
+export const REQUIRED_WORK_MINUTES = 540;
+
+export function isUnderNineHours(workMinutes) {
+  if (workMinutes == null || workMinutes === '') return false;
+  return Number(workMinutes) < REQUIRED_WORK_MINUTES;
+}
+
+export function hasMissingPunchOut(session, todayYmd) {
+  if (!session) return false;
+  if (session.missingPunchOut) return true;
+  if (session.punchOut) return false;
+  const punchDate = String(session.punchDate || '').slice(0, 10);
+  return Boolean(punchDate && todayYmd && punchDate < todayYmd);
+}
+
+/** Time only, e.g. "2:50 PM" — for punch times when the date is already shown. */
+export function formatTime(value) {
+  const d = parseAppDateTime(value);
+  if (!d) return value || '—';
+  return d.toLocaleTimeString(APP_LOCALE, {
+    timeZone: APP_TIMEZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 export function formatLeaveSpan(leave) {
   const dates =
     leave.startDate === leave.endDate

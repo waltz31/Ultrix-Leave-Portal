@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   addDays,
   addMonths,
@@ -25,23 +25,52 @@ import {
   appToday,
   canUserCancel,
   formatDate,
+  formatTime,
   formatLeaveSpan,
   holidayDateLabel,
+  punchInLateness,
+  isUnderNineHours,
   toYmd,
   blockedRegularLeaveMessage,
   generalHolidayMapFromList,
   isApplyBlockError,
   RH_ONLY_PUBLISHED_DATES,
 } from '../utils';
+import { useAuth } from '../auth';
 import ErrorPopup from './ErrorPopup';
 import {
   CALENDAR_CELLS,
   calendarMonthImageUrl,
 } from '../calendarMonthImages';
 import { api } from '../api';
+import { getPortalRoot } from '../portalRoot';
+import { createPortal } from 'react-dom';
+import TeamRosterCalendar from './TeamRosterCalendar';
 
 const WEEK_STARTS_ON = 0;
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const EXPECTED_WORK_MINUTES = 540;
+
+function stampToTimeInput(stamp) {
+  const m = String(stamp || '').match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : '';
+}
+
+function shortPunchTime(stamp) {
+  return formatTime(stamp);
+}
+
+function attendanceChipLabel(sessions, summary) {
+  if (summary) {
+    if (summary.stillIn) return `In ${shortPunchTime(summary.punchIn)}`;
+    if (summary.workHours) return summary.workHours;
+    if (summary.punchOut) return `${shortPunchTime(summary.punchIn)}–${shortPunchTime(summary.punchOut)}`;
+    return shortPunchTime(summary.punchIn);
+  }
+  const still = sessions.filter((s) => s.stillIn).length;
+  if (still > 0) return `${sessions.length} · ${still} in`;
+  return `${sessions.length} present`;
+}
 
 const MONTH_THEMES = [
   { header: '#5b9bd5' },
@@ -125,6 +154,29 @@ function chipMainLabel(leave, showNames) {
   return shortTypeLabel(leave.leaveType);
 }
 
+function isHolidayLeave(leave) {
+  return (
+    Boolean(leave?.isMandatory) ||
+    leave?.leaveType === 'general' ||
+    leave?.leaveType === 'mandatory'
+  );
+}
+
+const ROSTER_LEAVE = {
+  casual: { code: 'CL', kind: 'leave-casual' },
+  earned: { code: 'PL', kind: 'leave-earned' },
+  sick: { code: 'SL', kind: 'leave-sick' },
+  restricted: { code: 'RL', kind: 'leave-restricted' },
+  wfh: { code: 'WFH', kind: 'leave-wfh' },
+};
+
+function earliestPunch(sessions) {
+  if (!sessions?.length) return null;
+  return [...sessions].sort((a, b) =>
+    String(a.punchIn || '').localeCompare(String(b.punchIn || ''))
+  )[0];
+}
+
 export default function LeaveCalendar({
   leaves,
   showNames = false,
@@ -135,10 +187,22 @@ export default function LeaveCalendar({
   canManage = false,
   onCreateLeave = null,
   onDeleteLeave = null,
+  layout = 'month',
 }) {
+  const { user } = useAuth();
   const [cursor, setCursor] = useState(() => startOfMonth(appToday()));
   const [selected, setSelected] = useState(null); // { id, day }
   const [employeeFilter, setEmployeeFilter] = useState('');
+  const [calendarLayer, setCalendarLayer] = useState('all');
+  const [attendanceUserId, setAttendanceUserId] = useState(null);
+  const [attendanceReady, setAttendanceReady] = useState(false);
+  const [attendanceSessions, setAttendanceSessions] = useState([]);
+  const [expectedWorkMinutes, setExpectedWorkMinutes] = useState(EXPECTED_WORK_MINUTES);
+  const [attendanceDay, setAttendanceDay] = useState(null);
+  const [regularizeSession, setRegularizeSession] = useState(null);
+  const [regForm, setRegForm] = useState({ punchIn: '', punchOut: '', reason: '' });
+  const [regBusy, setRegBusy] = useState(false);
+  const [regError, setRegError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({
     userId: '',
@@ -152,7 +216,6 @@ export default function LeaveCalendar({
   const [createErr, setCreateErr] = useState('');
   const [errorPopup, setErrorPopup] = useState(null);
   const [publishedRestricted, setPublishedRestricted] = useState([]);
-  const popoverRef = useRef(null);
   const showBalances = Boolean(balancesByUserId);
   const canCancelLeaves = typeof onCancel === 'function';
   const canDelete = canManage && typeof onDeleteLeave === 'function';
@@ -165,6 +228,35 @@ export default function LeaveCalendar({
       .then((data) => setPublishedRestricted(data.restricted || []))
       .catch(() => setPublishedRestricted([]));
   }, [cursor]);
+
+  useEffect(() => {
+    const rangeStart = startOfMonth(cursor);
+    const rangeEnd = endOfMonth(cursor);
+    const from = format(rangeStart, 'yyyy-MM-dd');
+    const to = format(rangeEnd, 'yyyy-MM-dd');
+    const params = new URLSearchParams({ from, to });
+    if (layout !== 'roster' && employeeFilter) {
+      params.set('userId', employeeFilter);
+    }
+    let cancelled = false;
+    setAttendanceReady(false);
+    api(`/attendance/calendar?${params}`)
+      .then((data) => {
+        if (cancelled) return;
+        setAttendanceSessions(data.sessions || []);
+        if (data.expectedWorkMinutes) setExpectedWorkMinutes(data.expectedWorkMinutes);
+        setAttendanceReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAttendanceSessions([]);
+          setAttendanceReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cursor, employeeFilter, layout]);
 
   const employeeOptions = useMemo(() => {
     if (employees?.length) return employees;
@@ -192,6 +284,67 @@ export default function LeaveCalendar({
       (l) => l.isMandatory || String(l.userId) === String(employeeFilter)
     );
   }, [leaves, employeeFilter]);
+
+  const attendanceByDate = useMemo(() => {
+    const map = new Map();
+    for (const session of attendanceSessions) {
+      if (employeeFilter && String(session.userId) !== String(employeeFilter)) continue;
+      const key = session.punchDate;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(session);
+    }
+    return map;
+  }, [attendanceSessions, employeeFilter]);
+
+  const showEmployeeFilter = (showNames || canManage) && user?.role !== 'user';
+  const showLayerFilter = showEmployeeFilter;
+  const showLeavesLayer = !showLayerFilter || calendarLayer === 'leaves' || calendarLayer === 'all';
+  const showAttendanceLayer = !showLayerFilter || calendarLayer === 'attendance' || calendarLayer === 'all';
+  const attendanceForDay = (attendanceDay ? attendanceByDate.get(attendanceDay) || [] : []).filter(
+    (session) => attendanceUserId == null || String(session.userId) === String(attendanceUserId)
+  );
+
+  function openRegularize(session) {
+    setRegError('');
+    setRegularizeSession(session);
+    setRegForm({
+      punchIn: stampToTimeInput(session.punchIn) || '09:30',
+      punchOut: stampToTimeInput(session.punchOut) || '18:00',
+      reason: '',
+    });
+  }
+
+  async function submitRegularize(event) {
+    event.preventDefault();
+    if (!regularizeSession) return;
+    setRegBusy(true);
+    setRegError('');
+    try {
+      await api('/attendance/regularizations', {
+        method: 'POST',
+        body: {
+          punchDate: regularizeSession.punchDate,
+          proposedPunchIn: regForm.punchIn,
+          proposedPunchOut: regForm.punchOut,
+          reason: regForm.reason,
+        },
+      });
+      setRegularizeSession(null);
+      const from = format(startOfMonth(cursor), 'yyyy-MM-dd');
+      const to = format(endOfMonth(cursor), 'yyyy-MM-dd');
+      const params = new URLSearchParams({ from, to });
+      if (employeeFilter) {
+        params.set('userId', employeeFilter);
+        params.set('userId', employeeFilter);
+      }
+      const data = await api(`/attendance/calendar?${params}`);
+      setAttendanceSessions(data.sessions || []);
+    } catch (err) {
+      setRegError(err.message || 'Could not submit request');
+    } finally {
+      setRegBusy(false);
+    }
+  }
 
   const restrictedHolidayOptions = useMemo(
     () =>
@@ -225,6 +378,150 @@ export default function LeaveCalendar({
     return padded.slice(0, CALENDAR_CELLS);
   }, [cursor]);
 
+  const rosterDays = useMemo(
+    () =>
+      eachDayOfInterval({
+        start: startOfMonth(cursor),
+        end: endOfMonth(cursor),
+      }),
+    [cursor]
+  );
+
+  const holidayByDate = useMemo(() => {
+    const map = new Map();
+    for (const leave of filteredLeaves) {
+      if (!isHolidayLeave(leave)) continue;
+      const start = parseISO(toYmd(leave.startDate));
+      const end = parseISO(toYmd(leave.endDate) || toYmd(leave.startDate));
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+      for (const day of eachDayOfInterval({ start, end })) {
+        map.set(format(day, 'yyyy-MM-dd'), leave);
+      }
+    }
+    return map;
+  }, [filteredLeaves]);
+
+  const leavesByUserDate = useMemo(() => {
+    const map = new Map();
+    for (const leave of filteredLeaves) {
+      if (isHolidayLeave(leave)) continue;
+      const start = parseISO(toYmd(leave.startDate));
+      const end = parseISO(toYmd(leave.endDate) || toYmd(leave.startDate));
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) continue;
+      for (const day of eachDayOfInterval({ start, end })) {
+        const key = `${leave.userId}|${format(day, 'yyyy-MM-dd')}`;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(leave);
+      }
+    }
+    return map;
+  }, [filteredLeaves]);
+
+  const attendanceByUserDate = useMemo(() => {
+    const map = new Map();
+    for (const session of attendanceSessions) {
+      if (session.userId == null) continue;
+      const key = `${session.userId}|${session.punchDate}`;
+      const existing = map.get(key);
+      if (!existing) map.set(key, session);
+      else if (String(session.punchIn || '').localeCompare(String(existing.punchIn || '')) < 0) {
+        map.set(key, session);
+      }
+    }
+    return map;
+  }, [attendanceSessions]);
+
+  function rosterCell(employee, day) {
+    const ymd = format(day, 'yyyy-MM-dd');
+    const todayYmd = format(today, 'yyyy-MM-dd');
+    if (!attendanceReady) return { kind: 'loading' };
+
+    const empLeaves = leavesByUserDate.get(`${employee.id}|${ymd}`) || [];
+    const approved = empLeaves.find((leave) => leave.status === 'approved');
+    const pending = empLeaves.find(
+      (leave) => leave.status && !['approved', 'rejected', 'cancelled'].includes(leave.status)
+    );
+    const session = attendanceByUserDate.get(`${employee.id}|${ymd}`);
+    const holiday = holidayByDate.get(ymd);
+    const leave = approved || pending;
+    const leaveMeta = leave ? ROSTER_LEAVE[leave.leaveType] : null;
+    const halfDay = Boolean(leave?.session && leave.session !== 'full');
+
+    if (leaveMeta && approved) {
+      return {
+        kind: leaveMeta.kind,
+        code: leaveMeta.code,
+        halfDay,
+        time: halfDay && session?.punchIn ? stampToTimeInput(session.punchIn) : '',
+        leave,
+        session: session || null,
+        label: `${REQUEST_LABELS[leave.leaveType] || leaveMeta.code}${halfDay ? ' · Half day' : ''}`,
+      };
+    }
+
+    if (holiday) {
+      const name =
+        holiday.userName ||
+        (holiday.leaveType === 'restricted' ? 'Restricted holiday' : 'General holiday');
+      return { kind: 'holiday', code: 'HOL', leave: holiday, label: `Holiday · ${name}` };
+    }
+    if (isWeekend(day) && !session) {
+      return { kind: 'weekoff', code: 'WO', label: 'Weekly Off' };
+    }
+
+    if (session?.punchIn) {
+      const lateness = punchInLateness(session.punchIn);
+      const late = lateness === 'late' || lateness === 'very-late';
+      return {
+        kind: late ? 'late' : 'present',
+        code: late ? 'L' : 'P',
+        time: stampToTimeInput(session.punchIn),
+        session,
+        leave: leave || null,
+        halfDay,
+        label: late ? 'Late' : 'Present',
+      };
+    }
+
+    if (leaveMeta && pending) {
+      return {
+        kind: leaveMeta.kind,
+        code: leaveMeta.code,
+        pending: true,
+        halfDay,
+        leave,
+        label: `${REQUEST_LABELS[leave.leaveType] || leaveMeta.code}${halfDay ? ' · Half day' : ''} · Pending`,
+      };
+    }
+
+    if (ymd < todayYmd && !isWeekend(day)) {
+      return { kind: 'absent', code: 'A', time: '--:--', label: 'Absent' };
+    }
+    return { kind: 'empty' };
+  }
+
+  function handleRosterCell(employee, day, cell) {
+    const ymd = format(day, 'yyyy-MM-dd');
+    if (cell.leave && !isHolidayLeave(cell.leave)) {
+      setSelected({ id: cell.leave.id, day: ymd });
+      setAttendanceDay(null);
+      return;
+    }
+    if (cell.session) {
+      setSelected(null);
+      setAttendanceUserId(employee.id);
+      setAttendanceDay(ymd);
+      return;
+    }
+    if (canCreate && cell.kind !== 'weekoff' && cell.kind !== 'holiday' && cell.kind !== 'loading') {
+      openCreate(ymd, String(employee.id));
+    }
+  }
+
+  function shiftRoster(dir) {
+    setCursor((c) => startOfMonth(dir > 0 ? addMonths(c, 1) : subMonths(c, 1)));
+  }
+
   const monthThemeStyle = useMemo(() => monthTheme(cursor), [cursor]);
 
   const selectedLeave = useMemo(
@@ -238,24 +535,18 @@ export default function LeaveCalendar({
     (selectedLeave.session || 'full') === 'full';
 
   useEffect(() => {
-    if (!selected) return undefined;
+    if (!selected && !attendanceDay) return undefined;
 
-    function onPointerDown(e) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
-        setSelected(null);
-      }
-    }
     function onKey(e) {
-      if (e.key === 'Escape') setSelected(null);
+      if (e.key !== 'Escape') return;
+      if (regularizeSession) return;
+      if (attendanceDay) setAttendanceDay(null);
+      else if (selected) setSelected(null);
     }
 
-    document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [selected]);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selected, attendanceDay, regularizeSession]);
 
   function leavesOn(day) {
     return filteredLeaves
@@ -292,7 +583,7 @@ export default function LeaveCalendar({
     if (done !== false) setSelected(null);
   }
 
-  function openCreate(dayKey = '') {
+  function openCreate(dayKey = '', userId = '') {
     const dayYmd = toYmd(dayKey);
     const rh = restrictedHolidayOptions.find((h) => toYmd(h.startDate) === dayYmd);
     if (dayYmd && !rh) {
@@ -304,7 +595,7 @@ export default function LeaveCalendar({
     }
     setCreateErr('');
     setCreateForm({
-      userId: employeeFilter || (employeeOptions[0] ? String(employeeOptions[0].id) : ''),
+      userId: userId || employeeFilter || (employeeOptions[0] ? String(employeeOptions[0].id) : ''),
       leaveType: rh ? 'restricted' : 'casual',
       startDate: dayYmd,
       endDate: dayYmd,
@@ -360,13 +651,34 @@ export default function LeaveCalendar({
   }
 
   return (
-    <div className="calendar calendar-pro calendar-split-view">
-      <ErrorPopup
-        show={Boolean(errorPopup)}
-        title={errorPopup?.title}
-        message={errorPopup?.message}
-        onClose={() => setErrorPopup(null)}
-      />
+    <div className={layout === 'roster' ? 'calendar roster-wrap' : 'calendar calendar-pro calendar-split-view'}>
+      {getPortalRoot() &&
+        createPortal(
+          <ErrorPopup
+            show={Boolean(errorPopup)}
+            title={errorPopup?.title}
+            message={errorPopup?.message}
+            onClose={() => setErrorPopup(null)}
+          />,
+          getPortalRoot()
+        )}
+      {layout === 'roster' ? (
+        <TeamRosterCalendar
+          cursor={cursor}
+          onPrev={() => shiftRoster(-1)}
+          onNext={() => shiftRoster(1)}
+          onToday={() => setCursor(startOfMonth(today))}
+          days={rosterDays}
+          employees={employeeOptions}
+          getCell={rosterCell}
+          onCellClick={handleRosterCell}
+          canCreate={canCreate}
+          onAddLeave={() => openCreate()}
+          today={today}
+          loading={!attendanceReady}
+        />
+      ) : (
+      <>
       <div className="calendar-toolbar">
         <div className="calendar-nav">
           <button
@@ -388,13 +700,35 @@ export default function LeaveCalendar({
           </button>
         </div>
         <div className="calendar-toolbar-actions">
-          {(showNames || canManage) && (
+          {showLayerFilter && (
             <label className="calendar-employee-filter">
-              <span className="sr-only">Employee</span>
+              <span>View</span>
+              <select
+                value={calendarLayer}
+                onChange={(e) => {
+                  setCalendarLayer(e.target.value);
+                  setSelected(null);
+                  setAttendanceDay(null);
+                }}
+                aria-label="Calendar view"
+              >
+                <option value="all">All</option>
+                <option value="attendance">Attendance</option>
+                <option value="leaves">Leave</option>
+              </select>
+            </label>
+          )}
+          {showEmployeeFilter && (
+            <label className="calendar-employee-filter">
+              <span>Employee</span>
               <select
                 value={employeeFilter}
-                onChange={(e) => setEmployeeFilter(e.target.value)}
-                aria-label="Filter by employee"
+                onChange={(e) => {
+                  setEmployeeFilter(e.target.value);
+                  setSelected(null);
+                  setAttendanceDay(null);
+                }}
+                aria-label="Select employee"
               >
                 <option value="">All employees</option>
                 {employeeOptions.map((u) => (
@@ -405,7 +739,7 @@ export default function LeaveCalendar({
               </select>
             </label>
           )}
-          {canCreate && (
+          {canCreate && showLeavesLayer && (
             <button
               type="button"
               className="btn primary calendar-add-btn"
@@ -427,14 +761,30 @@ export default function LeaveCalendar({
       </div>
 
       <div className="calendar-legend" aria-hidden="true">
-        {Object.entries(APPLY_LABELS).map(([key, label]) => (
-          <span key={key} className="legend-item">
-            <i className={`legend-swatch type-${key}`} /> {label}
+        {showLeavesLayer &&
+          Object.entries(APPLY_LABELS).map(([key, label]) => (
+            <span key={key} className="legend-item">
+              <i className={`legend-swatch type-${key}`} /> {label}
+            </span>
+          ))}
+        {showLeavesLayer && (
+          <span className="legend-item">
+            <i className="legend-swatch type-general" /> General Holiday
           </span>
-        ))}
-        <span className="legend-item">
-          <i className="legend-swatch type-general" /> General Holiday
-        </span>
+        )}
+        {showAttendanceLayer && (
+          <>
+            <span className="legend-item">
+              <i className="legend-swatch att-on-time" /> In by 11am
+            </span>
+            <span className="legend-item">
+              <i className="legend-swatch att-late" /> 12pm
+            </span>
+            <span className="legend-item">
+              <i className="legend-swatch att-very-late" /> 1pm+
+            </span>
+          </>
+        )}
         <span className="legend-item">
           <i className="legend-swatch type-weekend" /> Sat / Sun
         </span>
@@ -475,11 +825,27 @@ export default function LeaveCalendar({
           <div className="calendar-grid body calendar-grid-compact">
             {days.map((day) => {
               const items = leavesOn(day);
+              const visibleItems = showLeavesLayer
+                ? items
+                : items.filter((leave) => isHolidayLeave(leave));
               const outside = !isSameMonth(day, cursor);
               const isToday = isSameDay(day, today);
               const weekend = isWeekend(day);
-              const leaveType = primaryLeaveType(items);
+              const leaveType = primaryLeaveType(visibleItems);
               const dayKey = format(day, 'yyyy-MM-dd');
+              const dayAttendance = showAttendanceLayer
+                ? attendanceByDate.get(dayKey) || []
+                : [];
+              const attSummary = earliestPunch(dayAttendance);
+              const showAttSummary =
+                Boolean(attSummary) &&
+                (user?.role === 'user' || employeeFilter || dayAttendance.length === 1);
+              const isHolidayDay = items.some((leave) => isHolidayLeave(leave));
+              const attTone =
+                showAttendanceLayer && !isHolidayDay && attSummary?.punchIn
+                  ? punchInLateness(attSummary.punchIn) || 'on-time'
+                  : null;
+              const useLeaveBg = Boolean(leaveType) && (isHolidayDay || (showLeavesLayer && !attTone));
               return (
                 <div
                   key={day.toISOString()}
@@ -488,8 +854,10 @@ export default function LeaveCalendar({
                     outside ? 'muted' : '',
                     isToday ? 'today' : '',
                     weekend ? 'weekend' : '',
-                    items.length ? 'has-leave' : '',
-                    leaveType ? `leave-bg-${leaveType}` : '',
+                    visibleItems.length && useLeaveBg ? 'has-leave' : '',
+                    dayAttendance.length ? 'has-attendance' : '',
+                    useLeaveBg ? `leave-bg-${leaveType}` : '',
+                    attTone ? `att-tone-${attTone}` : '',
                   ]
                     .filter(Boolean)
                     .join(' ')}
@@ -499,8 +867,10 @@ export default function LeaveCalendar({
                       {format(day, 'dd')}
                     </span>
                     <div className="day-head-actions">
-                      {items.length > 0 && <span className="day-count">{items.length}</span>}
-                      {canCreate && !outside && !applyBlockMessage(dayKey) && (
+                      {visibleItems.length > 0 && (
+                        <span className="day-count">{visibleItems.length}</span>
+                      )}
+                      {canCreate && showLeavesLayer && !outside && !applyBlockMessage(dayKey) && (
                         <button
                           type="button"
                           className="calendar-day-add"
@@ -516,8 +886,31 @@ export default function LeaveCalendar({
                       )}
                     </div>
                   </div>
+                  {showAttendanceLayer && dayAttendance.length > 0 && (
+                    <button
+                      type="button"
+                      className={[
+                        'cal-att-chip',
+                        attSummary?.needsRegularize ? 'is-short' : '',
+                        attSummary?.stillIn ? 'is-in' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      title="View attendance"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelected(null);
+                        setAttendanceUserId(null);
+                        setAttendanceDay(dayKey);
+                      }}
+                    >
+                      {attSummary
+                        ? attendanceChipLabel(dayAttendance, attSummary)
+                        : attendanceChipLabel(dayAttendance, null)}
+                    </button>
+                  )}
                   <div className="leave-chips">
-                    {items.slice(0, 2).map((leave) => {
+                    {visibleItems.slice(0, 2).map((leave) => {
                       const cancellable =
                         canCancelLeaves && !leave.isMandatory && canUserCancel(leave.status);
                       const interactive = cancellable || canDelete || (showBalances && !leave.isMandatory);
@@ -578,8 +971,8 @@ export default function LeaveCalendar({
                         </ChipTag>
                       );
                     })}
-                    {items.length > 2 && (
-                      <span className="chip more">+{items.length - 2} more</span>
+                    {visibleItems.length > 2 && (
+                      <span className="chip more">+{visibleItems.length - 2} more</span>
                     )}
                   </div>
                 </div>
@@ -588,90 +981,280 @@ export default function LeaveCalendar({
           </div>
         </div>
       </div>
-
-      {selectedLeave && selected && (canCancelLeaves || canDelete) && (
-        <div className="cal-leave-popover" ref={popoverRef} role="dialog" aria-label="Leave details">
-          <div className="cal-leave-popover-head">
-            <span className={`badge type-${selectedLeave.leaveType}`}>
-              {REQUEST_LABELS[selectedLeave.leaveType]}
-            </span>
-            {!selectedLeave.isMandatory && (
-              <span className={`status-pill status-${selectedLeave.status}`}>
-                {STATUS_LABELS[selectedLeave.status] || selectedLeave.status}
-              </span>
-            )}
-            <button
-              type="button"
-              className="btn ghost cal-leave-close"
-              onClick={() => setSelected(null)}
-              aria-label="Close"
-            >
-              ×
-            </button>
-          </div>
-          {(showNames || selectedLeave.isMandatory) && (
-            <p className="cal-leave-person"><strong>{selectedLeave.userName}</strong></p>
-          )}
-          <p className="cal-leave-span">{formatLeaveSpan(selectedLeave)}</p>
-          <p className="cal-leave-day">
-            Selected day: <strong>{formatDate(selected.day)}</strong>
-          </p>
-          {selectedLeave.reason && (
-            <p className="cal-leave-reason muted">{selectedLeave.reason}</p>
-          )}
-          <div className="cal-leave-actions">
-            {canCancelLeaves && !selectedLeave.isMandatory && canUserCancel(selectedLeave.status) && (
-              multiDay ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn danger"
-                    disabled={busyId === selectedLeave.id}
-                    onClick={() => handleCancel(selectedLeave, { date: selected.day })}
-                  >
-                    {busyId === selectedLeave.id ? 'Cancelling…' : 'Cancel this day'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn danger ghost-danger"
-                    disabled={busyId === selectedLeave.id}
-                    onClick={() => handleCancel(selectedLeave, { cancelAll: true })}
-                  >
-                    Cancel entire leave
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn danger"
-                  disabled={busyId === selectedLeave.id}
-                  onClick={() => handleCancel(selectedLeave, { cancelAll: true })}
-                >
-                  {busyId === selectedLeave.id ? 'Cancelling…' : 'Cancel leave'}
-                </button>
-              )
-            )}
-            {canDelete && (
-              <button
-                type="button"
-                className="btn ghost-danger"
-                disabled={busyId === selectedLeave.id}
-                onClick={() => handleDelete(selectedLeave)}
-              >
-                {busyId === selectedLeave.id
-                  ? 'Deleting…'
-                  : selectedLeave.isMandatory
-                    ? 'Remove mandatory leave'
-                    : 'Delete leave'}
-              </button>
-            )}
-          </div>
-        </div>
+      </>
       )}
 
-      {showCreate && (
-        <div className="modal-backdrop modal-backdrop-static">
-          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="cal-create-title">
+      {selectedLeave &&
+        selected &&
+        getPortalRoot() &&
+        createPortal(
+          <div
+            className="modal-backdrop cal-day-backdrop"
+            onClick={() => setSelected(null)}
+          >
+            <div
+              className="cal-day-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Leave details"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="cal-day-sheet-head">
+                <div className="cal-day-sheet-title">
+                  <span className={`badge type-${selectedLeave.leaveType}`}>
+                    {REQUEST_LABELS[selectedLeave.leaveType]}
+                  </span>
+                  {!selectedLeave.isMandatory && (
+                    <span className={`status-pill status-${selectedLeave.status}`}>
+                      {STATUS_LABELS[selectedLeave.status] || selectedLeave.status}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn ghost cal-leave-close"
+                  onClick={() => setSelected(null)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              {(showNames || selectedLeave.isMandatory) && (
+                <p className="cal-leave-person">
+                  <strong>{selectedLeave.userName}</strong>
+                </p>
+              )}
+              <p className="cal-leave-span">{formatLeaveSpan(selectedLeave)}</p>
+              <p className="cal-leave-day">
+                Selected day: <strong>{formatDate(selected.day)}</strong>
+              </p>
+              {selectedLeave.reason && (
+                <p className="cal-leave-reason muted">{selectedLeave.reason}</p>
+              )}
+              {(canCancelLeaves || canDelete) && (
+              <div className="cal-leave-actions">
+                {canCancelLeaves &&
+                  !selectedLeave.isMandatory &&
+                  canUserCancel(selectedLeave.status) &&
+                  (multiDay ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn danger"
+                        disabled={busyId === selectedLeave.id}
+                        onClick={() => handleCancel(selectedLeave, { date: selected.day })}
+                      >
+                        {busyId === selectedLeave.id ? 'Cancelling…' : 'Cancel this day'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn danger ghost-danger"
+                        disabled={busyId === selectedLeave.id}
+                        onClick={() => handleCancel(selectedLeave, { cancelAll: true })}
+                      >
+                        Cancel entire leave
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn danger"
+                      disabled={busyId === selectedLeave.id}
+                      onClick={() => handleCancel(selectedLeave, { cancelAll: true })}
+                    >
+                      {busyId === selectedLeave.id ? 'Cancelling…' : 'Cancel leave'}
+                    </button>
+                  ))}
+                {canDelete && (
+                  <button
+                    type="button"
+                    className="btn ghost-danger"
+                    disabled={busyId === selectedLeave.id}
+                    onClick={() => handleDelete(selectedLeave)}
+                  >
+                    {busyId === selectedLeave.id
+                      ? 'Deleting…'
+                      : selectedLeave.isMandatory
+                        ? 'Remove mandatory leave'
+                        : 'Delete leave'}
+                  </button>
+                )}
+              </div>
+              )}
+            </div>
+          </div>,
+          getPortalRoot()
+        )}
+
+      {attendanceDay &&
+        getPortalRoot() &&
+        createPortal(
+          <div
+            className="modal-backdrop cal-day-backdrop"
+            onClick={() => setAttendanceDay(null)}
+          >
+            <div
+              className="cal-day-sheet cal-att-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Attendance details"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="cal-day-sheet-head">
+                <div>
+                  <h2 className="cal-day-sheet-heading">Attendance</h2>
+                  <p className="muted cal-day-sheet-sub">{formatDate(attendanceDay)}</p>
+                </div>
+                <button
+                  type="button"
+                  className="btn ghost cal-leave-close"
+                  onClick={() => setAttendanceDay(null)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              {!attendanceForDay.length ? (
+                <p className="muted">No punches for this day.</p>
+              ) : (
+                <ul className="cal-att-list">
+                  {attendanceForDay.map((session) => (
+                    <li key={`${session.userId || session.deviceUserCode}-${session.id}`}>
+                      {(showNames || canManage || user?.role === 'user') && (
+                        <div className="cal-att-name">
+                          <strong>{session.userName || 'Unmapped'}</strong>
+                          {session.employeeNumber ? (
+                            <span className="sub">{session.employeeNumber}</span>
+                          ) : null}
+                        </div>
+                      )}
+                      <div className="cal-att-times">
+                        <div>
+                          <span className="cal-att-label">Punch in</span>
+                          <strong>{session.punchIn ? formatTime(session.punchIn) : '—'}</strong>
+                        </div>
+                        <div>
+                          <span className="cal-att-label">Punch out</span>
+                          <strong>
+                            {session.punchOut
+                              ? formatTime(session.punchOut)
+                              : session.stillIn
+                                ? 'Still in'
+                                : '—'}
+                          </strong>
+                        </div>
+                        <div>
+                          <span className="cal-att-label">Hours</span>
+                          <strong className={isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined}>
+                            {session.workHours || (session.stillIn ? 'In progress' : '—')}
+                            {session.overridden ? ' · adjusted' : ''}
+                          </strong>
+                        </div>
+                      </div>
+                      {session.regularizePending ? (
+                        <p className="cal-att-pending">Regularization pending HR review</p>
+                      ) : null}
+                      {session.canRegularize && user?.role === 'user' ? (
+                        <button
+                          type="button"
+                          className="btn primary cal-att-regularize"
+                          onClick={() => {
+                            setAttendanceDay(null);
+                            openRegularize(session);
+                          }}
+                        >
+                          Regularize
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>,
+          getPortalRoot()
+        )}
+
+      {regularizeSession &&
+        getPortalRoot() &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => setRegularizeSession(null)}>
+            <div
+              className="modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cal-reg-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 id="cal-reg-title">Regularize attendance</h2>
+              <p className="muted">
+                Recorded hours for {formatDate(regularizeSession.punchDate)} are under{' '}
+                {expectedWorkMinutes / 60}h ({regularizeSession.workHours || '—'}). Propose
+                corrected punch times for HR to review.
+              </p>
+              {regError ? <p className="form-error">{regError}</p> : null}
+              <form className="stack-form" onSubmit={submitRegularize}>
+                <label>
+                  Proposed punch in
+                  <input
+                    type="time"
+                    required
+                    value={regForm.punchIn}
+                    onChange={(e) => setRegForm((c) => ({ ...c, punchIn: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  Proposed punch out
+                  <input
+                    type="time"
+                    required
+                    value={regForm.punchOut}
+                    onChange={(e) => setRegForm((c) => ({ ...c, punchOut: e.target.value }))}
+                  />
+                </label>
+                <label>
+                  Reason
+                  <textarea
+                    required
+                    rows={3}
+                    maxLength={500}
+                    value={regForm.reason}
+                    placeholder="Why should these times be corrected?"
+                    onChange={(e) => setRegForm((c) => ({ ...c, reason: e.target.value }))}
+                  />
+                </label>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => setRegularizeSession(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn primary" disabled={regBusy}>
+                    {regBusy ? 'Submitting…' : 'Send to HR'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          getPortalRoot()
+        )}
+
+      {showCreate &&
+        getPortalRoot() &&
+        createPortal(
+          <div
+            className="modal-backdrop"
+            onClick={() => !createBusy && setShowCreate(false)}
+          >
+            <div
+              className="modal cal-create-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cal-create-title"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="row-between">
               <h2 id="cal-create-title">Add leave</h2>
               <button type="button" className="btn ghost" onClick={() => setShowCreate(false)}>
@@ -854,8 +1437,9 @@ export default function LeaveCalendar({
               </div>
             </form>
           </div>
-        </div>
-      )}
+          </div>,
+          getPortalRoot()
+        )}
     </div>
   );
 }

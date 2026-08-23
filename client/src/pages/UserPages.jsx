@@ -8,6 +8,10 @@ import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import CompanyFeed from '../components/CompanyFeed';
 import { LeaveReportCharts } from '../components/LeaveReports';
+import PunchBoard from '../components/PunchBoard';
+import HistoryWorkspace from '../components/HistoryWorkspace';
+import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
+import RegularizationHistoryPanel from '../components/RegularizationHistoryPanel';
 import {
   LEAVE_LABELS,
   REQUEST_LABELS,
@@ -21,7 +25,9 @@ import { SalaryComponentsView } from '../components/SalaryComponentsView';
 const NAV = [
   { to: '/app', label: 'Home', end: true },
   { to: '/feed', label: 'Feed' },
+  { to: '/app/attendance', label: 'Attendance' },
   { to: '/app/apply', label: 'Apply' },
+  { to: '/app/reimbursements', label: 'Reimbursement' },
   { to: '/app/calendar', label: 'My calendar' },
   { to: '/app/salary', label: 'Salary' },
   { to: '/app/ratings', label: 'My ratings' },
@@ -126,6 +132,7 @@ export function UserHome() {
         teamTitle="On leave today"
         calendarTo="/app/calendar"
         holidaysTo="/app/calendar"
+        attendanceTo="/app/attendance"
         canApplyRestricted
         onRestrictedApplied={() => {
           reloadLeaves();
@@ -169,6 +176,14 @@ export function UserHome() {
           <LeaveReportCharts byType={report.byType} byMonth={report.byMonth} />
         </>
       )}
+    </AppShell>
+  );
+}
+
+export function UserAttendance() {
+  return (
+    <AppShell title="Attendance" nav={NAV}>
+      <PunchBoard />
     </AppShell>
   );
 }
@@ -229,72 +244,12 @@ export function UserCalendar() {
 }
 
 export function UserHistory() {
-  const [status, setStatus] = useState('all');
-  const { data, error, loading, reload } = useLoad(
-    () => api(`/leaves?status=${status}`).then((d) => d.leaves),
-    [status]
-  );
-  const [cancelErr, setCancelErr] = useState('');
-  const [busyId, setBusyId] = useState(null);
-
-  async function onCancel(leave) {
-    setCancelErr('');
-    setBusyId(leave.id);
-    try {
-      const done = await cancelLeave(leave.id, leave.status);
-      if (done) reload();
-    } catch (err) {
-      setCancelErr(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  }
-
   return (
     <AppShell title="History" nav={NAV}>
-      <div className="filters">
-        <label>
-          Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="all">All</option>
-            <option value="pending_manager">Awaiting manager</option>
-            <option value="pending_hr">Partially approved (awaiting HR)</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </label>
-      </div>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      {cancelErr && <p className="form-error">{cancelErr}</p>}
-      <div className="stack tight">
-        {(data || []).map((leave) => (
-          <section key={leave.id} className="panel">
-            <div className="row-between">
-              <div>
-                {REQUEST_LABELS[leave.leaveType]} · {formatLeaveSpan(leave)}
-              </div>
-              <div className="row-actions">
-                <span className={`badge status-${leave.status}`}>
-                  {STATUS_LABELS[leave.status]}
-                </span>
-                {canUserCancel(leave.status) && (
-                  <button
-                    type="button"
-                    className="btn danger ghost-danger"
-                    disabled={busyId === leave.id}
-                    onClick={() => onCancel(leave)}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </div>
-            <ApprovalProgress leave={leave} />
-          </section>
-        ))}
-      </div>
+      <HistoryWorkspace
+        leave={<LeaveHistoryPanel canCancel />}
+        regularization={<RegularizationHistoryPanel />}
+      />
     </AppShell>
   );
 }

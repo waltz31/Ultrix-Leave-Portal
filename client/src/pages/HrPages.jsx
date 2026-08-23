@@ -29,6 +29,12 @@ import {
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
+import PunchBoard from '../components/PunchBoard';
+import HrAttendanceOverview from '../components/HrAttendanceOverview';
+import RegularizationInbox from '../components/RegularizationInbox';
+import HistoryWorkspace from '../components/HistoryWorkspace';
+import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
+import RegularizationHistoryPanel from '../components/RegularizationHistoryPanel';
 import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh, managerOptionLabel } from '../utils';
 import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
 import * as XLSX from 'xlsx';
@@ -36,7 +42,10 @@ import * as XLSX from 'xlsx';
 const NAV = [
   { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
   { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
+  { to: '/hr/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
+  { to: '/hr/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
   { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
+  { to: '/hr/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
   { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
   { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
   { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
@@ -74,45 +83,40 @@ function useLoad(loader, deps = []) {
 
 export function HrOverview() {
   const { user } = useAuth();
-  const { data: stats, error, loading } = useLoad(() => api('/dashboard/stats'));
   const { data: report } = useLoad(() => api('/reports/overview'));
 
   return (
     <AppShell title={`Welcome ${user?.name || ''}`} nav={NAV}>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      {stats && (
-        <div className="stat-row four">
-          <Link to="/hr/approvals" className="stat stat-link">
-            <span>Awaiting your approval</span>
-            <strong>{stats.pendingHr}</strong>
-          </Link>
-          <Link to="/hr/history" className="stat stat-link">
-            <span>With managers</span>
-            <strong>{stats.pendingManager}</strong>
-          </Link>
-          <Link to="/hr/users" className="stat stat-link">
-            <span>Employees</span>
-            <strong>{stats.users}</strong>
-          </Link>
-          <Link to="/hr/calendar" className="stat stat-link">
-            <span>On leave / WFH today</span>
-            <strong>{Number(stats.onLeaveToday || 0) + Number(stats.onWfhToday || 0)}</strong>
-          </Link>
-        </div>
-      )}
+      <HrAttendanceOverview />
 
       <OverviewPanels
         todayOnLeave={report?.todayOnLeave || []}
         teamTitle="Team on leave"
         calendarTo="/hr/calendar"
         holidaysTo="/hr/calendar"
+        attendanceTo="/hr/attendance"
         canApplyRestricted={false}
       />
 
       <LeaveReportSection />
       <LeaveExportPanel />
 
+    </AppShell>
+  );
+}
+
+export function HrAttendance() {
+  return (
+    <AppShell title="Attendance" nav={NAV}>
+      <PunchBoard teamView canSync />
+    </AppShell>
+  );
+}
+
+export function HrRegularization() {
+  return (
+    <AppShell title="Regularization" nav={NAV}>
+      <RegularizationInbox />
     </AppShell>
   );
 }
@@ -1582,6 +1586,7 @@ export function HrCalendar() {
         <LeaveCalendar
           leaves={data.leaves}
           showNames
+          layout="roster"
           balancesByUserId={data.balancesByUserId}
           employees={(data.users || []).filter((u) => u.id !== user?.id)}
           canManage
@@ -1595,59 +1600,12 @@ export function HrCalendar() {
 }
 
 export function HrHistory() {
-  const [status, setStatus] = useState('all');
-  const [userId, setUserId] = useState('');
-  const { data: users } = useLoad(() => api('/users').then((d) => d.users));
-  const { data, error, loading } = useLoad(() => {
-    const params = new URLSearchParams({ status });
-    if (userId) params.set('userId', userId);
-    return api(`/leaves?${params}`).then((d) => d.leaves);
-  }, [status, userId]);
-
   return (
-    <AppShell title="Request history" nav={NAV}>
-      <div className="filters">
-        <label>
-          Status
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="all">All</option>
-            <option value="pending_manager">Awaiting manager</option>
-            <option value="pending_hr">Awaiting HR</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </label>
-        <label>
-          Employee
-          <select value={userId} onChange={(e) => setUserId(e.target.value)}>
-            <option value="">Everyone</option>
-            {(users || []).map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      <div className="stack tight">
-        {(data || []).map((leave) => (
-          <section key={leave.id} className="panel">
-            <div className="row-between">
-              <div>
-                <strong className="employee-name">{leave.userName}</strong> ·{' '}
-                {REQUEST_LABELS[leave.leaveType]} · {formatLeaveSpan(leave)}
-              </div>
-              <span className={`badge status-${leave.status}`}>
-                {STATUS_LABELS[leave.status]}
-              </span>
-            </div>
-            <ApprovalProgress leave={leave} compact />
-          </section>
-        ))}
-      </div>
+    <AppShell title="History" nav={NAV}>
+      <HistoryWorkspace
+        leave={<LeaveHistoryPanel showEmployee />}
+        regularization={<RegularizationHistoryPanel />}
+      />
     </AppShell>
   );
 }

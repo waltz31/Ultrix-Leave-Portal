@@ -4,12 +4,16 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
+import { PunchInProgressChip } from './PunchStatusChips';
 import {
   REQUEST_LABELS,
   STATUS_LABELS,
   appToday,
   formatOverviewHolidayRow,
   formatLeaveSpan,
+  formatTime,
+  punchInLateness,
+  isUnderNineHours,
   insufficientRestrictedBalance,
   isApplyBlockError,
   toYmd,
@@ -308,16 +312,97 @@ export function CompanyHolidaysPanel({
   );
 }
 
+export function TodayPunchesPanel({ attendanceTo = null, title = 'Office punches' }) {
+  const [punches, setPunches] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const today = toYmd(appToday());
+      const data = await api(`/punches?from=${today}&to=${today}`);
+      setPunches(data.punches || []);
+    } catch {
+      setPunches([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 4000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const latest = punches.slice(0, 6);
+
+  return (
+    <section className="panel overview-panel">
+      <PanelHead title={title} to={attendanceTo} />
+      {loading && <p className="muted">Loading punches…</p>}
+      {!loading && !latest.length && (
+        <p className="empty">No device punches yet today.</p>
+      )}
+      {!!latest.length && (
+        <ul className="overview-team-list">
+          {latest.map((session) => (
+            <li key={`${session.userId || session.deviceUserCode}-${session.id}`}>
+              <div className="overview-team-main">
+                <strong>{session.userName || `ID ${session.deviceUserCode}`}</strong>
+                <span className={`badge ${session.stillIn ? 'status-approved' : 'status-rejected'}`}>
+                  {session.stillIn ? 'In' : 'Out'}
+                </span>
+              </div>
+              <span className="overview-team-dates">
+                In{' '}
+                {session.punchIn ? (
+                  <span className={`punch-in-sq is-${punchInLateness(session.punchIn) || 'on-time'}`}>
+                    {formatTime(session.punchIn)}
+                  </span>
+                ) : (
+                  '—'
+                )}
+                {' · '}
+                Out{' '}
+                {session.punchOut
+                  ? formatTime(session.punchOut)
+                  : session.stillIn
+                    ? 'still in'
+                    : '—'}
+                {session.workHours ? (
+                  <>
+                    {' · '}
+                    <span className={isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined}>
+                      {session.workHours}
+                    </span>
+                  </>
+                ) : session.stillIn ? (
+                  <>
+                    {' · '}
+                    <PunchInProgressChip />
+                  </>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export default function OverviewPanels({
   todayOnLeave = [],
   teamTitle = 'Team on leave',
   calendarTo = null,
   holidaysTo = null,
+  attendanceTo = null,
   canApplyRestricted = false,
   onRestrictedApplied,
 }) {
   return (
     <div className="overview-stack">
+      <TodayPunchesPanel attendanceTo={attendanceTo} />
       <TeamOnLeavePanel items={todayOnLeave} title={teamTitle} calendarTo={calendarTo} />
       <CompanyHolidaysPanel
         canApplyRestricted={canApplyRestricted}

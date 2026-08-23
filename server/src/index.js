@@ -6,6 +6,7 @@ import db from './db.js';
 import routes from './routes.js';
 import { slackStatus, handleSlackInteraction } from './slack.js';
 import { purgeExpiredInvoices } from './invoiceCleanup.js';
+import { startPunchPolling } from './punchSync.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -123,6 +124,7 @@ try {
 
   runInvoiceCleanup();
   setInterval(runInvoiceCleanup, 24 * 60 * 60 * 1000);
+  startPunchPolling();
 } catch (err) {
   console.error('Fatal database startup error:', err);
   process.exit(1);
