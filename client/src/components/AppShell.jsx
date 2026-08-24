@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { THEME_PRESETS, useTheme } from '../theme';
+import { DARK_THEMES, LIGHT_THEMES, useTheme } from '../theme';
 import { avatarSrc, formatDateTime } from '../utils';
 import ApprovedCelebration from './ApprovedCelebration';
 import StatusCelebration from './StatusCelebration';
@@ -301,12 +301,31 @@ function NotificationBell({ onApprovedNotice, onBalanceCredited, onManagerApprov
   );
 }
 
+function ThemeSwatch({ primary, secondary, bg, active, label, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`theme-preset${active ? ' is-on' : ''}`}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      <span className="theme-preset-chip" style={{ background: bg }}>
+        <span style={{ background: primary }} />
+        <span style={{ background: secondary }} />
+      </span>
+      <span className="theme-preset-name">{label}</span>
+    </button>
+  );
+}
+
 function ColorPanel({ onClose }) {
-  const { bgColor, setBgColor, resetTheme, isDefault } = useTheme();
+  const { themeId, bgColor, setBgColor, setThemeId, resetTheme, isDefault, isCustom } = useTheme();
   return (
     <div className="settings-color">
       <div className="bell-panel-head">
-        <strong>Background color</strong>
+        <strong>Theme</strong>
         <div className="bell-actions">
           {!isDefault && (
             <button type="button" className="btn ghost" onClick={resetTheme}>
@@ -320,21 +339,36 @@ function ColorPanel({ onClose }) {
           )}
         </div>
       </div>
+      <p className="theme-group-label">Light</p>
       <div className="theme-presets">
-        {THEME_PRESETS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            className={`theme-preset${bgColor.toLowerCase() === p.value.toLowerCase() ? ' active' : ''}`}
-            style={{ background: p.value }}
-            title={p.label}
-            aria-label={p.label}
-            onClick={() => setBgColor(p.value)}
+        {LIGHT_THEMES.map((p) => (
+          <ThemeSwatch
+            key={p.id}
+            label={p.label}
+            primary={p.primary}
+            secondary={p.secondary}
+            bg={p.bg}
+            active={themeId === p.id}
+            onClick={() => setThemeId(p.id)}
           />
         ))}
       </div>
-      <label className="theme-custom">
-        Custom
+      <p className="theme-group-label">Dark</p>
+      <div className="theme-presets">
+        {DARK_THEMES.map((p) => (
+          <ThemeSwatch
+            key={p.id}
+            label={p.label}
+            primary={p.primary}
+            secondary={p.secondary}
+            bg={p.bg}
+            active={themeId === p.id}
+            onClick={() => setThemeId(p.id)}
+          />
+        ))}
+      </div>
+      <label className={`theme-custom${isCustom ? ' is-on' : ''}`}>
+        Custom wash
         <input
           type="color"
           value={/^#[0-9a-fA-F]{6}$/.test(bgColor) ? bgColor : DEFAULT_COLOR_INPUT}
@@ -492,7 +526,7 @@ function ChangeNameModal({ onClose }) {
 
 function SettingsMenu({ variant = 'header' }) {
   const { user, logout } = useAuth();
-  const { bgColor } = useTheme();
+  const { primary, secondary } = useTheme();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState('menu'); // menu | color
   const [showPassword, setShowPassword] = useState(false);
@@ -554,12 +588,15 @@ function SettingsMenu({ variant = 'header' }) {
             aria-expanded={open}
           >
             <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
-            <span className="theme-swatch" style={{ background: bgColor }} />
+            <span
+              className="theme-swatch"
+              style={{ background: `linear-gradient(135deg, ${primary} 50%, ${secondary} 50%)` }}
+            />
           </button>
         )}
 
         {open && (
-          <div className={`settings-panel${isSidebar ? ' settings-panel-up' : ''}`}>
+          <div className={`settings-panel${isSidebar ? ' settings-panel-up' : ''}${view === 'color' ? ' is-theme' : ''}`}>
             {view === 'color' ? (
               <ColorPanel onClose={() => setView('menu')} />
             ) : (
@@ -593,7 +630,7 @@ function SettingsMenu({ variant = 'header' }) {
                       />
                     </svg>
                   </span>
-                  <span>Color</span>
+                  <span>Theme</span>
                 </button>
                 <button
                   type="button"

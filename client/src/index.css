@@ -1601,24 +1601,66 @@ textarea:focus {
   gap: 12px;
 }
 
+.theme-group-label {
+  margin: 8px 2px 4px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
 .theme-presets {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
 .theme-preset {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
   width: 100%;
-  aspect-ratio: 1;
-  border-radius: 10px;
-  border: 2px solid rgba(255, 255, 255, 0.25);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 4px 2px;
   cursor: pointer;
-  padding: 0;
 }
 
-.theme-preset.active {
-  border-color: #64c5c1;
-  box-shadow: 0 0 0 2px rgba(100, 197, 193, 0.35);
+.theme-preset-chip {
+  display: flex;
+  width: 100%;
+  aspect-ratio: 1.3;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+}
+
+.theme-preset-chip > span {
+  flex: 1;
+}
+
+.theme-preset-chip > span:first-child {
+  flex: 1.4;
+}
+
+.theme-preset.is-on .theme-preset-chip,
+.theme-preset.is-on .theme-preset-chip {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand, #64c5c1) 55%, transparent);
+}
+
+.theme-preset-name {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.2;
+}
+
+.theme-preset.is-on .theme-preset-name,
+.theme-preset.is-on .theme-preset-name {
+  color: #fff;
 }
 
 .theme-custom {
@@ -1626,8 +1668,16 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
   font-size: 0.88rem;
   color: rgba(255, 255, 255, 0.8);
+}
+
+.theme-custom.is-on {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .theme-custom input[type='color'] {
@@ -1653,6 +1703,12 @@ textarea:focus {
   box-shadow: var(--shadow);
   z-index: 80;
   animation: sidebar-panel-in 0.2s ease;
+}
+
+.settings-panel.is-theme {
+  width: min(360px, 90vw);
+  max-height: min(72vh, 580px);
+  overflow: auto;
 }
 
 .settings-panel-up {
