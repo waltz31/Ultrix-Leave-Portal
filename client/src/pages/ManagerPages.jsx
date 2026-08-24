@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
 import LeaveCalendar from '../components/LeaveCalendar';
+import HrEmployeeBalanceDirectory from '../components/HrEmployeeBalanceDirectory';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection } from '../components/LeaveReports';
@@ -343,13 +344,16 @@ export function ManagerCalendar() {
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {data && (
-        <LeaveCalendar
-          leaves={data.leaves}
-          showNames
-          layout="roster"
-          balancesByUserId={data.balancesByUserId}
-          employees={data.users}
-        />
+        <div className="leave-mgmt-stack">
+          <HrEmployeeBalanceDirectory users={data.users || []} />
+          <LeaveCalendar
+            leaves={data.leaves}
+            showNames
+            layout="roster"
+            balancesByUserId={data.balancesByUserId}
+            employees={data.users}
+          />
+        </div>
       )}
     </AppShell>
   );

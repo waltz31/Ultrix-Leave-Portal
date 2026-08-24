@@ -356,34 +356,35 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
        LEFT JOIN users m ON m.id = u.manager_id
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
        WHERE u.role IN ('manager', 'hr')
-       ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
+       ORDER BY LOWER(u.role), LOWER(u.name)`
     )
     .all())
     .map(publicUser);
   res.json({ managers });
 });
 
-const APPROVED_USED_SQL = (type) =>
-  `COALESCE((
-    SELECT SUM(lr.days) FROM leave_requests lr
-    WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = '${type}'
-  ), 0)`;
-
 const USER_DIRECTORY_SELECT = `
   SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
          m.email AS manager_email, ep.profile_photo, ep.designation, ep.department,
-         ${APPROVED_USED_SQL('casual')} AS casual_used,
-         ${APPROVED_USED_SQL('earned')} AS earned_used,
-         ${APPROVED_USED_SQL('sick')} AS sick_used,
-         ${APPROVED_USED_SQL('restricted')} AS restricted_used,
-         COALESCE((
-           SELECT SUM(lr.days) FROM leave_requests lr
-           WHERE lr.user_id = u.id AND lr.status = 'approved' AND lr.leave_type = 'wfh'
-         ), 0) AS wfh_days
+         COALESCE(used.casual_used, 0) AS casual_used,
+         COALESCE(used.earned_used, 0) AS earned_used,
+         COALESCE(used.sick_used, 0) AS sick_used,
+         COALESCE(used.restricted_used, 0) AS restricted_used,
+         COALESCE(used.wfh_days, 0) AS wfh_days
   FROM users u
   LEFT JOIN leave_balances b ON b.user_id = u.id
   LEFT JOIN users m ON m.id = u.manager_id
   LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+  LEFT JOIN (
+    SELECT user_id,
+      SUM(CASE WHEN leave_type = 'casual' AND status = 'approved' THEN days ELSE 0 END) AS casual_used,
+      SUM(CASE WHEN leave_type = 'earned' AND status = 'approved' THEN days ELSE 0 END) AS earned_used,
+      SUM(CASE WHEN leave_type = 'sick' AND status = 'approved' THEN days ELSE 0 END) AS sick_used,
+      SUM(CASE WHEN leave_type = 'restricted' AND status = 'approved' THEN days ELSE 0 END) AS restricted_used,
+      SUM(CASE WHEN leave_type = 'wfh' AND status = 'approved' THEN days ELSE 0 END) AS wfh_days
+    FROM leave_requests
+    GROUP BY user_id
+  ) used ON used.user_id = u.id
 `;
 
 function mapUserWithBalances(row) {
@@ -402,27 +403,32 @@ function mapUserWithBalances(row) {
 
 // ——— Users (HR) ———
 router.get('/users', authRequired, managerOrHrRequired, async (req, res) => {
-  if (req.user.role === 'manager') {
+  try {
+    if (req.user.role === 'manager') {
+      const users = (await db
+        .prepare(
+          `${USER_DIRECTORY_SELECT}
+           WHERE u.role = 'user' AND u.manager_id = ?
+           ORDER BY LOWER(u.name)`
+        )
+        .all(req.user.id))
+        .map(mapUserWithBalances);
+      return res.json({ users });
+    }
+
     const users = (await db
       .prepare(
         `${USER_DIRECTORY_SELECT}
-         WHERE u.role = 'user' AND u.manager_id = ?
-         ORDER BY u.name COLLATE NOCASE`
+         WHERE u.role IN ('user', 'manager', 'hr')
+         ORDER BY LOWER(u.role), LOWER(u.name)`
       )
-      .all(req.user.id))
+      .all())
       .map(mapUserWithBalances);
     return res.json({ users });
+  } catch (err) {
+    console.error('GET /users failed', err);
+    return res.status(500).json({ error: err.message || 'Could not load users' });
   }
-
-  const users = (await db
-    .prepare(
-      `${USER_DIRECTORY_SELECT}
-       WHERE u.role IN ('user', 'manager', 'hr')
-       ORDER BY u.role COLLATE NOCASE, u.name COLLATE NOCASE`
-    )
-    .all())
-    .map(mapUserWithBalances);
-  res.json({ users });
 });
 
 router.post('/users', authRequired, hrRequired, async (req, res) => {

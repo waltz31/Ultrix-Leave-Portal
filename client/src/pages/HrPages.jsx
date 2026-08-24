@@ -334,7 +334,7 @@ function ProfileFacts({ items }) {
   );
 }
 
-function ProfileCardMenu({ items = [] }) {
+function ProfileCardMenu({ items = [], vertical = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -358,9 +358,19 @@ function ProfileCardMenu({ items = [] }) {
         onClick={() => setOpen((value) => !value)}
       >
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.8" />
-          <circle cx="12" cy="12" r="1.8" />
-          <circle cx="19" cy="12" r="1.8" />
+          {vertical ? (
+            <>
+              <circle cx="12" cy="5" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="12" cy="19" r="1.8" />
+            </>
+          ) : (
+            <>
+              <circle cx="5" cy="12" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="19" cy="12" r="1.8" />
+            </>
+          )}
         </svg>
       </button>
       {open && (
@@ -1060,12 +1070,6 @@ export function HrUsers() {
     api('/users').then((d) => d.users)
   );
   const {
-    data: managers,
-    error: managersError,
-    loading: managersLoading,
-    reload: reloadManagers,
-  } = useLoad(() => api('/managers').then((d) => d.managers));
-  const {
     data: creditLog,
     reload: reloadCredits,
   } = useLoad(() => api('/balances/credits').then((d) => d.credits));
@@ -1078,11 +1082,14 @@ export function HrUsers() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [creditPopup, setCreditPopup] = useState(null);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const [creditBusy, setCreditBusy] = useState(false);
 
   async function creditBalance(e) {
     e.preventDefault();
     setMsg('');
     setErr('');
+    setCreditBusy(true);
     try {
       const employee = (data || []).find((u) => String(u.id) === String(creditForm.userId));
       await api('/balances/credit', {
@@ -1096,6 +1103,7 @@ export function HrUsers() {
       });
       const typeLabel = LEAVE_LABELS[creditForm.leaveType] || creditForm.leaveType;
       const days = Number(creditForm.amount);
+      setShowCreditModal(false);
       setCreditPopup({
         message: 'Leaves credited',
         detail: `${days} ${typeLabel} leave day${days === 1 ? '' : 's'} credited to ${
@@ -1108,22 +1116,8 @@ export function HrUsers() {
       reloadCredits();
     } catch (error) {
       setErr(error.message);
-    }
-  }
-
-  async function assignManagerReportingTo(mgr, managerIdValue) {
-    setMsg('');
-    setErr('');
-    try {
-      await api(`/users/${mgr.id}`, {
-        method: 'PATCH',
-        body: { managerId: managerIdValue ? Number(managerIdValue) : null },
-      });
-      setMsg(`Reporting to updated for ${mgr.name}.`);
-      reloadManagers();
-      reload();
-    } catch (error) {
-      setErr(error.message);
+    } finally {
+      setCreditBusy(false);
     }
   }
 
@@ -1134,7 +1128,6 @@ export function HrUsers() {
         body: { active: !user.active },
       });
       reload();
-      reloadManagers();
     } catch (error) {
       setErr(error.message);
     }
@@ -1172,139 +1165,10 @@ export function HrUsers() {
       {(msg || err) && <p className={err ? 'form-error' : 'form-ok'}>{err || msg}</p>}
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
-      {managersError && <p className="form-error">{managersError}</p>}
 
       <div className="leave-mgmt-stack">
-      <section className="panel leave-mgmt-credit">
-        <div className="leave-credit-head">
-          <h2>Credit leave balance</h2>
-        </div>
-        <form className="leave-credit-form" onSubmit={creditBalance}>
-          <label>
-            Employee
-            <select
-              value={creditForm.userId}
-              onChange={(e) => setCreditForm((f) => ({ ...f, userId: e.target.value }))}
-              required
-            >
-              <option value="">Select…</option>
-              {(data || []).map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                  {u.role === 'manager' ? ' (manager)' : u.role === 'hr' ? ' (HR)' : ''}
-                  {u.active ? '' : ' (inactive)'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={`leave-credit-type is-${creditForm.leaveType}`}>
-            Type
-            <select
-              value={creditForm.leaveType}
-              onChange={(e) => setCreditForm((f) => ({ ...f, leaveType: e.target.value }))}
-            >
-              {Object.entries(LEAVE_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Days
-            <input
-              type="number"
-              min="0.5"
-              step="0.5"
-              value={creditForm.amount}
-              onChange={(e) => setCreditForm((f) => ({ ...f, amount: e.target.value }))}
-              required
-            />
-          </label>
-          <label className="leave-credit-note">
-            Note (optional)
-            <input
-              value={creditForm.note}
-              onChange={(e) => setCreditForm((f) => ({ ...f, note: e.target.value }))}
-              placeholder="Reason for credit"
-            />
-          </label>
-          <div className="leave-credit-actions">
-            <button className="btn primary" type="submit">
-              Credit balance
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel leave-mgmt-managers">
-        <h2>Managers &amp; HR</h2>
-        {managersLoading && <p className="muted">Loading managers…</p>}
-        {!managersLoading && !managers?.length && (
-          <p className="empty">
-            No managers or HR users yet. Add them from <Link to="/hr/onboarding">Onboarding</Link>.
-          </p>
-        )}
-        {!!managers?.length && (
-          <div className="profile-card-grid">
-            {managers.map((mgr) => (
-              <article
-                key={mgr.id}
-                className={`profile-card ${mgr.active ? '' : 'is-inactive'}`}
-              >
-                <img
-                  className="profile-card-photo"
-                  src={avatarSrc(mgr.profilePhoto)}
-                  alt=""
-                />
-                <div className="profile-card-body">
-                  <div className="profile-card-head">
-                    <h3 className="profile-card-name">{mgr.name}</h3>
-                    <ProfileCardMenu
-                      items={[
-                        {
-                          label: mgr.active ? 'Deactivate' : 'Activate',
-                          onClick: () => toggleActive(mgr),
-                        },
-                      ]}
-                    />
-                  </div>
-                  <p className="profile-card-email">{mgr.email}</p>
-                  <p className="profile-card-designation">
-                    {mgr.designation || ROLE_LABELS[mgr.role] || mgr.role}
-                  </p>
-                  <p className="profile-card-manager">
-                    {mgr.managerId || mgr.managerName
-                      ? `Reports to ${reportingManagerName(mgr, managers)}`
-                      : 'No reporting manager'}
-                  </p>
-                  <label className="profile-card-assign">
-                    Reporting manager
-                    <select
-                      className="reporting-to-select"
-                      aria-label={`Reporting to for ${mgr.name}`}
-                      value={mgr.managerId || ''}
-                      onChange={(e) => assignManagerReportingTo(mgr, e.target.value)}
-                    >
-                      <option value="">Unassigned</option>
-                      {(managers || [])
-                        .filter((m) => String(m.id) !== String(mgr.id) && m.active !== false)
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {managerOptionLabel(m)}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
       <HrEmployeeBalanceDirectory
-        users={data || []}
+        users={(data || []).filter((u) => u.role !== 'hr')}
         empty={
           !loading ? (
             <p className="empty">
@@ -1312,8 +1176,14 @@ export function HrUsers() {
             </p>
           ) : null
         }
+        actions={
+          <button type="button" className="btn primary" onClick={() => setShowCreditModal(true)}>
+            Credit leave balance
+          </button>
+        }
         renderMenu={(user) => (
           <ProfileCardMenu
+            vertical
             items={[
               {
                 label: user.active ? 'Deactivate' : 'Activate',
@@ -1328,6 +1198,86 @@ export function HrUsers() {
           />
         )}
       />
+
+      {showCreditModal && (
+        <div className="modal-backdrop" onClick={() => !creditBusy && setShowCreditModal(false)}>
+          <div
+            className="modal leave-credit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="credit-leave-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="credit-leave-title">Credit leave balance</h2>
+            <form className="leave-credit-form" onSubmit={creditBalance}>
+              <label>
+                Employee
+                <select
+                  value={creditForm.userId}
+                  onChange={(e) => setCreditForm((f) => ({ ...f, userId: e.target.value }))}
+                  required
+                >
+                  <option value="">Select…</option>
+                  {(data || [])
+                    .filter((u) => u.role !== 'hr')
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                        {u.role === 'manager' ? ' (manager)' : ''}
+                        {u.active ? '' : ' (inactive)'}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className={`leave-credit-type is-${creditForm.leaveType}`}>
+                Type
+                <select
+                  value={creditForm.leaveType}
+                  onChange={(e) => setCreditForm((f) => ({ ...f, leaveType: e.target.value }))}
+                >
+                  {Object.entries(LEAVE_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Days
+                <input
+                  type="number"
+                  min="0.5"
+                  step="0.5"
+                  value={creditForm.amount}
+                  onChange={(e) => setCreditForm((f) => ({ ...f, amount: e.target.value }))}
+                  required
+                />
+              </label>
+              <label className="leave-credit-note">
+                Note (optional)
+                <input
+                  value={creditForm.note}
+                  onChange={(e) => setCreditForm((f) => ({ ...f, note: e.target.value }))}
+                  placeholder="Reason for credit"
+                />
+              </label>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={creditBusy}
+                  onClick={() => setShowCreditModal(false)}
+                >
+                  Cancel
+                </button>
+                <button className="btn primary" type="submit" disabled={creditBusy}>
+                  {creditBusy ? 'Crediting…' : 'Credit balance'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <section className="panel">
         <h2>Credit history</h2>
