@@ -453,6 +453,7 @@ export default function LeaveCalendar({
         code: leaveMeta.code,
         halfDay,
         time: halfDay && session?.punchIn ? stampToTimeInput(session.punchIn) : '',
+        timeTone: halfDay && session?.punchIn ? punchInLateness(session.punchIn) || 'on-time' : '',
         leave,
         session: session || null,
         label: `${REQUEST_LABELS[leave.leaveType] || leaveMeta.code}${halfDay ? ' · Half day' : ''}`,
@@ -476,6 +477,7 @@ export default function LeaveCalendar({
         kind: late ? 'late' : 'present',
         code: late ? 'L' : 'P',
         time: stampToTimeInput(session.punchIn),
+        timeTone: lateness || 'on-time',
         session,
         leave: leave || null,
         halfDay,
@@ -904,9 +906,13 @@ export default function LeaveCalendar({
                         setAttendanceDay(dayKey);
                       }}
                     >
-                      {attSummary
-                        ? attendanceChipLabel(dayAttendance, attSummary)
-                        : attendanceChipLabel(dayAttendance, null)}
+                      {showAttSummary && attSummary?.punchIn ? (
+                        <span className={`punch-in-sq is-sm is-${punchInLateness(attSummary.punchIn) || 'on-time'}`}>
+                          {shortPunchTime(attSummary.punchIn)}
+                        </span>
+                      ) : (
+                        attendanceChipLabel(dayAttendance, attSummary)
+                      )}
                     </button>
                   )}
                   <div className="leave-chips">
@@ -1131,7 +1137,15 @@ export default function LeaveCalendar({
                       <div className="cal-att-times">
                         <div>
                           <span className="cal-att-label">Punch in</span>
-                          <strong>{session.punchIn ? formatTime(session.punchIn) : '—'}</strong>
+                          <strong>
+                            {session.punchIn ? (
+                              <span className={`punch-in-sq is-sm is-${punchInLateness(session.punchIn) || 'on-time'}`}>
+                                {formatTime(session.punchIn)}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </strong>
                         </div>
                         <div>
                           <span className="cal-att-label">Punch out</span>

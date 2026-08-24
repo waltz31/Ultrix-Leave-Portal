@@ -205,6 +205,7 @@ export function UserApply() {
 }
 
 export function UserCalendar() {
+  const { user } = useAuth();
   const now = appToday();
   const year = now.getFullYear();
   const from = `${year}-01-01`;
@@ -237,7 +238,13 @@ export function UserCalendar() {
       {error && <p className="form-error">{error}</p>}
       {cancelErr && <p className="form-error">{cancelErr}</p>}
       {data && (
-        <LeaveCalendar leaves={data} onCancel={onCancel} busyId={busyId} />
+        <LeaveCalendar
+          leaves={data}
+          onCancel={onCancel}
+          busyId={busyId}
+          layout="roster"
+          employees={user ? [user] : []}
+        />
       )}
     </AppShell>
   );

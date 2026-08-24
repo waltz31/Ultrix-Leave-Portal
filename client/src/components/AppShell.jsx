@@ -650,6 +650,22 @@ function PageTitle({ title }) {
       </h1>
     );
   }
+  if (title === 'Feed') {
+    return (
+      <div className="feed-page-heading">
+        <h1>
+          Feed{' '}
+          <svg className="feed-sparkle" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M12 2.4 13.6 8.4 19.6 10 13.6 11.6 12 17.6 10.4 11.6 4.4 10 10.4 8.4 12 2.4Z"
+            />
+          </svg>
+        </h1>
+        <p className="feed-page-kicker">Stay connected. Celebrate together.</p>
+      </div>
+    );
+  }
   return <h1>{title}</h1>;
 }
 

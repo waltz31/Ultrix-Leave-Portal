@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatOverviewHolidayRow,
   formatTime,
+  punchInLateness,
 } from '../utils';
 import StatusCelebration from './StatusCelebration';
 
@@ -505,7 +506,15 @@ export default function RegularizationInbox() {
               </div>
               <div>
                 <dt>Actual check-in</dt>
-                <dd>{selected.currentPunchIn ? formatTime(selected.currentPunchIn) : 'Not marked'}</dd>
+                <dd>
+                  {selected.currentPunchIn ? (
+                    <span className={`punch-in-sq is-${punchInLateness(selected.currentPunchIn) || 'on-time'}`}>
+                      {formatTime(selected.currentPunchIn)}
+                    </span>
+                  ) : (
+                    'Not marked'
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Actual check-out</dt>
@@ -513,7 +522,15 @@ export default function RegularizationInbox() {
               </div>
               <div>
                 <dt>Requested check-in</dt>
-                <dd>{selected.proposedPunchIn ? formatTime(selected.proposedPunchIn) : '—'}</dd>
+                <dd>
+                  {selected.proposedPunchIn ? (
+                    <span className={`punch-in-sq is-${punchInLateness(selected.proposedPunchIn) || 'on-time'}`}>
+                      {formatTime(selected.proposedPunchIn)}
+                    </span>
+                  ) : (
+                    '—'
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Requested check-out</dt>

@@ -3043,11 +3043,45 @@ async function sendFeed(req, res) {
     )
     .all();
 
+  const memberRow = await db
+    .prepare(`SELECT COUNT(*) AS n FROM users WHERE active = 1`)
+    .get();
+  const reactionRow = await db.prepare(`SELECT COUNT(*) AS n FROM feed_reactions`).get();
+  const commentRow = await db.prepare(`SELECT COUNT(*) AS n FROM feed_comments`).get();
+  const postCountRow = await db.prepare(`SELECT COUNT(*) AS n FROM feed_posts`).get();
+  const members = Number(memberRow?.n) || 0;
+  const reactions = Number(reactionRow?.n) || 0;
+  const postsCount = Number(postCountRow?.n) || 0;
+  const comments = Number(commentRow?.n) || 0;
+
+  const directory = await db
+    .prepare(
+      `SELECT u.id, u.name, ep.profile_photo, ep.designation, ep.department, ep.location
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE u.active = 1
+       ORDER BY u.name`
+    )
+    .all();
+
   res.json({
     posts: await hydrateFeedPosts(postRows, req.user.id),
     counts: countsFromRows(countRows) || emptyCounts(),
     tags: trendingTagsFromPosts(recentForTags),
     celebrations: buildCelebrations(people, todayIst()),
+    people: directory.map((row) => ({
+      id: row.id,
+      name: row.name,
+      photo: row.profile_photo || null,
+      department: row.department || null,
+      location: row.location || null,
+      designation: row.designation || null,
+    })),
+    stats: {
+      members,
+      reactions,
+      views: postsCount + comments + reactions,
+    },
   });
 }
 

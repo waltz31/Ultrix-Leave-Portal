@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatOverviewHolidayRow,
   formatTime,
+  punchInLateness,
 } from '../utils';
 
 function statusLabel(status) {
@@ -141,7 +142,15 @@ export default function RegularizationHistoryPanel() {
               </div>
               <div>
                 <dt>Requested check-in</dt>
-                <dd>{selected.proposedPunchIn ? formatTime(selected.proposedPunchIn) : '—'}</dd>
+                <dd>
+                  {selected.proposedPunchIn ? (
+                    <span className={`punch-in-sq is-${punchInLateness(selected.proposedPunchIn) || 'on-time'}`}>
+                      {formatTime(selected.proposedPunchIn)}
+                    </span>
+                  ) : (
+                    '—'
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>Requested check-out</dt>

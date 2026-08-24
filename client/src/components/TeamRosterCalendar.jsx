@@ -272,7 +272,9 @@ export default function TeamRosterCalendar({
                         onClick={interactive ? () => onCellClick(employee, day, cell) : undefined}
                       >
                         <StatusMark cell={cell} />
-                        {cell.time ? <span className="roster-time">{cell.time}</span> : null}
+                        {cell.time ? (
+                          <span className={`roster-time is-${cell.timeTone || 'on-time'}`}>{cell.time}</span>
+                        ) : null}
                       </Tag>
                     );
                   })}

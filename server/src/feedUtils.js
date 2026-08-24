@@ -147,16 +147,31 @@ export function buildPollPayload(poll, options, votes, userId) {
   const counts = new Map();
   let myOptionId = null;
   let total = 0;
+  const voterIds = [];
+  const seenVoters = new Set();
+  const me = Number(userId);
   for (const vote of votes || []) {
     counts.set(vote.option_id, (counts.get(vote.option_id) || 0) + 1);
     total += 1;
-    if (Number(vote.user_id) === Number(userId)) myOptionId = vote.option_id;
+    if (Number(vote.user_id) === me) myOptionId = vote.option_id;
+  }
+  if (myOptionId != null && Number.isFinite(me)) {
+    voterIds.push(me);
+    seenVoters.add(me);
+  }
+  for (const vote of votes || []) {
+    const id = Number(vote.user_id);
+    if (!Number.isFinite(id) || seenVoters.has(id)) continue;
+    seenVoters.add(id);
+    voterIds.push(id);
+    if (voterIds.length >= 4) break;
   }
   return {
     id: poll.id,
     total,
     voted: myOptionId != null,
     myOptionId,
+    voterIds,
     options: (options || []).map((option) => ({
       id: option.id,
       label: option.label,
