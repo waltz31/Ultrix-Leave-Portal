@@ -10,6 +10,7 @@ import {
   monthRange,
 } from '../exportRatings';
 import { formatDateTime, appYear, appToday, managerOptionLabel } from '../utils';
+import { HR_NAV, MANAGER_NAV, USER_NAV } from '../navConfig';
 
 const PERIOD_MONTHS = [
   { value: '1', label: 'January' },
@@ -38,44 +39,6 @@ function formatPeriodLabel(year, month) {
   const label = PERIOD_MONTHS.find((m) => m.value === String(month))?.label;
   return label ? `${label} ${year}` : '';
 }
-
-const MANAGER_NAV = [
-  { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
-  { to: '/manager/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
-  { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
-  { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
-  { to: '/manager/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
-];
-
-const HR_NAV = [
-  { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
-  { to: '/hr/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
-  { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
-  { to: '/hr/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
-  { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
-  { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
-];
-
-const USER_NAV = [
-  { to: '/app', label: 'Home', end: true },
-  { to: '/feed', label: 'Feed' },
-  { to: '/app/apply', label: 'Apply' },
-  { to: '/app/reimbursements', label: 'Reimbursement' },
-  { to: '/app/calendar', label: 'My calendar' },
-  { to: '/app/salary', label: 'Salary' },
-  { to: '/app/ratings', label: 'My ratings' },
-  { to: '/app/history', label: 'History' },
-];
 
 const MONTHS = [
   { value: '', label: 'All months' },
@@ -704,5 +667,3 @@ export function HrRatings() {
     </AppShell>
   );
 }
-
-export { MANAGER_NAV as MANAGER_RATINGS_NAV, HR_NAV as HR_RATINGS_NAV, USER_NAV as USER_RATINGS_NAV };

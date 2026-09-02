@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 export default function StatusCelebration({
   show,
@@ -9,23 +10,26 @@ export default function StatusCelebration({
   credentials = null,
   durationMs = 3000,
 }) {
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
   useEffect(() => {
     if (!show) return undefined;
-    const timer = setTimeout(() => onDone?.(), durationMs);
-    return () => clearTimeout(timer);
-  }, [show, onDone, durationMs]);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const timer = window.setTimeout(() => onDoneRef.current?.(), durationMs);
+    return () => {
+      window.clearTimeout(timer);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [show, durationMs]);
 
   if (!show) return null;
 
-  return (
+  return createPortal(
     <div className="approved-celebration" role="status" aria-live="polite">
       <div className="approved-celebration-card">
-        <img
-          key={show ? imageSrc : 'hidden'}
-          src={imageSrc}
-          alt=""
-          className="approved-celebration-gif"
-        />
+        <img src={imageSrc} alt="" className="approved-celebration-gif" />
         <strong>{message}</strong>
         {detail ? <p className="approved-celebration-detail">{detail}</p> : null}
         {credentials?.email ? (
@@ -49,6 +53,7 @@ export default function StatusCelebration({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

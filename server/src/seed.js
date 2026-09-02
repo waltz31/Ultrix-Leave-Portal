@@ -36,7 +36,7 @@ const insertUser = db.prepare(
    VALUES (?, ?, ?, ?, ?)`
 );
 const insertBal = db.prepare(
-  `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted) VALUES (?, ?, ?, ?, ?)`
+  `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted, celebration) VALUES (?, ?, ?, ?, ?, ?)`
 );
 
 await db.transaction(async () => {
@@ -47,7 +47,7 @@ await db.transaction(async () => {
     'hr',
     null
   );
-  await insertBal.run(hr.lastInsertRowid, 0, 0, 0, 2);
+  await insertBal.run(hr.lastInsertRowid, 0, 0, 0, 2, 0);
 });
 
 console.log('Database ready — HR login:');

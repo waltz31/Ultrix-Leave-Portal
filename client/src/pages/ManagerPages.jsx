@@ -11,41 +11,32 @@ import { LeaveReportSection } from '../components/LeaveReports';
 import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import CompanyFeed from '../components/CompanyFeed';
-import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
-import PunchBoard from '../components/PunchBoard';
+import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, includeInAttendanceRoster, isWfh } from '../utils';
+import AttendanceMuster from '../components/AttendanceMuster';
+import HrAttendanceOverview from '../components/HrAttendanceOverview';
 import RegularizationInbox from '../components/RegularizationInbox';
 import HistoryWorkspace from '../components/HistoryWorkspace';
 import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
 import RegularizationHistoryPanel from '../components/RegularizationHistoryPanel';
 import { SalaryComponentsView } from '../components/SalaryComponentsView';
-
-const NAV = [
-  { to: '/manager', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
-  { to: '/manager/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
-  { to: '/manager/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
-  { to: '/manager/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
-  { to: '/manager/approvals', label: 'Approvals', icon: '/assets/nav-approved.png' },
-  { to: '/manager/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/manager/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
-  { to: '/manager/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/manager/history', label: 'History', icon: '/assets/nav-hourglass.png' },
-];
+import { MANAGER_NAV as NAV } from '../navConfig';
 
 function useLoad(loader, deps = []) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError('');
+  const reload = useCallback((silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
     loader()
       .then(setData)
       .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, deps);
 
   useEffect(() => {
@@ -81,12 +72,14 @@ export function ManagerOverview() {
         </div>
       )}
 
+      <HrAttendanceOverview scope="manager" />
+
       <OverviewPanels
-        todayOnLeave={report?.todayOnLeave || []}
-        teamTitle="Team on leave"
+        todayOnLeave={report?.teamLeavesThisMonth || []}
+        teamTitle="Teams Leave"
         calendarTo="/manager/calendar"
         holidaysTo="/manager/calendar"
-        attendanceTo="/manager/attendance"
+        attendanceTo="/manager/muster"
         canApplyRestricted
       />
 
@@ -96,10 +89,10 @@ export function ManagerOverview() {
   );
 }
 
-export function ManagerAttendance() {
+export function ManagerMuster() {
   return (
-    <AppShell title="Attendance" nav={NAV}>
-      <PunchBoard teamView />
+    <AppShell title="Attendance Muster" nav={NAV}>
+      <AttendanceMuster />
     </AppShell>
   );
 }
@@ -159,7 +152,7 @@ export function ManagerApprovals() {
       });
       setActive(null);
       if (action === 'approve') setCelebrate(true);
-      reload();
+      reload(true);
     } catch (err) {
       setMsg(err.message);
     } finally {
@@ -310,7 +303,7 @@ export function ManagerApprovals() {
 
 export function ManagerApply() {
   return (
-    <AppShell title="Apply" nav={NAV}>
+    <AppShell title="Apply Leave" nav={NAV}>
       <LeaveBalanceDashboard restrictedOnly />
     </AppShell>
   );
@@ -332,7 +325,7 @@ export function ManagerCalendar() {
         balancesByUserId: Object.fromEntries(
           users.map((u) => [
             u.id,
-            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2 },
+            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 },
           ])
         ),
       })),
@@ -340,18 +333,20 @@ export function ManagerCalendar() {
   );
 
   return (
-    <AppShell title="Team calendar" nav={NAV}>
+    <AppShell title="Attendance Info" nav={NAV}>
       {loading && <p className="muted">Loading…</p>}
       {error && <p className="form-error">{error}</p>}
       {data && (
         <div className="leave-mgmt-stack">
-          <HrEmployeeBalanceDirectory users={data.users || []} />
+          <HrEmployeeBalanceDirectory
+            users={(data.users || []).filter((u) => includeInAttendanceRoster(u))}
+          />
           <LeaveCalendar
             leaves={data.leaves}
             showNames
             layout="roster"
             balancesByUserId={data.balancesByUserId}
-            employees={data.users}
+            employees={(data.users || []).filter((u) => includeInAttendanceRoster(u))}
           />
         </div>
       )}

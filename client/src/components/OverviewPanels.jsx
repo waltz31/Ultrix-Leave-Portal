@@ -2,15 +2,16 @@ import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { usePollWhenVisible } from '../usePollWhenVisible';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
-import { PunchInProgressChip } from './PunchStatusChips';
+import { PunchInProgressChip, PunchStillInChip } from './PunchStatusChips';
 import {
   REQUEST_LABELS,
   STATUS_LABELS,
   appToday,
+  avatarSrc,
   formatOverviewHolidayRow,
-  formatLeaveSpan,
   formatTime,
   punchInLateness,
   isUnderNineHours,
@@ -19,73 +20,127 @@ import {
   toYmd,
 } from '../utils';
 
-function PanelHead({ title, to }) {
-  return (
-    <div className="overview-panel-head">
-      <h2>{title}</h2>
-      {to ? (
-        <Link to={to} className="overview-panel-link" aria-label={`Open ${title}`}>
-          →
-        </Link>
-      ) : null}
-    </div>
-  );
-}
+const LEAVE_DOT = {
+  earned: 'var(--elb-tone-earned, var(--tone-ok))',
+  sick: 'var(--elb-tone-sick, var(--tone-accent))',
+  casual: 'var(--elb-tone-casual, var(--tone-info))',
+  restricted: 'var(--elb-tone-restricted, var(--tone-danger))',
+  celebration: 'var(--elb-tone-celebration, var(--tone-pink))',
+  wfh: 'var(--tone-accent)',
+};
 
-function TeamOnLeaveEmpty() {
+function PanelLink({ to, children, tone }) {
   return (
-    <div className="overview-empty" aria-hidden>
-      <svg className="overview-empty-art" viewBox="0 0 120 88" fill="none">
-        <ellipse cx="60" cy="78" rx="34" ry="6" fill="rgba(100,197,193,0.18)" />
+    <Link to={to} className={`emp-dash-link${tone ? ` tone-${tone}` : ''}`}>
+      {children}
+      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
         <path
-          d="M34 62c8-18 22-28 26-28s18 10 26 28"
-          stroke="#64c5c1"
-          strokeWidth="3"
+          d="M9 6l6 6-6 6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
           strokeLinecap="round"
+          strokeLinejoin="round"
         />
-        <path d="M34 62h52" stroke="#64c5c1" strokeWidth="3" strokeLinecap="round" />
-        <rect x="44" y="58" width="32" height="6" rx="2" fill="#b5a3ed" opacity="0.85" />
-        <circle cx="86" cy="52" r="14" stroke="#ff7b8a" strokeWidth="2.5" />
-        <path d="M78 52h16M86 44v16" stroke="#ff7b8a" strokeWidth="2.5" strokeLinecap="round" />
       </svg>
-    </div>
+    </Link>
   );
 }
 
-export function TeamOnLeavePanel({ items = [], title = 'Team on leave', calendarTo = null }) {
-  const today = appToday();
-  const todayYmd = toYmd(today);
+function formatLeaveRangeShort(start, end) {
+  const startYmd = toYmd(start);
+  const endYmd = toYmd(end);
+  const fmtDay = (ymd) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    return {
+      day: d,
+      month: date.toLocaleString('en-IN', { month: 'short' }),
+    };
+  };
+  const s = fmtDay(startYmd);
+  if (startYmd === endYmd) return `${s.day} ${s.month}`;
+  const e = fmtDay(endYmd);
+  if (s.month === e.month) return `${s.day} - ${e.day} ${s.month}`;
+  return `${s.day} ${s.month} - ${e.day} ${e.month}`;
+}
 
-  const onLeaveToday = useMemo(
-    () =>
-      (items || []).filter((leave) => {
-        const start = toYmd(leave.startDate);
-        const end = toYmd(leave.endDate);
-        return start <= todayYmd && end >= todayYmd;
-      }),
-    [items, todayYmd]
-  );
+export function TeamOnLeavePanel({
+  items = [],
+  title = 'Teams Leave',
+  subtitle = "Who's on leave this month",
+  calendarTo = null,
+}) {
+  const visible = (items || []).slice(0, 5);
 
   return (
-    <section className="panel overview-panel">
-      <PanelHead title={title} to={calendarTo} />
-      {!onLeaveToday.length ? (
-        <TeamOnLeaveEmpty />
+    <section className="emp-dash-panel">
+      <header className="emp-dash-panel-head">
+        <div className="emp-dash-panel-title">
+          <span className="emp-dash-panel-icon tone-team" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="9" cy="8" r="3" />
+              <path d="M3.8 19c.6-2.8 2.8-4.2 5.2-4.2s4.6 1.4 5.2 4.2" strokeLinecap="round" />
+              <path d="M16.4 9.2a2.4 2.4 0 1 1 0 4.6" strokeLinecap="round" />
+              <path d="M19.2 19c.3-1.6 1.3-2.8 2.6-3.2" strokeLinecap="round" />
+            </svg>
+          </span>
+          <div>
+            <h2>{title}</h2>
+            {subtitle ? <p>{subtitle}</p> : null}
+          </div>
+        </div>
+        {calendarTo ? <PanelLink to={calendarTo}>View team calendar</PanelLink> : null}
+      </header>
+
+      {!visible.length ? (
+        <p className="empty emp-dash-empty">No teammates on leave this month.</p>
       ) : (
-        <ul className="overview-team-list">
-          {onLeaveToday.map((leave) => (
-            <li key={leave.id}>
-              <div className="overview-team-main">
-                <strong>{leave.userName || 'Employee'}</strong>
-                <span className={`badge type-${leave.leaveType}`}>
-                  {REQUEST_LABELS[leave.leaveType] || leave.leaveType}
+        <ul className="emp-dash-team-list">
+          {visible.map((leave) => {
+            const type = leave.leaveType;
+            const label = REQUEST_LABELS[type] || type;
+            const days = Number(leave.days || 0);
+            return (
+              <li key={leave.id}>
+                <img
+                  src={avatarSrc(leave.profilePhoto)}
+                  alt=""
+                  className="emp-dash-team-photo"
+                />
+                <div className="emp-dash-team-main">
+                  <strong>{leave.userName || 'Employee'}</strong>
+                  <span>{leave.designation || leave.employeeNumber || 'Team member'}</span>
+                </div>
+                <div className="emp-dash-team-type">
+                  <span
+                    className="emp-dash-leave-dot"
+                    style={{ background: LEAVE_DOT[type] || 'var(--shell-muted, #64748b)' }}
+                    aria-hidden
+                  />
+                  {label}
+                </div>
+                <div className="emp-dash-team-dates">
+                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                    <rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                    <path d="M8 3v3M16 3v3M4 10h16" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                  </svg>
+                  {formatLeaveRangeShort(leave.startDate, leave.endDate)}
+                </div>
+                <span className="emp-dash-days-pill">
+                  {days % 1 ? days.toFixed(1) : days} {days === 1 ? 'day' : 'days'}
                 </span>
-              </div>
-              <span className="overview-team-dates">{formatLeaveSpan(leave)}</span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
+
+      {items.length > 5 && calendarTo ? (
+        <footer className="emp-dash-panel-foot">
+          <PanelLink to={calendarTo}>View all team members</PanelLink>
+        </footer>
+      ) : null}
     </section>
   );
 }
@@ -270,7 +325,14 @@ export function CompanyHolidaysPanel({
         imageSrc={submittedPopup?.imageSrc || '/assets/request-submitted.gif'}
         durationMs={3200}
       />
-      <PanelHead title="Upcoming Holidays" to={holidaysTo} />
+      <div className="overview-panel-head">
+        <h2>Upcoming Holidays</h2>
+        {holidaysTo ? (
+          <Link to={holidaysTo} className="overview-panel-link" aria-label="Open Upcoming Holidays">
+            →
+          </Link>
+        ) : null}
+      </div>
       {loading && <p className="muted">Loading holidays…</p>}
       {!loading && !listedHolidays.length && (
         <p className="empty">No upcoming holidays published from today onward.</p>
@@ -328,72 +390,138 @@ export function TodayPunchesPanel({ attendanceTo = null, title = 'Office punches
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 4000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePollWhenVisible(load, 60_000, [load]);
 
   const latest = punches.slice(0, 6);
 
   return (
-    <section className="panel overview-panel">
-      <PanelHead title={title} to={attendanceTo} />
-      {loading && <p className="muted">Loading punches…</p>}
-      {!loading && !latest.length && (
-        <p className="empty">No device punches yet today.</p>
-      )}
-      {!!latest.length && (
-        <ul className="overview-team-list">
-          {latest.map((session) => (
-            <li key={`${session.userId || session.deviceUserCode}-${session.id}`}>
-              <div className="overview-team-main">
-                <strong>{session.userName || `ID ${session.deviceUserCode}`}</strong>
-                <span className={`badge ${session.stillIn ? 'status-approved' : 'status-rejected'}`}>
-                  {session.stillIn ? 'In' : 'Out'}
-                </span>
-              </div>
-              <span className="overview-team-dates">
-                In{' '}
-                {session.punchIn ? (
-                  <span className={`punch-in-sq is-${punchInLateness(session.punchIn) || 'on-time'}`}>
-                    {formatTime(session.punchIn)}
+    <section className="emp-dash-panel">
+      <header className="emp-dash-panel-head">
+        <div className="emp-dash-panel-title">
+          <span className="emp-dash-panel-icon tone-attendance" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M4 12h4l2-5 4 10 2-5h4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          <div>
+            <h2>{title}</h2>
+            <p>Live check-ins for today</p>
+          </div>
+        </div>
+        {attendanceTo ? <PanelLink to={attendanceTo}>View all punches</PanelLink> : null}
+      </header>
+
+      {loading ? (
+        <p className="muted emp-dash-panel-loading">Loading punches…</p>
+      ) : !latest.length ? (
+        <p className="empty emp-dash-empty">No device punches yet today.</p>
+      ) : (
+        <ul className="emp-dash-punch-list">
+          {latest.map((session) => {
+            const punchInTone = session.punchIn ? punchInLateness(session.punchIn) : null;
+            const checkedOut = Boolean(session.punchOut);
+            return (
+              <li key={`${session.userId || session.deviceUserCode}-${session.id}`}>
+                <div className="emp-dash-punch-who">
+                  <span className="emp-dash-attendance-avatar-wrap">
+                    <img
+                      src={avatarSrc(session.profilePhoto)}
+                      alt=""
+                      className="emp-dash-team-photo"
+                    />
+                    {session.stillIn ? (
+                      <span className="emp-dash-online-dot" aria-label="Still in" />
+                    ) : null}
                   </span>
-                ) : (
-                  '—'
-                )}
-                {' · '}
-                Out{' '}
-                {session.punchOut
-                  ? formatTime(session.punchOut)
-                  : session.stillIn
-                    ? 'still in'
-                    : '—'}
-                {session.workHours ? (
-                  <>
-                    {' · '}
-                    <span className={isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined}>
-                      {session.workHours}
+                  <div className="emp-dash-team-main">
+                    <strong>{session.userName || `ID ${session.deviceUserCode}`}</strong>
+                    <span>
+                      {session.designation ||
+                        session.employeeNumber ||
+                        session.deviceUserCode ||
+                        'Employee'}
                     </span>
-                  </>
-                ) : session.stillIn ? (
-                  <>
-                    {' · '}
-                    <PunchInProgressChip />
-                  </>
-                ) : null}
-              </span>
-            </li>
-          ))}
+                  </div>
+                  {session.stillIn ? (
+                    <span
+                      className={`emp-dash-checked-pill${
+                        punchInTone === 'on-time' ? ' is-on-time' : ' is-late'
+                      }`}
+                    >
+                      Checked In
+                    </span>
+                  ) : checkedOut ? (
+                    <span className="emp-dash-checked-pill is-out">Checked Out</span>
+                  ) : (
+                    <span className="emp-dash-checked-pill is-muted">Not checked in</span>
+                  )}
+                </div>
+                <div className="emp-dash-punch-metrics">
+                  <div>
+                    <span>In</span>
+                    <strong>
+                      {session.punchIn ? (
+                        <span
+                          className={`punch-in-sq is-sm${
+                            punchInTone ? ` is-${punchInTone}` : ''
+                          }`}
+                        >
+                          {formatTime(session.punchIn)}
+                        </span>
+                      ) : (
+                        '--:--'
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Out</span>
+                    <strong>
+                      {session.punchOut ? (
+                        formatTime(session.punchOut)
+                      ) : session.stillIn ? (
+                        <PunchStillInChip />
+                      ) : (
+                        '--:--'
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Hours</span>
+                    <strong>
+                      {session.workHours ? (
+                        <span
+                          className={
+                            isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined
+                          }
+                        >
+                          {session.workHours}
+                        </span>
+                      ) : session.stillIn ? (
+                        <PunchInProgressChip />
+                      ) : (
+                        '—'
+                      )}
+                    </strong>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
+
+      {punches.length > 6 && attendanceTo ? (
+        <footer className="emp-dash-panel-foot">
+          <PanelLink to={attendanceTo}>View all punches</PanelLink>
+        </footer>
+      ) : null}
     </section>
   );
 }
 
 export default function OverviewPanels({
   todayOnLeave = [],
-  teamTitle = 'Team on leave',
+  teamTitle = 'Teams Leave',
   calendarTo = null,
   holidaysTo = null,
   attendanceTo = null,
@@ -401,7 +529,7 @@ export default function OverviewPanels({
   onRestrictedApplied,
 }) {
   return (
-    <div className="overview-stack">
+    <div className="overview-stack emp-dash-overview">
       <TodayPunchesPanel attendanceTo={attendanceTo} />
       <TeamOnLeavePanel items={todayOnLeave} title={teamTitle} calendarTo={calendarTo} />
       <CompanyHolidaysPanel

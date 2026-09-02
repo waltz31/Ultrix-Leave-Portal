@@ -1,32 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { api } from '../api';
+import { useChartTheme } from '../chartTheme';
 import {
   downloadLeavesCsv,
   downloadLeavesPdf,
   monthRange,
 } from '../exportLeaves';
 import { REQUEST_LABELS, appYear, formatLeaveSpan } from '../utils';
-
-const TYPE_COLORS = {
-  casual: '#7ec8ff',
-  earned: '#64c5c1',
-  sick: '#e0b3ff',
-  restricted: '#e879a8',
-  wfh: '#ffd27a',
-};
 
 const MONTHS = [
   { value: '', label: 'All months' },
@@ -70,7 +60,9 @@ export function UpcomingLeaveList({
 }
 
 export function LeaveReportCharts({ byType = [], byMonth = [] }) {
-  const pieData = byType
+  const chart = useChartTheme();
+  const gradId = useId().replace(/:/g, '');
+  const typeData = byType
     .filter((r) => r.days > 0)
     .map((r) => ({
       name: REQUEST_LABELS[r.type] || r.type,
@@ -82,35 +74,22 @@ export function LeaveReportCharts({ byType = [], byMonth = [] }) {
     <div className="charts-grid">
       <section className="panel chart-panel">
         <h2>This month by type</h2>
-        {pieData.length === 0 ? (
+        {typeData.length === 0 ? (
           <p className="empty">No approved leave this month.</p>
         ) : (
           <div className="chart-box">
             <ResponsiveContainer width="100%" height={240}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label={({ name, value }) => `${name}: ${value}`}
-                >
-                  {pieData.map((entry) => (
-                    <Cell key={entry.type} fill={TYPE_COLORS[entry.type] || '#fff'} />
+              <BarChart data={typeData} layout="vertical" margin={{ left: 4, right: 12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={chart.gridStroke} horizontal={false} />
+                <XAxis type="number" allowDecimals={false} tick={chart.tick} />
+                <YAxis type="category" dataKey="name" tick={chart.tick} width={96} />
+                <Tooltip contentStyle={chart.tooltipStyle} />
+                <Bar dataKey="value" name="Days" radius={[0, 8, 8, 0]}>
+                  {typeData.map((entry) => (
+                    <Cell key={entry.type} fill={chart.leaveTypeColor(entry.type)} />
                   ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    background: 'rgba(20,30,48,0.95)',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    borderRadius: 10,
-                    color: '#fff',
-                  }}
-                />
-                <Legend />
-              </PieChart>
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </div>
         )}
@@ -121,24 +100,17 @@ export function LeaveReportCharts({ byType = [], byMonth = [] }) {
         <div className="chart-box">
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={byMonth}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.12)" />
-              <XAxis dataKey="label" stroke="rgba(255,255,255,0.65)" />
-              <YAxis stroke="rgba(255,255,255,0.65)" allowDecimals={false} />
-              <Tooltip
-                contentStyle={{
-                  background: 'rgba(20,30,48,0.95)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  borderRadius: 10,
-                  color: '#fff',
-                }}
-              />
+              <CartesianGrid strokeDasharray="3 3" stroke={chart.gridStroke} />
+              <XAxis dataKey="label" tick={chart.tick} />
+              <YAxis tick={chart.tick} allowDecimals={false} />
+              <Tooltip contentStyle={chart.tooltipStyle} />
               <defs>
-                <linearGradient id="leaveBarGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#64c5c1" />
-                  <stop offset="100%" stopColor="#b5a3ed" />
+                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={chart.barGrad[0]} />
+                  <stop offset="100%" stopColor={chart.barGrad[1]} />
                 </linearGradient>
               </defs>
-              <Bar dataKey="days" name="Days" fill="url(#leaveBarGrad)" radius={[8, 8, 0, 0]} />
+              <Bar dataKey="days" name="Days" fill={`url(#${gradId})`} radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

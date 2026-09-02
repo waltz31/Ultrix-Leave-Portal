@@ -118,7 +118,7 @@ export function sessionsOverlap(a, b) {
   return true;
 }
 
-export const LEAVE_TYPES = ['casual', 'earned', 'sick', 'restricted'];
+export const LEAVE_TYPES = ['casual', 'earned', 'sick', 'restricted', 'celebration'];
 export const REQUEST_TYPES = [...LEAVE_TYPES, 'wfh'];
 export const DEFAULT_RESTRICTED_BALANCE = 2;
 
@@ -133,6 +133,7 @@ export function leaveTypeLabel(type) {
     sick: 'Sick Leave',
     wfh: 'Work from Home',
     restricted: 'Restricted Leave',
+    celebration: 'Celebration Leave',
     general: 'General Holiday',
     mandatory: 'Company Holiday',
   };
@@ -230,13 +231,14 @@ export function mapLeave(row) {
 
 export function mapBalance(row) {
   if (!row) {
-    return { casual: 0, earned: 0, sick: 0, restricted: DEFAULT_RESTRICTED_BALANCE };
+    return { casual: 0, earned: 0, sick: 0, restricted: DEFAULT_RESTRICTED_BALANCE, celebration: 0 };
   }
   return {
     casual: row.casual ?? 0,
     earned: row.earned ?? 0,
     sick: row.sick ?? 0,
     restricted: row.restricted ?? row.compensation ?? DEFAULT_RESTRICTED_BALANCE,
+    celebration: row.celebration ?? 0,
     updatedAt: row.updated_at,
   };
 }

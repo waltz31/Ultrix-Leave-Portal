@@ -3,6 +3,7 @@ export const LEAVE_LABELS = {
   earned: 'Earned Leave',
   sick: 'Sick Leave',
   restricted: 'Restricted Leave',
+  celebration: 'Celebration Leave',
 };
 
 export const APPLY_LABELS = {
@@ -244,25 +245,33 @@ export function formatDateTime(value) {
   });
 }
 
-/** Expected in-time is 11:00 IST. Before noon = on time, 12:xx = late, 1pm+ = very late. */
+/** Expected in-time is 11:30 IST. By 11:30 = on time, before 1pm = late, 1pm+ = very late. */
 export function punchInLateness(value) {
   const parsed = parseAppDateTime(value);
   let hour = null;
+  let minute = null;
   if (parsed) {
-    hour = Number(
-      new Intl.DateTimeFormat('en-GB', {
-        timeZone: APP_TIMEZONE,
-        hour: '2-digit',
-        hourCycle: 'h23',
-      }).format(parsed)
-    );
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: APP_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(parsed);
+    hour = Number(parts.find((p) => p.type === 'hour')?.value);
+    minute = Number(parts.find((p) => p.type === 'minute')?.value);
   } else {
     const match = String(value || '').match(/(\d{1,2}):(\d{2})/);
-    if (match) hour = Number(match[1]);
+    if (match) {
+      hour = Number(match[1]);
+      minute = Number(match[2]);
+    }
   }
-  if (hour == null || Number.isNaN(hour)) return null;
-  if (hour < 12) return 'on-time';
-  if (hour < 13) return 'late';
+  if (hour == null || Number.isNaN(hour) || minute == null || Number.isNaN(minute)) return null;
+
+  const minutesOfDay = hour * 60 + minute;
+  const onTimeCutoff = 11 * 60 + 30;
+  if (minutesOfDay <= onTimeCutoff) return 'on-time';
+  if (minutesOfDay < 13 * 60) return 'late';
   return 'very-late';
 }
 
@@ -355,5 +364,48 @@ export const DEFAULT_AVATAR_SRC = '/assets/default-avatar.png';
 
 export function avatarSrc(photo) {
   return photo || DEFAULT_AVATAR_SRC;
+}
+
+/** Prefer HR employee number, then punch device code — never synthesize from user id. */
+export function displayEmployeeId(user, profile, session) {
+  return (
+    user?.employeeNumber ||
+    profile?.employeeNumber ||
+    session?.employeeNumber ||
+    session?.deviceUserCode ||
+    '—'
+  );
+}
+
+/** Hide board/HR accounts from Attendance Muster and Attendance Info. */
+const ATTENDANCE_ROSTER_EXCLUDED_EMAILS = new Set([
+  'hr@ultrix.co',
+  'parth@ultrix.co',
+  'rahul@getstan.app',
+]);
+
+export function includeInAttendanceRoster(user) {
+  if (!user) return false;
+  if (user.active === false || user.active === 0) return false;
+  if (user.role === 'hr') return false;
+  if (user.role !== 'user' && user.role !== 'manager') return false;
+  const email = String(user.email || '').trim().toLowerCase();
+  if (email && ATTENDANCE_ROSTER_EXCLUDED_EMAILS.has(email)) return false;
+  return true;
+}
+
+export function formatWorkHoursMinutes(minutes) {
+  if (minutes == null || Number.isNaN(minutes) || minutes < 0) return null;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Working hours label: in progress while still checked in, final hours after punch out. */
+export function formatSessionWorkDisplay(session) {
+  if (!session) return '—';
+  if (session.stillIn) return 'In progress';
+  if (session.workHours) return session.workHours;
+  return formatWorkHoursMinutes(session.workMinutes) || '—';
 }
 

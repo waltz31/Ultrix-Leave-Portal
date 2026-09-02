@@ -29,30 +29,16 @@ import {
   payStructureKind,
   payrollFieldsFor,
 } from '../components/SalaryComponentsView';
-import PunchBoard from '../components/PunchBoard';
+import AttendanceMuster from '../components/AttendanceMuster';
 import HrAttendanceOverview from '../components/HrAttendanceOverview';
 import RegularizationInbox from '../components/RegularizationInbox';
 import HistoryWorkspace from '../components/HistoryWorkspace';
 import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
 import RegularizationHistoryPanel from '../components/RegularizationHistoryPanel';
-import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, isWfh, managerOptionLabel } from '../utils';
+import { APPLY_LABELS, LEAVE_LABELS, REQUEST_LABELS, ROLE_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, avatarSrc, formatDate, formatDateTime, formatLeaveSpan, includeInAttendanceRoster, isWfh, managerOptionLabel } from '../utils';
 import { buildHolidayTemplateRows, HOLIDAY_UPLOAD_ACCEPT, parseHolidayFile } from '../holidayImport';
+import { HR_NAV as NAV } from '../navConfig';
 import * as XLSX from 'xlsx';
-
-const NAV = [
-  { to: '/hr', label: 'Overview', end: true, icon: '/assets/nav-searchlist.png' },
-  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
-  { to: '/hr/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
-  { to: '/hr/regularization', label: 'Regularization', icon: '/assets/nav-approved.png' },
-  { to: '/hr/approvals', label: 'HR approvals', icon: '/assets/nav-approved.png' },
-  { to: '/hr/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/onboarding', label: 'Onboarding', icon: '/assets/nav-onboarding.png' },
-  { to: '/hr/users', label: 'Leave Management', icon: '/assets/nav-team.png' },
-  { to: '/hr/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/hr/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
-  { to: '/hr/calendar', label: 'Team calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/hr/history', label: 'History', icon: '/assets/nav-hourglass.png' },
-];
 
 function portalRoleLabel(role) {
   if (role === 'hr') return 'HR';
@@ -65,13 +51,17 @@ function useLoad(loader, deps = []) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError('');
+  const reload = useCallback((silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError('');
+    }
     loader()
       .then(setData)
       .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, deps);
 
   useEffect(() => {
@@ -87,14 +77,14 @@ export function HrOverview() {
 
   return (
     <AppShell title={`Welcome ${user?.name || ''}`} nav={NAV}>
-      <HrAttendanceOverview />
+      <HrAttendanceOverview scope="hr" />
 
       <OverviewPanels
-        todayOnLeave={report?.todayOnLeave || []}
-        teamTitle="Team on leave"
+        todayOnLeave={report?.teamLeavesThisMonth || []}
+        teamTitle="Teams Leave"
         calendarTo="/hr/calendar"
         holidaysTo="/hr/calendar"
-        attendanceTo="/hr/attendance"
+        attendanceTo="/hr/muster"
         canApplyRestricted={false}
       />
 
@@ -105,10 +95,10 @@ export function HrOverview() {
   );
 }
 
-export function HrAttendance() {
+export function HrMuster() {
   return (
-    <AppShell title="Attendance" nav={NAV}>
-      <PunchBoard teamView canSync />
+    <AppShell title="Attendance Muster" nav={NAV}>
+      <AttendanceMuster canSync />
     </AppShell>
   );
 }
@@ -168,7 +158,7 @@ export function HrApprovals() {
       });
       setActive(null);
       if (action === 'approve') setCelebrate(true);
-      reload();
+      reload(true);
     } catch (err) {
       setMsg(err.message);
     } finally {
@@ -177,7 +167,7 @@ export function HrApprovals() {
   }
 
   return (
-    <AppShell title="HR approvals" nav={NAV}>
+    <AppShell title="Leave approval" nav={NAV}>
       <StatusCelebration
         show={celebrate}
         onDone={() => setCelebrate(false)}
@@ -1340,12 +1330,21 @@ export function HrCalendar() {
         balancesByUserId: Object.fromEntries(
           users.map((u) => [
             u.id,
-            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2 },
+            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 },
           ])
         ),
       })),
     [from, to]
   );
+
+  useEffect(() => {
+    function onCreated() {
+      reload();
+    }
+    window.addEventListener('ultrix:admin-leave-created', onCreated);
+    return () => window.removeEventListener('ultrix:admin-leave-created', onCreated);
+  }, [reload]);
+
   const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState('');
   const [mandatoryForm, setMandatoryForm] = useState({
@@ -1461,7 +1460,7 @@ export function HrCalendar() {
   }
 
   return (
-    <AppShell title="Team calendar" nav={NAV}>
+    <AppShell title="Attendance Info" nav={NAV}>
       <section className="panel mandatory-leave-panel">
         <h2>Company holidays</h2>
         <form className="mandatory-leave-form" onSubmit={submitMandatory}>
@@ -1537,7 +1536,9 @@ export function HrCalendar() {
           showNames
           layout="roster"
           balancesByUserId={data.balancesByUserId}
-          employees={(data.users || []).filter((u) => u.id !== user?.id)}
+          employees={(data.users || []).filter(
+            (u) => u.id !== user?.id && includeInAttendanceRoster(u)
+          )}
           canManage
           busyId={busyId}
           onCreateLeave={createLeave}

@@ -38,6 +38,7 @@ function leaveLabel(type) {
   if (type === 'earned') return 'Earned Leave';
   if (type === 'sick') return 'Sick Leave';
   if (type === 'restricted') return 'Restricted Leave';
+  if (type === 'celebration') return 'Celebration Leave';
   return `${type} leave`;
 }
 
@@ -48,6 +49,7 @@ async function getBalance(userId) {
       earned: 0,
       sick: 0,
       restricted: DEFAULT_RESTRICTED_BALANCE,
+      celebration: 0,
     }
   );
 }
@@ -55,8 +57,8 @@ async function getBalance(userId) {
 async function ensureBalanceRow(userId) {
   await db
     .prepare(
-      `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted)
-       VALUES (?, 0, 0, 0, ?)
+      `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted, celebration)
+       VALUES (?, 0, 0, 0, ?, 0)
        ON CONFLICT(user_id) DO NOTHING`
     )
     .run(userId, DEFAULT_RESTRICTED_BALANCE);

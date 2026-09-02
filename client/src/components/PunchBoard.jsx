@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { downloadPunchesExcel } from '../exportPunches';
+import { usePollWhenVisible } from '../usePollWhenVisible';
 import { formatDate, formatTime, isUnderNineHours, punchInLateness } from '../utils';
 import { PunchInProgressChip, PunchStillInChip } from './PunchStatusChips';
 import RegularizeRequestModal from './RegularizeRequestModal';
@@ -57,12 +58,7 @@ export default function PunchBoard({ canSync = false, teamView = false }) {
     }
   }, [range]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-    const timer = setInterval(load, 4000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePollWhenVisible(load, 60_000, [load]);
 
   async function syncNow() {
     setSyncing(true);
@@ -177,7 +173,6 @@ export default function PunchBoard({ canSync = false, teamView = false }) {
             <thead>
               <tr>
                 {teamView && <th>Employee</th>}
-                {teamView && <th>Employee ID</th>}
                 <th>Date</th>
                 <th>Punch in</th>
                 <th>Punch out</th>
@@ -191,9 +186,15 @@ export default function PunchBoard({ canSync = false, teamView = false }) {
                 <tr
                   key={`${session.punchDate}-${session.userId || session.deviceUserCode}-${session.id}`}
                 >
-                  {teamView && <td>{session.userName || 'Unmapped'}</td>}
                   {teamView && (
-                    <td>{session.employeeNumber || session.deviceUserCode || '—'}</td>
+                    <td>
+                      <div className="punch-emp">
+                        <strong>{session.userName || 'Unmapped'}</strong>
+                        <div className="sub">
+                          {session.employeeNumber || session.deviceUserCode || '—'}
+                        </div>
+                      </div>
+                    </td>
                   )}
                   <td>{session.punchDate ? formatDate(session.punchDate) : '—'}</td>
                   <td>

@@ -24,9 +24,9 @@
   text-align: left;
   padding: 16px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
+  border: 1px solid var(--shell-border, var(--line));
+  background: var(--shell-surface, var(--surface));
+  color: var(--shell-fg, var(--ink));
   cursor: pointer;
 }
 
@@ -38,17 +38,18 @@
 
 .invoice-mode-card strong {
   font-size: 1rem;
+  color: var(--shell-strong, var(--ink));
 }
 
 .invoice-mode-card span {
   font-size: 0.88rem;
-  color: var(--muted);
+  color: var(--shell-muted, var(--muted));
   line-height: 1.35;
 }
 
 .invoice-mode-card:hover {
-  border-color: rgba(100, 197, 193, 0.55);
-  background: rgba(100, 197, 193, 0.12);
+  border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+  background: color-mix(in srgb, var(--brand) 14%, var(--shell-surface, var(--surface)));
 }
 
 .invoice-upload-form {
@@ -62,7 +63,7 @@
   display: grid;
   gap: 6px;
   font-size: 0.88rem;
-  color: var(--muted);
+  color: var(--shell-muted, var(--muted));
 }
 
 .invoice-upload-form .full {
@@ -87,10 +88,11 @@
   gap: 6px;
   padding: 28px 18px;
   border-radius: 14px;
-  border: 1px dashed rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed var(--shell-border, var(--line));
+  background: var(--shell-surface, var(--surface));
   cursor: pointer;
   text-align: center;
+  color: var(--shell-fg, var(--ink));
 }
 
 .invoice-upload-drop input {
@@ -102,27 +104,13 @@
 
 .invoice-upload-drop-title {
   font-weight: 700;
-  color: #fff;
+  color: var(--shell-strong, var(--ink));
 }
 
 .invoice-upload-drop-hint {
   font-size: 0.86rem;
-  color: var(--muted);
+  color: var(--shell-muted, var(--muted));
   word-break: break-all;
-}
-
-.shell[data-theme='light'] .invoice-upload-drop {
-  border-color: rgba(21, 32, 51, 0.2);
-  background: rgba(21, 32, 51, 0.03);
-}
-
-.shell[data-theme='light'] .invoice-upload-drop-title {
-  color: #152033;
-}
-
-.shell[data-theme='light'] .invoice-mode-card {
-  border-color: rgba(21, 32, 51, 0.12);
-  background: rgba(255, 255, 255, 0.8);
 }
 
 @media (max-width: 720px) {
@@ -181,10 +169,11 @@
   display: grid;
   gap: 0.55rem;
   padding: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--shell-border, var(--line));
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--shell-surface, var(--surface));
   box-shadow: none;
+  color: var(--shell-fg, var(--ink));
 }
 
 .invoice-form legend {
@@ -210,7 +199,7 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--toolbar-text);
+  color: var(--shell-muted, var(--muted));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -607,7 +596,7 @@ body[data-theme="dark"] .invoice {
   gap: 0.35rem;
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--toolbar-text);
+  color: var(--shell-muted, var(--muted));
 }
 
 .radio-label input {
@@ -811,9 +800,10 @@ body[data-theme="dark"] .invoice {
 
 .invoice-studio-preview {
   min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 1px solid var(--shell-border, var(--line));
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--shell-panel-bg, var(--shell-surface, var(--surface)));
+  color: var(--shell-panel-fg, var(--shell-fg, var(--ink)));
   overflow: auto;
   position: sticky;
   top: 72px;
@@ -825,13 +815,14 @@ body[data-theme="dark"] .invoice {
   justify-content: space-between;
   align-items: center;
   padding: 0.85rem 1.25rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid var(--shell-border-soft, var(--shell-border, var(--line)));
   font-size: 0.88rem;
   font-weight: 600;
+  color: var(--shell-strong, var(--ink));
   position: sticky;
   top: 0;
   z-index: 1;
-  background: rgba(15, 23, 42, 0.55);
+  background: var(--shell-wash-deep, var(--shell-panel-bg, var(--surface)));
   backdrop-filter: blur(8px);
 }
 
@@ -844,12 +835,14 @@ body[data-theme="dark"] .invoice {
 }
 
 .invoice-fieldset {
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--shell-border, var(--line));
   border-radius: 12px;
   padding: 0.85rem 1rem 1rem;
   margin: 0;
   display: grid;
   gap: 0.85rem;
+  background: var(--shell-surface, transparent);
+  color: var(--shell-fg, var(--ink));
 }
 
 .invoice-fieldset.form-section {
@@ -868,7 +861,7 @@ body[data-theme="dark"] .invoice {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--shell-muted, var(--muted));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -876,7 +869,7 @@ body[data-theme="dark"] .invoice {
 }
 
 .invoice-fieldset .section-toggle:hover {
-  color: #fff;
+  color: var(--shell-strong, var(--ink));
 }
 
 .invoice-fieldset .section-body {
@@ -968,13 +961,13 @@ body[data-theme="dark"] .invoice {
 }
 
 .shell .invoice-signature-clear {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.88);
-  border-top-color: rgba(255, 255, 255, 0.14);
+  background: var(--shell-btn-ghost-bg, var(--shell-surface, var(--surface)));
+  color: var(--shell-btn-ghost-fg, var(--shell-fg, var(--ink)));
+  border-top-color: var(--shell-border-soft, var(--shell-border, var(--line)));
 }
 
 .shell .invoice-signature-clear:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: color-mix(in srgb, var(--shell-fg, var(--ink)) 8%, transparent);
 }
 
 .invoice-signature-placeholder {
@@ -1010,23 +1003,38 @@ body[data-theme="dark"] .invoice {
 
 .invoice-retention-notice {
   padding: 1rem 1.15rem;
-  border: 1px solid rgba(255, 193, 120, 0.35);
+  border: 1px solid color-mix(in srgb, var(--tone-warn, #ea580c) 42%, var(--shell-border, transparent));
   border-radius: 12px;
-  background: rgba(255, 193, 120, 0.1);
-  color: rgba(255, 255, 255, 0.92);
+  background: #fff7ed;
+  color: #9a3412;
 }
 
 .invoice-retention-notice strong {
   display: block;
   margin-bottom: 0.35rem;
   font-size: 0.92rem;
+  color: #9a3412;
 }
 
 .invoice-retention-notice p {
   margin: 0;
   font-size: 0.88rem;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.78);
+  color: #c2410c;
+}
+
+.shell:not([data-theme='light']) .invoice-retention-notice {
+  background: #78350f;
+  border-color: #d97706;
+  color: #fff7ed;
+}
+
+.shell:not([data-theme='light']) .invoice-retention-notice strong {
+  color: #fffbeb;
+}
+
+.shell:not([data-theme='light']) .invoice-retention-notice p {
+  color: #ffedd5;
 }
 
 .invoice-retention-notice-hr {
@@ -1041,8 +1049,8 @@ body[data-theme="dark"] .invoice {
 }
 
 .invoice-delete-btn {
-  color: #ffb4b4;
-  border-color: rgba(255, 123, 138, 0.35);
+  color: var(--tone-danger, var(--danger));
+  border-color: color-mix(in srgb, var(--tone-danger, var(--danger)) 35%, transparent);
 }
 
 .invoice-hidden-badge {
@@ -1051,10 +1059,11 @@ body[data-theme="dark"] .invoice {
   font-size: 0.72rem;
   vertical-align: middle;
   opacity: 0.85;
+  color: var(--shell-muted, var(--muted));
 }
 
 .form-success {
-  color: #5fd68a;
+  color: var(--tone-ok, var(--ok));
   font-size: 0.9rem;
   margin: 0.5rem 0 0;
 }
@@ -1070,50 +1079,61 @@ body[data-theme="dark"] .invoice {
 
 .field-hint {
   font-size: 0.78rem;
+  color: var(--shell-muted-faint, var(--shell-muted, var(--muted)));
 }
 
-@media (max-width: 1200px) {
-  .invoice-studio-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .invoice-studio-preview {
-    position: static;
-    max-height: none;
-  }
-
-  .invoice-preview-stage {
-    padding: 1.25rem;
-  }
-
-  .invoice-form-grid {
-    grid-template-columns: 1fr;
-  }
+/* Theme-aware chrome; PDF preview document stays fixed white */
+.shell .invoice-studio {
+  color: var(--shell-fg, var(--ink));
 }
 
-/* White text fields only; rest inherits app shell theme */
+.shell .invoice-mode-panel h2,
+.shell .invoice-upload-panel h2,
+.shell .invoice-studio-header h1,
+.shell .invoice-studio-header h2,
+.shell .invoice-submitted-list h2 {
+  color: var(--shell-strong, var(--ink));
+}
+
+.shell .invoice-studio-header p,
+.shell .invoice-preview-toolbar .muted,
+.shell .invoice-studio .muted,
+.shell .field-hint {
+  color: var(--shell-muted, var(--muted));
+}
+
 .shell .invoice-form label,
 .shell .invoice-fieldset .section-toggle,
 .shell .invoice-studio .radio-label,
-.shell .invoice-studio .checkbox-label {
-  color: rgba(255, 255, 255, 0.78);
+.shell .invoice-studio .checkbox-label,
+.shell .invoice-form legend,
+.shell .section-toggle {
+  color: var(--shell-muted, var(--muted));
+}
+
+.shell .invoice-fieldset .section-toggle:hover,
+.shell .section-toggle:hover {
+  color: var(--shell-strong, var(--ink));
 }
 
 .shell .invoice-form input:not([type='checkbox']):not([type='radio']):not([type='file']),
 .shell .invoice-form textarea,
 .shell .invoice-form select,
 .shell .invoice-line-item-row input,
-.shell .invoice-line-item-row textarea {
-  background: #ffffff;
-  color: #0f172a;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+.shell .invoice-line-item-row textarea,
+.shell .invoice-upload-form input:not([type='checkbox']):not([type='radio']):not([type='file']),
+.shell .invoice-upload-form select,
+.shell .invoice-upload-form textarea {
+  background: var(--shell-input-bg, #fff);
+  color: var(--shell-input-fg, var(--shell-fg, var(--ink)));
+  border: 1px solid var(--shell-border, var(--line));
 }
 
 .shell .invoice-form input::placeholder,
 .shell .invoice-form textarea::placeholder,
 .shell .invoice-line-item-row input::placeholder,
 .shell .invoice-line-item-row textarea::placeholder {
-  color: #94a3b8;
+  color: var(--shell-muted-faint, var(--shell-muted, var(--muted)));
 }
 
 .shell .invoice-form input[type='date']::-webkit-calendar-picker-indicator,
@@ -1122,20 +1142,24 @@ body[data-theme="dark"] .invoice {
   opacity: 0.75;
 }
 
+.shell[data-theme='dark'] .invoice-form input[type='date']::-webkit-calendar-picker-indicator,
+.shell[data-theme='dark'] .invoice-form input[type='month']::-webkit-calendar-picker-indicator,
+.shell:not([data-theme='light']) .invoice-form input[type='date']::-webkit-calendar-picker-indicator,
+.shell:not([data-theme='light']) .invoice-form input[type='month']::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.6);
+  opacity: 0.9;
+}
+
 .shell .invoice-form input:not([type='checkbox']):not([type='radio']):not([type='file']):focus,
 .shell .invoice-form textarea:focus,
 .shell .invoice-form select:focus,
 .shell .invoice-line-item-row input:focus,
 .shell .invoice-line-item-row textarea:focus {
-  outline: 2px solid rgba(100, 197, 193, 0.45);
-  border-color: rgba(181, 163, 237, 0.85);
+  outline: 2px solid color-mix(in srgb, var(--brand) 45%, transparent);
+  border-color: color-mix(in srgb, var(--brand-2, var(--accent)) 70%, transparent);
 }
 
 /* A4 preview — isolated print document, not themed by shell */
-.shell .invoice-preview-toolbar .muted {
-  color: rgba(255, 255, 255, 0.65);
-}
-
 .shell .invoice {
   flex-shrink: 0;
   color: #0f172a;
@@ -1167,4 +1191,23 @@ body[data-theme="dark"] .invoice {
 
 .shell .invoice .sig-label {
   color: #334155;
+}
+
+@media (max-width: 1200px) {
+  .invoice-studio-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-studio-preview {
+    position: static;
+    max-height: none;
+  }
+
+  .invoice-preview-stage {
+    padding: 1.25rem;
+  }
+
+  .invoice-form-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -63,6 +63,7 @@ export default function TeamRosterCalendar({
   onCellClick,
   canCreate = false,
   onAddLeave = null,
+  shortcutsHint = null,
   today,
   loading = false,
 }) {
@@ -193,6 +194,7 @@ export default function TeamRosterCalendar({
           </button>
         )}
       </div>
+      {shortcutsHint ? <p className="muted roster-shortcuts-hint">{shortcutsHint}</p> : null}
 
       <div className="roster-board">
         <div className="roster-scroll-wrap">

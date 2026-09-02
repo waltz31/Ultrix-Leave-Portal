@@ -1,20 +1,60 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CartesianGrid, Cell, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
+import { useChartTheme } from '../chartTheme';
 import { APP_VERSION } from '../version';
-import { appToday, avatarSrc, formatDate, formatDateTime, formatTime, hasMissingPunchOut, isUnderNineHours, punchInLateness, toYmd } from '../utils';
+import { appToday, avatarSrc, formatDate, formatDateTime, formatTime, isUnderNineHours, punchInLateness, toYmd } from '../utils';
 import { PunchInProgressChip } from './PunchStatusChips';
 
-const COLORS = {
-  present: '#16a34a',
-  absent: '#ef4444',
-  leave: '#f59e0b',
-  late: '#f97316',
-  wfh: '#6366f1',
-};
+const TREND_METRICS = [
+  { key: 'present', label: 'Present' },
+  { key: 'absent', label: 'Absent' },
+  { key: 'onLeave', label: 'On leave' },
+  { key: 'late', label: 'Late' },
+];
 
-const TICK = { fill: 'currentColor', fontSize: 11 };
+function dayLabel(ymd) {
+  return String(ymd || '').slice(8).replace(/^0/, '') || '';
+}
+
+function trendSummaryFrom(rows = []) {
+  if (!rows.length) return null;
+  const presentCounts = rows.map((row) => Number(row.present) || 0);
+  const total = presentCounts.reduce((sum, n) => sum + n, 0);
+  const peak = Math.max(...presentCounts);
+  const today = presentCounts[presentCounts.length - 1] ?? 0;
+  return {
+    avg: Math.round(total / rows.length),
+    peak,
+    today,
+    days: rows.length,
+  };
+}
+
+function TrendTooltip({ active, payload, chart }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  return (
+    <div className="attov-tip attov-trend-tip">
+      <div className="attov-tip-label">{formatDate(row.date)}</div>
+      <div className="attov-trend-tip-main">
+        <i style={{ background: chart.attendance.present }} />
+        <span>Present</span>
+        <b>{row.present ?? 0}</b>
+      </div>
+      <div className="attov-trend-tip-grid">
+        {TREND_METRICS.slice(1).map(({ key, label }) => (
+          <div key={key}>
+            <span>{label}</span>
+            <b>{row[key] ?? 0}</b>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function KpiIcon({ name }) {
   const common = { viewBox: '0 0 24 24', width: '22', height: '22', fill: 'none', 'aria-hidden': true };
@@ -130,7 +170,40 @@ function downloadOverviewCsv(overview) {
   URL.revokeObjectURL(url);
 }
 
-export default function HrAttendanceOverview() {
+const ROLE_LINKS = {
+  hr: {
+    employees: '/hr/onboarding',
+    employeesLabel: 'Across locations',
+    attendance: '/hr/muster',
+    calendar: '/hr/calendar',
+    approvals: '/hr/approvals',
+    approvalsLabel: 'Open leave approval',
+    quickActions: [
+      { to: '/hr/onboarding', label: 'Add employee' },
+      { to: '/hr/calendar', label: 'Attendance info' },
+      { to: '/hr/users', label: 'Leave management' },
+      { to: '/hr/muster', label: 'Attendance muster' },
+    ],
+  },
+  manager: {
+    employees: '/manager/history',
+    employeesLabel: 'Your team',
+    attendance: '/manager/muster',
+    calendar: '/manager/calendar',
+    approvals: '/manager/approvals',
+    approvalsLabel: 'Open approvals',
+    quickActions: [
+      { to: '/manager/approvals', label: 'Leave approvals' },
+      { to: '/manager/calendar', label: 'Attendance info' },
+      { to: '/manager/muster', label: 'Attendance muster' },
+      { to: '/manager/regularization', label: 'Regularization' },
+    ],
+  },
+};
+
+export default function HrAttendanceOverview({ scope = 'hr' }) {
+  const chart = useChartTheme();
+  const links = ROLE_LINKS[scope] || ROLE_LINKS.hr;
   const today = toYmd(appToday());
   const [date, setDate] = useState(today);
   const [location, setLocation] = useState('');
@@ -161,8 +234,8 @@ export default function HrAttendanceOverview() {
         if (!cancelled) setLoading(false);
       });
     const timer = setInterval(() => {
-      load().catch(() => {});
-    }, 8000);
+      if (document.visibilityState === 'visible') load().catch(() => {});
+    }, 60_000);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -175,18 +248,21 @@ export default function HrAttendanceOverview() {
     [data]
   );
   const pieTotal = pieData.reduce((sum, d) => sum + Number(d.value || 0), 0);
+  const trendRows = data?.trend || [];
+  const trendSummary = useMemo(() => trendSummaryFrom(data?.trend), [data?.trend]);
+  const trendTickStep = trendRows.length > 20 ? 4 : trendRows.length > 12 ? 3 : 2;
 
   const kpiCards = kpis
     ? [
         {
           key: 'total',
-          label: 'Total employees',
+          label: scope === 'manager' ? 'Team members' : 'Total employees',
           value: kpis.totalEmployees,
           hint: kpis.locations
             ? `Across ${kpis.locations} location${kpis.locations === 1 ? '' : 's'}`
-            : 'Active people',
+            : links.employeesLabel,
           icon: 'people',
-          to: '/hr/onboarding',
+          to: links.employees,
         },
         {
           key: 'present',
@@ -196,7 +272,7 @@ export default function HrAttendanceOverview() {
             ? `${kpis.presentPct}% · ${kpis.unmatchedPunches} unmatched device punches`
             : `${kpis.presentPct}%`,
           icon: 'present',
-          to: `/hr/attendance?date=${date}&focus=present`,
+          to: `${links.attendance}?date=${date}&focus=present`,
         },
         {
           key: 'absent',
@@ -204,7 +280,7 @@ export default function HrAttendanceOverview() {
           value: kpis.absent,
           hint: `${kpis.absentPct}%`,
           icon: 'absent',
-          to: `/hr/attendance?date=${date}&focus=absent`,
+          to: `${links.attendance}?date=${date}&focus=absent`,
         },
         {
           key: 'leave',
@@ -212,7 +288,7 @@ export default function HrAttendanceOverview() {
           value: kpis.onLeave,
           hint: `${kpis.onLeavePct}%`,
           icon: 'leave',
-          to: '/hr/calendar',
+          to: links.calendar,
         },
         {
           key: 'late',
@@ -220,7 +296,7 @@ export default function HrAttendanceOverview() {
           value: kpis.late,
           hint: `${kpis.latePct}%`,
           icon: 'late',
-          to: `/hr/attendance?date=${date}&focus=late`,
+          to: `${links.attendance}?date=${date}&focus=late`,
         },
         {
           key: 'wfh',
@@ -228,7 +304,7 @@ export default function HrAttendanceOverview() {
           value: kpis.wfh,
           hint: `${kpis.wfhPct}%`,
           icon: 'wfh',
-          to: `/hr/attendance?date=${date}&focus=wfh`,
+          to: `${links.attendance}?date=${date}&focus=wfh`,
         },
       ]
     : [];
@@ -237,8 +313,12 @@ export default function HrAttendanceOverview() {
     <div className="attov">
       <div className="attov-head">
         <div>
-          <h2>Attendance overview</h2>
-          <p className="muted">Live office punches, leave, and presence for {formatDate(date)}.</p>
+          <h2>{scope === 'manager' ? 'Team attendance' : 'Attendance overview'}</h2>
+          <p className="muted">
+            {scope === 'manager'
+              ? `Live punches, leave, and presence for your team · ${formatDate(date)}.`
+              : `Live office punches, leave, and presence for ${formatDate(date)}.`}
+          </p>
         </div>
         <div className="attov-filters">
           <label>
@@ -308,124 +388,116 @@ export default function HrAttendanceOverview() {
 
       {data && (
         <div className="attov-charts">
-          <section className="panel attov-panel">
-            <h3>Attendance trend (this month)</h3>
-            <ChartFrame height={260}>
+          <section className="panel attov-panel attov-trend-panel">
+            <div className="attov-trend-head">
+              <div>
+                <h3>Attendance trend (this month)</h3>
+                <p className="attov-trend-lede">Daily present headcount · hover a bar for full breakdown</p>
+              </div>
+              {trendSummary && (
+                <dl className="attov-trend-stats">
+                  <div>
+                    <dt>Avg</dt>
+                    <dd>{trendSummary.avg}</dd>
+                  </div>
+                  <div>
+                    <dt>Peak</dt>
+                    <dd>{trendSummary.peak}</dd>
+                  </div>
+                  <div>
+                    <dt>Latest</dt>
+                    <dd>{trendSummary.today}</dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+            <ChartFrame height={228}>
               {(width, height) => (
-                <LineChart
+                <BarChart
                   width={width}
                   height={height}
-                  data={data.trend}
-                  margin={{ top: 8, right: 8, left: 0, bottom: 4 }}
+                  data={trendRows}
+                  margin={{ top: 10, right: 6, left: -6, bottom: 2 }}
+                  barCategoryGap="28%"
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(127,127,127,0.28)" />
-                  <XAxis dataKey="date" tick={TICK} tickFormatter={(v) => String(v).slice(8)} />
-                  <YAxis allowDecimals={false} tick={TICK} width={32} domain={[0, 'auto']} />
-                  <Tooltip content={<ChartTip />} />
-                  <Line
-                    type="monotone"
+                  <CartesianGrid strokeDasharray="3 3" stroke={chart.gridStroke} vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={chart.tick}
+                    tickFormatter={dayLabel}
+                    interval={trendTickStep}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={chart.tick}
+                    width={28}
+                    domain={[0, 'auto']}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    cursor={{ fill: chart.mode === 'light' ? 'rgba(21, 32, 51, 0.05)' : 'rgba(255, 255, 255, 0.06)' }}
+                    content={<TrendTooltip chart={chart} />}
+                  />
+                  <Bar
                     dataKey="present"
                     name="Present"
-                    stroke={COLORS.present}
-                    strokeWidth={2}
-                    dot={false}
+                    radius={[6, 6, 0, 0]}
+                    maxBarSize={22}
                     isAnimationActive={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="absent"
-                    name="Absent"
-                    stroke={COLORS.absent}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="onLeave"
-                    name="On leave"
-                    stroke={COLORS.leave}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="late"
-                    name="Late"
-                    stroke={COLORS.late}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
+                  >
+                    {trendRows.map((entry) => (
+                      <Cell
+                        key={entry.date}
+                        fill={chart.attendance.present}
+                        opacity={entry.date === date ? 1 : 0.78}
+                        stroke={entry.date === date ? chart.secondary : 'none'}
+                        strokeWidth={entry.date === date ? 2 : 0}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
               )}
             </ChartFrame>
-            <ul className="attov-legend attov-legend-inline">
-              <li>
-                <i style={{ background: COLORS.present }} />
-                Present
-              </li>
-              <li>
-                <i style={{ background: COLORS.absent }} />
-                Absent
-              </li>
-              <li>
-                <i style={{ background: COLORS.leave }} />
-                On leave
-              </li>
-              <li>
-                <i style={{ background: COLORS.late }} />
-                Late
-              </li>
-            </ul>
           </section>
           <section className="panel attov-panel">
             <h3>Attendance distribution</h3>
             {pieData.length ? (
-              <div className="attov-donut">
-                <div className="attov-donut-plot">
-                  <ChartFrame height={240}>
-                    {(width, height) => {
-                      const outer = Math.max(52, Math.min(92, Math.floor(Math.min(width, height) / 2.55)));
-                      return (
-                        <PieChart width={width} height={height}>
-                          <Pie
-                            data={pieData}
-                            dataKey="value"
-                            nameKey="name"
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={Math.round(outer * 0.68)}
-                            outerRadius={outer}
-                            paddingAngle={2}
-                            isAnimationActive={false}
-                          >
-                            {pieData.map((entry) => (
-                              <Cell key={entry.key} fill={COLORS[entry.key] || '#888'} />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<ChartTip />} />
-                        </PieChart>
-                      );
-                    }}
-                  </ChartFrame>
-                  <div className="attov-donut-center">
-                    <strong>{kpis?.present ?? 0}</strong>
-                    <span>present</span>
-                  </div>
-                </div>
-                <ul className="attov-legend">
+              <>
+                <ChartFrame height={240}>
+                  {(width, height) => (
+                    <BarChart
+                      width={width}
+                      height={height}
+                      data={pieData}
+                      layout="vertical"
+                      margin={{ top: 4, right: 12, left: 4, bottom: 4 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke={chart.gridStroke} horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={chart.tick} />
+                      <YAxis type="category" dataKey="name" tick={chart.tick} width={92} />
+                      <Tooltip content={<ChartTip />} contentStyle={chart.tooltipStyle} />
+                      <Bar dataKey="value" name="Employees" radius={[0, 6, 6, 0]} isAnimationActive={false}>
+                        {pieData.map((entry) => (
+                          <Cell key={entry.key} fill={chart.attendanceColor(entry.key)} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  )}
+                </ChartFrame>
+                <ul className="attov-legend attov-legend-inline attov-legend-bars">
                   {pieData.map((entry) => (
                     <li key={entry.key}>
-                      <i style={{ background: COLORS[entry.key] || '#888' }} />
+                      <i style={{ background: chart.attendanceColor(entry.key) }} />
                       <span>{entry.name}</span>
                       <b>{entry.value}</b>
                       <em>{pieTotal ? Math.round((entry.value / pieTotal) * 100) : 0}%</em>
                     </li>
                   ))}
                 </ul>
-              </div>
+              </>
             ) : (
               <p className="empty">No attendance mix for this date.</p>
             )}
@@ -501,8 +573,8 @@ export default function HrAttendanceOverview() {
                   <strong>{data.pending.thisWeek}</strong>
                 </li>
               </ul>
-              <Link className="attov-side-link" to="/hr/approvals">
-                Open approvals
+              <Link className="attov-side-link" to={links.approvals}>
+                {links.approvalsLabel}
               </Link>
             </section>
             <section className="panel attov-panel">
@@ -529,10 +601,11 @@ export default function HrAttendanceOverview() {
             <section className="panel attov-panel">
               <h3>Quick actions</h3>
               <div className="attov-actions">
-                <Link to="/hr/onboarding">Add employee</Link>
-                <Link to="/hr/calendar">Team calendar</Link>
-                <Link to="/hr/users">Leave management</Link>
-                <Link to="/hr/attendance">Attendance log</Link>
+                {links.quickActions.map((action) => (
+                  <Link key={action.to} to={action.to}>
+                    {action.label}
+                  </Link>
+                ))}
               </div>
             </section>
           </div>
@@ -602,7 +675,7 @@ export default function HrAttendanceOverview() {
                         )}
                       </td>
                       <td>
-                        <Link to="/hr/attendance" className="attov-view" aria-label="View attendance log">
+                        <Link to={links.attendance} className="attov-view" aria-label="View attendance log">
                           View
                         </Link>
                       </td>

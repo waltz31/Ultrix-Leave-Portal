@@ -35,13 +35,14 @@ db.exec(`
     earned REAL NOT NULL DEFAULT 0,
     sick REAL NOT NULL DEFAULT 0,
     restricted REAL NOT NULL DEFAULT 2,
+    celebration REAL NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
   );
 
   CREATE TABLE IF NOT EXISTS leave_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted')),
+    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted', 'celebration')),
     start_date TEXT NOT NULL,
     end_date TEXT NOT NULL,
     days REAL NOT NULL,
@@ -63,7 +64,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS balance_credits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted')),
+    leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted', 'celebration')),
     amount REAL NOT NULL,
     note TEXT,
     credited_by INTEGER NOT NULL REFERENCES users(id),
@@ -93,6 +94,7 @@ migrateLeaveRequestsTable();
 migrateLeaveSessionColumn();
 migrateCompensationLeave();
 migrateRestrictedLeaveBalance();
+migrateCelebrationLeave();
 migrateEmployeeRatingsTable();
 migrateEmployeeRatingsScale();
 migrateEmployeeRatingsUniquePeriod();
@@ -107,6 +109,18 @@ migrateFeedTables();
 migratePunchLogsTable();
 migrateReimbursementsTable();
 migrateAttendanceRegularizationsTable();
+migratePerformanceIndexes();
+
+function migratePerformanceIndexes() {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_read
+      ON notifications(user_id, read, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_leave_requests_user_status ON leave_requests(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests(start_date, end_date);
+    CREATE INDEX IF NOT EXISTS idx_users_manager_active ON users(manager_id) WHERE active = 1;
+  `);
+}
 
 function migrateAttendanceRegularizationsTable() {
   db.exec(`
@@ -429,7 +443,7 @@ function migrateRestrictedLeaveBalance() {
       CREATE TABLE leave_requests_restricted (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted')),
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted', 'celebration')),
         start_date TEXT NOT NULL,
         end_date TEXT NOT NULL,
         days REAL NOT NULL,
@@ -474,7 +488,7 @@ function migrateRestrictedLeaveBalance() {
       CREATE TABLE balance_credits_restricted (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted')),
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted', 'celebration')),
         amount REAL NOT NULL,
         note TEXT,
         credited_by INTEGER NOT NULL REFERENCES users(id),
@@ -484,6 +498,83 @@ function migrateRestrictedLeaveBalance() {
       SELECT id, user_id, leave_type, amount, note, credited_by, created_at FROM balance_credits;
       DROP TABLE balance_credits;
       ALTER TABLE balance_credits_restricted RENAME TO balance_credits;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+}
+
+function migrateCelebrationLeave() {
+  const balCols = db.prepare(`PRAGMA table_info(leave_balances)`).all().map((c) => c.name);
+  if (!balCols.includes('celebration')) {
+    db.exec(`ALTER TABLE leave_balances ADD COLUMN celebration REAL NOT NULL DEFAULT 0`);
+  }
+
+  const leaveSql = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='leave_requests'`)
+    .get()?.sql;
+  if (leaveSql && !leaveSql.includes("'celebration'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE leave_requests_celebration (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'wfh', 'restricted', 'celebration')),
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        days REAL NOT NULL,
+        session TEXT NOT NULL CHECK(session IN ('full', 'morning', 'afternoon')) DEFAULT 'full',
+        reason TEXT,
+        status TEXT NOT NULL CHECK(status IN (
+          'pending_manager', 'pending_hr', 'approved', 'rejected', 'cancelled'
+        )) DEFAULT 'pending_manager',
+        manager_note TEXT,
+        manager_id INTEGER REFERENCES users(id),
+        manager_reviewed_at TEXT,
+        hr_note TEXT,
+        hr_id INTEGER REFERENCES users(id),
+        hr_reviewed_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+        updated_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+      );
+      INSERT INTO leave_requests_celebration (
+        id, user_id, leave_type, start_date, end_date, days, session, reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      )
+      SELECT
+        id, user_id, leave_type, start_date, end_date, days, COALESCE(session, 'full'), reason, status,
+        manager_note, manager_id, manager_reviewed_at, hr_note, hr_id, hr_reviewed_at,
+        created_at, updated_at
+      FROM leave_requests;
+      DROP TABLE leave_requests;
+      ALTER TABLE leave_requests_celebration RENAME TO leave_requests;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  const creditSql = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='balance_credits'`)
+    .get()?.sql;
+  if (creditSql && !creditSql.includes("'celebration'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE balance_credits_celebration (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        leave_type TEXT NOT NULL CHECK(leave_type IN ('casual', 'earned', 'sick', 'restricted', 'celebration')),
+        amount REAL NOT NULL,
+        note TEXT,
+        credited_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST})
+      );
+      INSERT INTO balance_credits_celebration (id, user_id, leave_type, amount, note, credited_by, created_at)
+      SELECT id, user_id, leave_type, amount, note, credited_by, created_at FROM balance_credits;
+      DROP TABLE balance_credits;
+      ALTER TABLE balance_credits_celebration RENAME TO balance_credits;
       COMMIT;
       PRAGMA foreign_keys = ON;
     `);

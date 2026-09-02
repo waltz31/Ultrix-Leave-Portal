@@ -4,10 +4,10 @@ import { ThemeProvider } from './theme';
 import LoginPage from './pages/LoginPage';
 import {
   HrApprovals,
-  HrAttendance,
   HrCalendar,
   HrFeed,
   HrHistory,
+  HrMuster,
   HrOnboarding,
   HrOverview,
   HrRegularization,
@@ -16,15 +16,15 @@ import {
 import {
   ManagerApprovals,
   ManagerApply,
-  ManagerAttendance,
   ManagerCalendar,
   ManagerFeed,
   ManagerHistory,
+  ManagerMuster,
   ManagerOverview,
   ManagerRegularization,
   ManagerSalary,
 } from './pages/ManagerPages';
-import { UserApply, UserAttendance, UserCalendar, UserFeed, UserHistory, UserHome, UserSalary } from './pages/UserPages';
+import { UserApply, UserAttendance, UserFeed, UserHistory, UserHome, UserSalary } from './pages/UserPages';
 import { UserRatings, ManagerRatings, HrRatings } from './pages/RatingsPages';
 import { EmployeeInvoices, ManagerInvoices, HrInvoices } from './pages/InvoicePages';
 import {
@@ -98,11 +98,12 @@ export default function App() {
               </Protected>
             }
           />
+          <Route path="/hr/attendance" element={<Navigate to="/hr/muster" replace />} />
           <Route
-            path="/hr/attendance"
+            path="/hr/muster"
             element={
               <Protected role="hr">
-                <HrAttendance />
+                <HrMuster />
               </Protected>
             }
           />
@@ -181,11 +182,12 @@ export default function App() {
               </Protected>
             }
           />
+          <Route path="/manager/attendance" element={<Navigate to="/manager/muster" replace />} />
           <Route
-            path="/manager/attendance"
+            path="/manager/muster"
             element={
               <Protected role="manager">
-                <ManagerAttendance />
+                <ManagerMuster />
               </Protected>
             }
           />
@@ -291,7 +293,7 @@ export default function App() {
             path="/app/calendar"
             element={
               <Protected role="user">
-                <UserCalendar />
+                <Navigate to="/app/attendance" replace />
               </Protected>
             }
           />

@@ -307,7 +307,7 @@ function createPostgres() {
         END LOOP;
         ALTER TABLE leave_requests
           ADD CONSTRAINT leave_requests_leave_type_check
-          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'));
+          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted', 'celebration'));
       EXCEPTION
         WHEN duplicate_object THEN NULL;
       END $$;
@@ -330,7 +330,7 @@ function createPostgres() {
         END LOOP;
         ALTER TABLE balance_credits
           ADD CONSTRAINT balance_credits_leave_type_check
-          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation'));
+          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'restricted', 'celebration'));
       EXCEPTION
         WHEN duplicate_object THEN NULL;
         WHEN undefined_table THEN NULL;
@@ -378,7 +378,7 @@ function createPostgres() {
         END LOOP;
         ALTER TABLE leave_requests
           ADD CONSTRAINT leave_requests_leave_type_check
-          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted'));
+          CHECK (leave_type IN ('casual', 'earned', 'sick', 'compensation', 'wfh', 'restricted', 'celebration'));
       EXCEPTION
         WHEN duplicate_object THEN NULL;
       END $$;
@@ -654,8 +654,8 @@ function createPostgres() {
     `);
 
     for (const [table, allowed] of [
-      ['leave_requests', "'casual', 'earned', 'sick', 'wfh', 'restricted'"],
-      ['balance_credits', "'casual', 'earned', 'sick', 'restricted'"],
+      ['leave_requests', "'casual', 'earned', 'sick', 'wfh', 'restricted', 'celebration'"],
+      ['balance_credits', "'casual', 'earned', 'sick', 'restricted', 'celebration'"],
     ]) {
       await client.query(`
         DO $$
@@ -683,6 +683,61 @@ function createPostgres() {
     }
   }
 
+  async function migrateCelebrationLeave(client) {
+    await client.query(`
+      ALTER TABLE leave_balances
+      ADD COLUMN IF NOT EXISTS celebration DOUBLE PRECISION NOT NULL DEFAULT 0
+    `);
+
+    for (const [table, allowed] of [
+      ['leave_requests', "'casual', 'earned', 'sick', 'wfh', 'restricted', 'celebration'"],
+      ['balance_credits', "'casual', 'earned', 'sick', 'restricted', 'celebration'"],
+    ]) {
+      await client.query(`
+        DO $$
+        DECLARE
+          con_name text;
+        BEGIN
+          FOR con_name IN
+            SELECT c.conname
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            WHERE t.relname = '${table}'
+              AND c.contype = 'c'
+              AND pg_get_constraintdef(c.oid) ILIKE '%leave_type%'
+          LOOP
+            EXECUTE format('ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS %I', con_name);
+          END LOOP;
+          ALTER TABLE ${table}
+            ADD CONSTRAINT ${table}_leave_type_check
+            CHECK (leave_type IN (${allowed}));
+        EXCEPTION
+          WHEN duplicate_object THEN NULL;
+          WHEN undefined_table THEN NULL;
+        END $$;
+      `);
+    }
+  }
+
+  async function migratePerformanceIndexes(client) {
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_read
+        ON notifications(user_id, read, created_at DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_leave_requests_user_status ON leave_requests(user_id, status)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_leave_requests_dates ON leave_requests(start_date, end_date)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_manager_active ON users(manager_id) WHERE active = 1
+    `);
+  }
+
   async function initSchema() {
     const client = await pool.connect();
     try {
@@ -697,11 +752,13 @@ function createPostgres() {
       await migrateEmployeeAssets(client);
       await migrateCompensationLeave(client);
       await migrateRestrictedLeaveBalance(client);
+      await migrateCelebrationLeave(client);
       await migrateMandatoryLeaves(client);
       await migrateFeedTables(client);
       await migratePunchLogs(client);
       await migrateReimbursements(client);
       await migrateAttendanceRegularizations(client);
+      await migratePerformanceIndexes(client);
       await seedCompanyHolidays(adapter);
       console.log('Connected to Supabase/Postgres');
       readyResolve();

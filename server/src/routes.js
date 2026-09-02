@@ -36,9 +36,11 @@ import {
   mailCancelled,
 } from './mail.js';
 import { todayIst } from './time.js';
+import { syncLeaveAccruals, assertCelebrationLeaveRequest } from './leaveAccrual.js';
 import {
   mapPunch,
   punchStatus,
+  punchStatusCached,
   summarizeDaySessions,
   syncPunchesSafe,
   EXPECTED_WORK_MINUTES,
@@ -49,6 +51,7 @@ import {
   workMinutesBetween,
 } from './punchSync.js';
 import { buildAttendanceOverview } from './attendanceOverview.js';
+import { buildAttendanceMuster } from './attendanceMuster.js';
 import {
   REGULARIZE_SELECT,
   applyApprovedOverride,
@@ -117,6 +120,32 @@ import {
 
 const router = Router();
 
+const holidaysCache = new Map();
+const HOLIDAYS_CACHE_MS = 5 * 60 * 1000;
+
+function invalidateHolidaysCache() {
+  holidaysCache.clear();
+}
+
+function punchScopeForUser(user, filterUserId = null) {
+  if (user.role === 'user') {
+    return { clause: ' AND p.user_id = ?', params: [user.id] };
+  }
+  if (user.role === 'manager') {
+    if (filterUserId) {
+      return { clause: ' AND p.user_id = ?', params: [filterUserId] };
+    }
+    return {
+      clause: ' AND p.user_id IN (SELECT id FROM users WHERE manager_id = ? OR id = ?)',
+      params: [user.id, user.id],
+    };
+  }
+  if (filterUserId) {
+    return { clause: ' AND p.user_id = ?', params: [filterUserId] };
+  }
+  return { clause: '', params: [] };
+}
+
 async function getRatingById(id) {
   return await db.prepare(`${RATING_SELECT} WHERE er.id = ?`).get(id);
 }
@@ -128,14 +157,15 @@ async function getBalance(userId) {
       earned: 0,
       sick: 0,
       restricted: DEFAULT_RESTRICTED_BALANCE,
+      celebration: 0,
     }
   );
 }
 
 async function ensureBalanceRow(userId) {
   await db.prepare(
-    `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted)
-     VALUES (?, 0, 0, 0, ?)
+    `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted, celebration)
+     VALUES (?, 0, 0, 0, ?, 0)
      ON CONFLICT(user_id) DO NOTHING`
   ).run(userId, DEFAULT_RESTRICTED_BALANCE);
 }
@@ -233,6 +263,7 @@ function leaveLabel(type) {
   if (type === 'earned') return 'Earned Leave';
   if (type === 'sick') return 'Sick Leave';
   if (type === 'restricted') return 'Restricted Leave';
+  if (type === 'celebration') return 'Celebration Leave';
   if (type === 'general') return 'General Holiday';
   return `${type} leave`;
 }
@@ -364,12 +395,13 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
 });
 
 const USER_DIRECTORY_SELECT = `
-  SELECT u.*, b.casual, b.earned, b.sick, b.restricted, m.name AS manager_name,
+  SELECT u.*, b.casual, b.earned, b.sick, b.restricted, b.celebration, m.name AS manager_name,
          m.email AS manager_email, ep.profile_photo, ep.designation, ep.department,
          COALESCE(used.casual_used, 0) AS casual_used,
          COALESCE(used.earned_used, 0) AS earned_used,
          COALESCE(used.sick_used, 0) AS sick_used,
          COALESCE(used.restricted_used, 0) AS restricted_used,
+         COALESCE(used.celebration_used, 0) AS celebration_used,
          COALESCE(used.wfh_days, 0) AS wfh_days
   FROM users u
   LEFT JOIN leave_balances b ON b.user_id = u.id
@@ -381,6 +413,7 @@ const USER_DIRECTORY_SELECT = `
       SUM(CASE WHEN leave_type = 'earned' AND status = 'approved' THEN days ELSE 0 END) AS earned_used,
       SUM(CASE WHEN leave_type = 'sick' AND status = 'approved' THEN days ELSE 0 END) AS sick_used,
       SUM(CASE WHEN leave_type = 'restricted' AND status = 'approved' THEN days ELSE 0 END) AS restricted_used,
+      SUM(CASE WHEN leave_type = 'celebration' AND status = 'approved' THEN days ELSE 0 END) AS celebration_used,
       SUM(CASE WHEN leave_type = 'wfh' AND status = 'approved' THEN days ELSE 0 END) AS wfh_days
     FROM leave_requests
     GROUP BY user_id
@@ -396,6 +429,7 @@ function mapUserWithBalances(row) {
       earned: Number(row.earned_used || 0),
       sick: Number(row.sick_used || 0),
       restricted: Number(row.restricted_used || 0),
+      celebration: Number(row.celebration_used || 0),
     },
     wfhDays: row.wfh_days || 0,
   };
@@ -769,6 +803,11 @@ async function createOnboardedEmployee(body) {
 
     const row = await db.prepare(`${PROFILE_SELECT} WHERE ep.user_id = ?`).get(userId);
     const assetsByUser = await loadAssetsByUserIds([userId]);
+    try {
+      await syncLeaveAccruals(userId);
+    } catch (accrualErr) {
+      console.error('Leave accrual after onboarding failed:', accrualErr.message);
+    }
     return {
       profile: mapProfileWithAssets(row, assetsByUser),
       credentials: {
@@ -1086,6 +1125,12 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
 
     const row = await db.prepare(`${PROFILE_SELECT} WHERE ep.user_id = ?`).get(userId);
     const assetsByUser = await loadAssetsByUserIds([userId]);
+    try {
+      await ensureBalanceRow(userId);
+      await syncLeaveAccruals(userId);
+    } catch (accrualErr) {
+      console.error('Leave accrual after profile update failed:', accrualErr.message);
+    }
     res.json({ profile: mapProfileWithAssets(row, assetsByUser) });
   } catch (err) {
     if (String(err.message).includes('UNIQUE') || isUniqueViolation(err)) {
@@ -1241,6 +1286,7 @@ router.delete('/users/:id', authRequired, hrRequired, async (req, res) => {
 // ——— Balances ———
 router.get('/balances/me', authRequired, async (req, res) => {
   await ensureBalanceRow(req.user.id);
+  await syncLeaveAccruals(req.user.id);
   res.json({ balances: mapBalance(await getBalance(req.user.id)) });
 });
 
@@ -1457,6 +1503,10 @@ router.get('/mandatory-leaves', authRequired, hrRequired, async (req, res) => {
 router.get('/holidays', authRequired, async (req, res) => {
   const year = Number(req.query.year) || Number(String(req.query.year || '').slice(0, 4));
   const resolvedYear = Number.isFinite(year) && year > 2000 ? year : new Date().getFullYear();
+  const cached = holidaysCache.get(resolvedYear);
+  if (cached && Date.now() - cached.at < HOLIDAYS_CACHE_MS) {
+    return res.json(cached.data);
+  }
   const rows = await db
     .prepare(
       `SELECT ml.*, u.name AS created_by_name
@@ -1467,12 +1517,14 @@ router.get('/holidays', authRequired, async (req, res) => {
     )
     .all(`${resolvedYear}-01-01`, `${resolvedYear}-12-31`);
   const holidays = rows.map(mapMandatoryLeave);
-  res.json({
+  const payload = {
     year: resolvedYear,
     holidays,
     general: holidays.filter((h) => h.holidayType === 'general'),
     restricted: holidays.filter((h) => h.holidayType === 'restricted'),
-  });
+  };
+  holidaysCache.set(resolvedYear, { at: Date.now(), data: payload });
+  res.json(payload);
 });
 
 function normalizeMandatoryEntry(entry) {
@@ -1533,6 +1585,7 @@ async function insertMandatoryLeave({ title, startDate, endDate, note, holidayTy
        WHERE ml.start_date = ? AND ml.end_date = ? AND ml.title = ?`
     )
     .get(startDate, endDate, title);
+  invalidateHolidaysCache();
   return mapMandatoryLeave(row);
 }
 
@@ -1624,7 +1677,7 @@ router.post('/leaves', authRequired, async (req, res) => {
 
   if (!REQUEST_TYPES.includes(leaveType)) {
     return res.status(400).json({
-      error: 'leaveType (casual/earned/sick/restricted/wfh) is required',
+      error: 'leaveType (casual/earned/sick/restricted/celebration/wfh) is required',
     });
   }
   if (!startDate || !endDate) {
@@ -1647,6 +1700,9 @@ router.post('/leaves', authRequired, async (req, res) => {
         leaveSession
       );
       days = rh.days;
+    } else if (leaveType === 'celebration') {
+      days = (await assertCelebrationLeaveRequest(req.user.id, startDate, resolvedEnd, leaveSession))
+        .days;
     } else {
       const holidays = await assertRegularLeaveWindow(db, startDate, resolvedEnd);
       days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
@@ -1662,6 +1718,7 @@ router.post('/leaves', authRequired, async (req, res) => {
 
   if (isBalanceType(leaveType)) {
     await ensureBalanceRow(req.user.id);
+    await syncLeaveAccruals(req.user.id);
     const bal = await getBalance(req.user.id);
     if (bal[leaveType] < days) {
       return res.status(400).json({
@@ -1826,6 +1883,9 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
     if (isRestricted) {
       const rh = await assertRestrictedHolidayRequest(employeeId, startDate, resolvedEnd, leaveSession);
       days = rh.days;
+    } else if (leaveType === 'celebration') {
+      days = (await assertCelebrationLeaveRequest(employeeId, startDate, resolvedEnd, leaveSession))
+        .days;
     } else {
       const holidays = await assertRegularLeaveWindow(db, startDate, resolvedEnd);
       days = countLeaveDays(startDate, resolvedEnd, leaveSession, holidays);
@@ -1841,6 +1901,7 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
 
   if (isBalanceType(leaveType)) {
     await ensureBalanceRow(employeeId);
+    await syncLeaveAccruals(employeeId);
     const bal = await getBalance(employeeId);
     if ((bal[leaveType] ?? 0) < days) {
       return res.status(400).json({
@@ -2157,16 +2218,22 @@ router.patch('/leaves/:id/cancel', authRequired, async (req, res) => {
 
 // ——— Notifications (all roles) ———
 router.get('/notifications', authRequired, async (req, res) => {
-  const notifications = (await db
-    .prepare(
-      `SELECT id, leave_id, reimbursement_id, type, title, message, read, created_at
-       FROM notifications
-       WHERE user_id = ?
-       ORDER BY created_at DESC
-       LIMIT 40`
-    )
-    .all(req.user.id))
-    .map((n) => ({
+  const [notifications, unreadRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT id, leave_id, reimbursement_id, type, title, message, read, created_at
+         FROM notifications
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT 40`
+      )
+      .all(req.user.id),
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0`)
+      .get(req.user.id),
+  ]);
+  res.json({
+    notifications: notifications.map((n) => ({
       id: n.id,
       leaveId: n.leave_id,
       reimbursementId: n.reimbursement_id,
@@ -2175,33 +2242,30 @@ router.get('/notifications', authRequired, async (req, res) => {
       message: n.message,
       read: Boolean(n.read),
       createdAt: n.created_at,
-    }));
-  const unreadCount = (await db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0`
-    )
-    .get(req.user.id)).c;
-  res.json({ notifications, unreadCount });
+    })),
+    unreadCount: unreadRow?.c || 0,
+  });
 });
 
 router.patch('/notifications/read', authRequired, async (req, res) => {
   const { ids } = req.body || {};
   if (Array.isArray(ids) && ids.length) {
-    const mark = await db.prepare(
-      `UPDATE notifications SET read = 1 WHERE user_id = ? AND id = ?`
-    );
-    await db.transaction(async () => {
-      for (const id of ids) await mark.run(req.user.id, Number(id));
-    });
+    const numericIds = ids.map((id) => Number(id)).filter((id) => Number.isFinite(id));
+    if (numericIds.length) {
+      const placeholders = numericIds.map(() => '?').join(',');
+      await db
+        .prepare(
+          `UPDATE notifications SET read = 1 WHERE user_id = ? AND id IN (${placeholders})`
+        )
+        .run(req.user.id, ...numericIds);
+    }
   } else {
     await db.prepare(`UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0`).run(
       req.user.id
     );
   }
   const unreadCount = (await db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0`
-    )
+    .prepare(`SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND read = 0`)
     .get(req.user.id)).c;
   res.json({ ok: true, unreadCount });
 });
@@ -2292,6 +2356,7 @@ router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, re
 router.get('/reports/overview', authRequired, async (req, res) => {
   const role = req.user.role;
   const filterUserId = req.query.userId ? Number(req.query.userId) : null;
+  const lite = String(req.query.lite || '') === '1';
 
   if (filterUserId != null && Number.isNaN(filterUserId)) {
     return res.status(400).json({ error: 'Invalid employee filter' });
@@ -2309,6 +2374,49 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     if (role === 'manager' && employee.manager_id !== req.user.id) {
       return res.status(403).json({ error: 'Not on your team' });
     }
+  }
+
+  const monthKey = todayIst().slice(0, 7);
+  const [teamYear, teamMonth] = monthKey.split('-').map(Number);
+  const monthStart = `${monthKey}-01`;
+  const monthEnd = `${teamYear}-${String(teamMonth).padStart(2, '0')}-${String(
+    new Date(teamYear, teamMonth, 0).getDate()
+  ).padStart(2, '0')}`;
+
+  const teamLeaveClauses = [
+    "lr.status = 'approved'",
+    "lr.leave_type != 'wfh'",
+    'lr.end_date >= ?',
+    'lr.start_date <= ?',
+    'u.active = 1',
+    "u.role IN ('user', 'manager')",
+  ];
+  const teamLeaveParams = [monthStart, monthEnd];
+  if (role === 'manager') {
+    teamLeaveClauses.push('(u.manager_id = ? OR u.id = ?)');
+    teamLeaveParams.push(req.user.id, req.user.id);
+  } else if (role === 'user') {
+    teamLeaveClauses.push('u.id != ?');
+    teamLeaveParams.push(req.user.id);
+  }
+
+  const teamLeavesPromise = db
+    .prepare(
+      `${LEAVE_SELECT}
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE ${teamLeaveClauses.join(' AND ')}
+       ORDER BY lr.start_date ASC, u.name COLLATE NOCASE
+       LIMIT 24`
+    )
+    .all(...teamLeaveParams);
+
+  if (lite && role === 'user') {
+    const teamLeavesThisMonth = (await teamLeavesPromise).map((row) => ({
+      ...mapLeave(row),
+      designation: row.designation ?? null,
+      profilePhoto: row.profile_photo ?? null,
+    }));
+    return res.json({ teamLeavesThisMonth });
   }
 
   const listParams =
@@ -2330,55 +2438,61 @@ router.get('/reports/overview', authRequired, async (req, res) => {
   }
   const chartWhereSql = chartWhere.length ? `AND ${chartWhere.join(' AND ')}` : '';
 
-  const upcoming = (await db
-    .prepare(
-      `${LEAVE_SELECT}
-       WHERE lr.status = 'approved'
-         AND lr.end_date >= ${SQL_TODAY_IST}
-         ${role === 'manager' ? 'AND u.manager_id = ?' : ''}
-         ${role === 'user' ? 'AND lr.user_id = ?' : ''}
-       ORDER BY lr.start_date ASC
-       LIMIT 12`
-    )
-    .all(...listParams))
-    .map(mapLeave);
+  const [upcomingRows, todayRows, byTypeRows, byMonthRows, teamLeaveRows] = await Promise.all([
+    db
+      .prepare(
+        `${LEAVE_SELECT}
+         WHERE lr.status = 'approved'
+           AND lr.end_date >= ${SQL_TODAY_IST}
+           ${role === 'manager' ? 'AND u.manager_id = ?' : ''}
+           ${role === 'user' ? 'AND lr.user_id = ?' : ''}
+         ORDER BY lr.start_date ASC
+         LIMIT 12`
+      )
+      .all(...listParams),
+    db
+      .prepare(
+        `${LEAVE_SELECT}
+         LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+         WHERE lr.status = 'approved'
+           AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date
+           ${role === 'manager' ? 'AND u.manager_id = ?' : ''}
+           ${role === 'user' ? 'AND lr.user_id = ?' : ''}
+         ORDER BY u.name COLLATE NOCASE`
+      )
+      .all(...listParams),
+    db
+      .prepare(
+        `SELECT lr.leave_type AS type, COALESCE(SUM(lr.days), 0) AS days, COUNT(*) AS count
+         FROM leave_requests lr
+         ${chartJoin}
+         WHERE lr.status = 'approved'
+           AND strftime('%Y-%m', lr.start_date) = strftime('%Y-%m', 'now', '+5 hours', '30 minutes')
+           ${chartWhereSql}
+         GROUP BY lr.leave_type`
+      )
+      .all(...chartParams),
+    db
+      .prepare(
+        `SELECT strftime('%Y-%m', lr.start_date) AS month, COALESCE(SUM(lr.days), 0) AS days
+         FROM leave_requests lr
+         ${chartJoin}
+         WHERE lr.status = 'approved'
+           AND lr.start_date >= date('now', '+5 hours', '30 minutes', '-5 months', 'start of month')
+           ${chartWhereSql}
+         GROUP BY strftime('%Y-%m', lr.start_date)
+         ORDER BY month ASC`
+      )
+      .all(...chartParams),
+    teamLeavesPromise,
+  ]);
 
-  const todayOnLeave = (await db
-    .prepare(
-      `${LEAVE_SELECT}
-       WHERE lr.status = 'approved'
-         AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date
-         ${role === 'manager' ? 'AND u.manager_id = ?' : ''}
-         ${role === 'user' ? 'AND lr.user_id = ?' : ''}
-       ORDER BY u.name COLLATE NOCASE`
-    )
-    .all(...listParams))
-    .map(mapLeave);
-
-  const byTypeRows = await db
-    .prepare(
-      `SELECT lr.leave_type AS type, COALESCE(SUM(lr.days), 0) AS days, COUNT(*) AS count
-       FROM leave_requests lr
-       ${chartJoin}
-       WHERE lr.status = 'approved'
-         AND strftime('%Y-%m', lr.start_date) = strftime('%Y-%m', 'now', '+5 hours', '30 minutes')
-         ${chartWhereSql}
-       GROUP BY lr.leave_type`
-    )
-    .all(...chartParams);
-
-  const byMonthRows = await db
-    .prepare(
-      `SELECT strftime('%Y-%m', lr.start_date) AS month, COALESCE(SUM(lr.days), 0) AS days
-       FROM leave_requests lr
-       ${chartJoin}
-       WHERE lr.status = 'approved'
-         AND lr.start_date >= date('now', '+5 hours', '30 minutes', '-5 months', 'start of month')
-         ${chartWhereSql}
-       GROUP BY strftime('%Y-%m', lr.start_date)
-       ORDER BY month ASC`
-    )
-    .all(...chartParams);
+  const upcoming = upcomingRows.map(mapLeave);
+  const todayOnLeave = todayRows.map((row) => ({
+    ...mapLeave(row),
+    designation: row.designation ?? null,
+    profilePhoto: row.profile_photo ?? null,
+  }));
 
   // Fill last 6 months including zeros (IST calendar)
   const months = [];
@@ -2395,15 +2509,22 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     });
   }
 
-  const allTypes = ['casual', 'earned', 'sick', 'restricted', 'wfh'];
+  const allTypes = ['casual', 'earned', 'sick', 'restricted', 'celebration', 'wfh'];
   const byType = allTypes.map((type) => {
     const row = byTypeRows.find((r) => r.type === type);
     return { type, days: row ? row.days : 0, count: row ? row.count : 0 };
   });
 
+  const teamLeavesThisMonth = teamLeaveRows.map((row) => ({
+    ...mapLeave(row),
+    designation: row.designation ?? null,
+    profilePhoto: row.profile_photo ?? null,
+  }));
+
   res.json({
     upcoming,
     todayOnLeave,
+    teamLeavesThisMonth,
     byType,
     byMonth: months,
   });
@@ -3025,7 +3146,7 @@ async function sendFeed(req, res) {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const postRows = await db
     .prepare(
-      `${FEED_POST_SELECT} ${whereSql} ORDER BY fp.created_at DESC, fp.id DESC LIMIT 150`
+      `${FEED_POST_SELECT} ${whereSql} ORDER BY fp.created_at DESC, fp.id DESC LIMIT 50`
     )
     .all(...params);
 
@@ -3269,13 +3390,24 @@ router.post('/feed/comments/:id/reactions', authRequired, async (req, res) => {
   res.json(result);
 });
 
-router.get('/attendance/overview', authRequired, hrRequired, async (req, res) => {
+router.get('/attendance/overview', authRequired, managerOrHrRequired, async (req, res) => {
   const overview = await buildAttendanceOverview(db, {
     date: req.query.date,
     location: req.query.location,
     department: req.query.department,
+    managerId: req.user.role === 'manager' ? req.user.id : null,
   });
   res.json({ overview, status: await punchStatus() });
+});
+
+router.get('/attendance/muster', authRequired, managerOrHrRequired, async (req, res) => {
+  const muster = await buildAttendanceMuster(db, {
+    date: req.query.date,
+    location: req.query.location,
+    department: req.query.department,
+    managerId: req.user.role === 'manager' ? req.user.id : null,
+  });
+  res.json({ muster, status: await punchStatus() });
 });
 
 router.get('/punches/status', authRequired, async (_req, res) => {
@@ -3299,30 +3431,11 @@ router.get('/punches', authRequired, async (req, res) => {
   const date = String(req.query.date || todayIst()).slice(0, 10);
   const from = String(req.query.from || date).slice(0, 10);
   const to = String(req.query.to || date).slice(0, 10);
-  const rows = await db
-    .prepare(
-      `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
-              p.serial_number, p.direction, u.name AS user_name, u.employee_number
-       FROM punch_logs p
-       LEFT JOIN users u ON u.id = p.user_id
-       WHERE p.punch_date >= ? AND p.punch_date <= ?
-       ORDER BY p.punched_at DESC`
-    )
-    .all(from, to);
-
-  let visible = rows;
-  if (req.user.role === 'user') {
-    visible = rows.filter((r) => r.user_id === req.user.id);
-  } else if (req.user.role === 'manager') {
-    const team = await db
-      .prepare(`SELECT id FROM users WHERE manager_id = ? OR id = ?`)
-      .all(req.user.id, req.user.id);
-    const ids = new Set(team.map((t) => t.id));
-    visible = rows.filter((r) => r.user_id && ids.has(r.user_id));
-  }
+  const scope = punchScopeForUser(req.user);
+  const rows = await loadPunchRows(from, to, scope);
 
   const punches = mergeSessionsWithOverrides(
-    summarizeDaySessions(visible.map(mapPunch)),
+    summarizeDaySessions(rows.map(mapPunch)),
     await loadApprovedOverrides(from, to, req.user.role === 'user' ? req.user.id : null)
   );
   const pending = await db
@@ -3333,6 +3446,7 @@ router.get('/punches', authRequired, async (req, res) => {
     .all(from, to);
   const pendingKeys = new Set(pending.map((p) => `${p.user_id}|${p.punch_date}`));
   const today = todayIst();
+  const includeStatus = req.user.role !== 'user';
   res.json({
     from,
     to,
@@ -3347,22 +3461,24 @@ router.get('/punches', authRequired, async (req, res) => {
         isRegularizeEligible(session, today) &&
         !pendingKeys.has(`${session.userId}|${session.punchDate}`),
     })),
-    status: await punchStatus(),
+    ...(includeStatus ? { status: await punchStatusCached() } : {}),
   });
 });
 
 // ——— Attendance calendar + regularizations ———
-async function loadPunchRows(from, to) {
+async function loadPunchRows(from, to, scope = { clause: '', params: [] }) {
   return await db
     .prepare(
       `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
-              p.serial_number, p.direction, u.name AS user_name, u.employee_number
+              p.serial_number, p.direction, u.name AS user_name, u.employee_number,
+              ep.profile_photo, ep.designation
        FROM punch_logs p
        LEFT JOIN users u ON u.id = p.user_id
-       WHERE p.punch_date >= ? AND p.punch_date <= ?
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE p.punch_date >= ? AND p.punch_date <= ?${scope.clause}
        ORDER BY p.punched_at ASC`
     )
-    .all(from, to);
+    .all(from, to, ...scope.params);
 }
 
 async function loadApprovedOverrides(from, to, userId = null) {
@@ -3392,25 +3508,10 @@ router.get('/attendance/calendar', authRequired, async (req, res) => {
   const from = String(req.query.from || todayIst()).slice(0, 10);
   const to = String(req.query.to || from).slice(0, 10);
   const filterUserId = req.query.userId ? Number(req.query.userId) : null;
-  const rows = await loadPunchRows(from, to);
+  const scope = punchScopeForUser(req.user, filterUserId);
+  const rows = await loadPunchRows(from, to, scope);
 
-  let visible = rows;
-  if (req.user.role === 'user') {
-    visible = rows.filter((r) => r.user_id === req.user.id);
-  } else if (req.user.role === 'manager') {
-    const team = await db
-      .prepare(`SELECT id FROM users WHERE manager_id = ? OR id = ?`)
-      .all(req.user.id, req.user.id);
-    const ids = new Set(team.map((t) => t.id));
-    visible = rows.filter((r) => r.user_id && ids.has(r.user_id));
-    if (filterUserId) {
-      visible = visible.filter((r) => r.user_id === filterUserId);
-    }
-  } else if (filterUserId) {
-    visible = rows.filter((r) => r.user_id === filterUserId);
-  }
-
-  let sessions = summarizeDaySessions(visible.map(mapPunch));
+  let sessions = summarizeDaySessions(rows.map(mapPunch));
   const overrides = await loadApprovedOverrides(
     from,
     to,

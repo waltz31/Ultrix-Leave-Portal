@@ -1,5 +1,6 @@
 import { todayIst } from './time.js';
 import { summarizeDaySessions } from './punchSync.js';
+import { attendanceRosterSql } from './attendanceRoster.js';
 
 const LATE_AFTER = String(process.env.ATT4U_LATE_AFTER || '10:00:00').padEnd(8, ':00').slice(0, 8);
 
@@ -38,18 +39,24 @@ export async function buildAttendanceOverview(db, query = {}) {
   const date = String(query.date || todayIst()).slice(0, 10);
   const location = String(query.location || '').trim();
   const department = String(query.department || '').trim();
+  const managerId = query.managerId != null ? Number(query.managerId) : null;
   const { start: monthStart, end: monthEnd } = monthBounds(date);
 
+  const employeeSql = managerId
+    ? `SELECT u.id, u.name, u.employee_number, u.role, u.active,
+              ep.department, ep.location, ep.profile_photo, ep.work_mode
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE ${attendanceRosterSql('u')}
+         AND (u.manager_id = ? OR u.id = ?)`
+    : `SELECT u.id, u.name, u.employee_number, u.role, u.active,
+              ep.department, ep.location, ep.profile_photo, ep.work_mode
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       WHERE ${attendanceRosterSql('u')}`;
+
   const employees = (
-    await db
-      .prepare(
-        `SELECT u.id, u.name, u.employee_number, u.role, u.active,
-                ep.department, ep.location, ep.profile_photo, ep.work_mode
-         FROM users u
-         LEFT JOIN employee_profiles ep ON ep.user_id = u.id
-         WHERE u.active = 1 AND u.role IN ('user', 'manager', 'hr')`
-      )
-      .all()
+    await db.prepare(employeeSql).all(...(managerId ? [managerId, managerId] : []))
   ).filter((row) => matchesFilter(row, { location, department }));
 
   const employeeIds = new Set(employees.map((e) => e.id));
@@ -85,15 +92,26 @@ export async function buildAttendanceOverview(db, query = {}) {
     )
     .all(monthEnd, monthStart);
 
-  const pendingRows = await db
-    .prepare(
-      `SELECT lr.id, lr.created_at, lr.status, u.name AS user_name
-       FROM leave_requests lr
-       JOIN users u ON u.id = lr.user_id
-       WHERE lr.status IN ('pending_manager', 'pending_hr')
-       ORDER BY lr.created_at DESC`
-    )
-    .all();
+  const pendingRows = managerId
+    ? await db
+        .prepare(
+          `SELECT lr.id, lr.created_at, lr.status, u.name AS user_name
+           FROM leave_requests lr
+           JOIN users u ON u.id = lr.user_id
+           WHERE lr.status IN ('pending_manager', 'pending_hr')
+             AND (u.manager_id = ? OR u.id = ?)
+           ORDER BY lr.created_at DESC`
+        )
+        .all(managerId, managerId)
+    : await db
+        .prepare(
+          `SELECT lr.id, lr.created_at, lr.status, u.name AS user_name
+           FROM leave_requests lr
+           JOIN users u ON u.id = lr.user_id
+           WHERE lr.status IN ('pending_manager', 'pending_hr')
+           ORDER BY lr.created_at DESC`
+        )
+        .all();
 
   function coveringLeave(userId, day, wfh) {
     return monthLeaves.some((leave) => {
@@ -106,9 +124,11 @@ export async function buildAttendanceOverview(db, query = {}) {
 
   function sessionsForDay(day) {
     const rows = monthPunches.filter((p) => p.punch_date === day);
-    const scoped = rows.filter(
-      (p) => p.user_id == null || employeeIds.has(p.user_id)
-    );
+    const scoped = rows.filter((p) => {
+      if (p.user_id != null) return employeeIds.has(p.user_id);
+      // Unmapped device punches only for org-wide (HR) views
+      return !managerId;
+    });
     return summarizeDaySessions(
       scoped.map((p) => ({
         id: p.id,

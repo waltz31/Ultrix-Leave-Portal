@@ -1,33 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { pathForNotification, useNotifications } from '../notifications';
 import { useAuth } from '../auth';
 import { DARK_THEMES, LIGHT_THEMES, useTheme } from '../theme';
 import { avatarSrc, formatDateTime } from '../utils';
-import ApprovedCelebration from './ApprovedCelebration';
 import StatusCelebration from './StatusCelebration';
+import HrLeaveApplyShortcuts from './HrLeaveApplyShortcuts';
 
 const DEFAULT_COLOR_INPUT = '#0b1220';
-const NOTIFICATIONS_UPDATED = 'ultrix-notifications-updated';
-
-function emitNotificationsUpdated() {
-  window.dispatchEvent(new Event(NOTIFICATIONS_UPDATED));
-}
-
-const USER_ICONS = [
-  { to: '/app', label: 'Home', icon: '/assets/nav-home.png', end: true },
-  { to: '/feed', label: 'Feed', icon: '/assets/nav-onboarding.png' },
-  { to: '/app/attendance', label: 'Attendance', icon: '/assets/nav-hourglass.png' },
-  { to: '/app/apply', label: 'Apply', icon: '/assets/nav-apply.png' },
-  { to: '/app/reimbursements', label: 'Reimbursement', icon: '/assets/nav-searchlist.png' },
-  { to: '/app/calendar', label: 'Calendar', icon: '/assets/nav-calendar.png' },
-  { to: '/app/salary', label: 'Salary', icon: '/assets/nav-searchlist.png' },
-  { to: '/app/ratings', label: 'Ratings', icon: '/assets/rating-star.png' },
-  { to: '/app/invoices', label: 'Invoices', icon: '/assets/nav-searchlist.png' },
-  { to: '/app/history', label: 'History', icon: '/assets/nav-history.png' },
-];
-
 const SIDEBAR_COLLAPSE_KEY = 'ultrix_sidebar_collapsed';
+
+function BellGlyph() {
+  const common = { viewBox: '0 0 24 24', width: '22', height: '22', fill: 'none', 'aria-hidden': true };
+  const stroke = { stroke: 'currentColor', strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round' };
+  return (
+    <svg {...common} className="bell-btn-icon">
+      <path d="M18 16v-5a6 6 0 1 0-12 0v5l-1.5 2.5h15L18 16Z" {...stroke} />
+      <path d="M10 19a2 2 0 0 0 4 0" {...stroke} />
+    </svg>
+  );
+}
 
 function NavGlyph({ label }) {
   const key = String(label || '').toLowerCase();
@@ -138,65 +130,21 @@ function NavGlyph({ label }) {
   );
 }
 
-function pathForNotification(role, type) {
-  if (String(type || '').startsWith('attendance_regularize')) {
-    if (role === 'hr') return '/hr/regularization';
-    if (role === 'manager') return '/manager/regularization';
-    return '/app/attendance';
-  }
-  if (String(type || '').startsWith('reimbursement_')) {
-    if (role === 'hr') return '/hr/reimbursements';
-    if (role === 'manager') return '/manager/reimbursements';
-    return '/app/reimbursements';
-  }
-  if (role === 'manager') {
-    if (type === 'pending_manager') return '/manager/approvals';
-    if (type === 'approved' || type === 'cancelled') return '/manager/calendar';
-    return '/manager/history';
-  }
-  if (role === 'hr') {
-    if (type === 'pending_hr') return '/hr/approvals';
-    if (type === 'approved' || type === 'cancelled') return '/hr/calendar';
-    if (type === 'invoice_submitted') return '/hr/invoices';
-    return '/hr/history';
-  }
-  if (type === 'approved') return '/app/calendar';
-  if (type === 'balance_credited') return '/app';
-  if (type === 'rating_received') return '/app/ratings';
-  if (type === 'invoice_submitted') return '/hr/invoices';
-  if (type === 'cancelled') return '/app/history';
-  if (type === 'pending_manager' || type === 'pending_hr') return '/app';
-  return '/app/history';
-}
-
-function NotificationBell({ onApprovedNotice, onBalanceCredited, onManagerApproved }) {
+function NotificationBell({
+  items,
+  unread,
+  refresh,
+  markIdsRead,
+  markAllRead,
+  clearAll,
+  onApprovedNotice,
+  onBalanceCredited,
+  onManagerApproved,
+}) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState([]);
-  const [unread, setUnread] = useState(0);
   const panelRef = useRef(null);
-
-  async function loadNotifications() {
-    try {
-      const data = await api('/notifications');
-      setItems(data.notifications || []);
-      setUnread(data.unreadCount || 0);
-    } catch {
-      // ignore transient errors
-    }
-  }
-
-  useEffect(() => {
-    loadNotifications();
-    const timer = setInterval(loadNotifications, 15000);
-    window.addEventListener(NOTIFICATIONS_UPDATED, loadNotifications);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener(NOTIFICATIONS_UPDATED, loadNotifications);
-    };
-  }, [location.pathname]);
 
   useEffect(() => {
     function onDocClick(e) {
@@ -209,36 +157,12 @@ function NotificationBell({ onApprovedNotice, onBalanceCredited, onManagerApprov
   async function toggleBell() {
     const next = !open;
     setOpen(next);
-    if (next) await loadNotifications();
-  }
-
-  async function markAllRead() {
-    try {
-      const data = await api('/notifications/read', { method: 'PATCH', body: {} });
-      setUnread(data.unreadCount || 0);
-      setItems((prev) => prev.map((n) => ({ ...n, read: true })));
-    } catch {
-      // ignore
-    }
-  }
-
-  async function clearAll() {
-    const ok = window.confirm('Clear all notifications?');
-    if (!ok) return;
-    try {
-      await api('/notifications', { method: 'DELETE' });
-      setUnread(0);
-      setItems([]);
-    } catch {
-      // ignore
-    }
+    if (next) await refresh(true);
   }
 
   async function openNotification(n) {
     try {
-      await api('/notifications/read', { method: 'PATCH', body: { ids: [n.id] } });
-      setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
-      setUnread((c) => Math.max(0, c - (n.read ? 0 : 1)));
+      await markIdsRead([n.id]);
     } catch {
       // still navigate
     }
@@ -258,7 +182,7 @@ function NotificationBell({ onApprovedNotice, onBalanceCredited, onManagerApprov
         aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
         aria-expanded={open}
       >
-        <img src="/assets/nav-bell.png" alt="" />
+        <BellGlyph />
         {unread > 0 && (
           <span className="bell-badge">{unread > 99 ? '99+' : unread}</span>
         )}
@@ -524,7 +448,7 @@ function ChangeNameModal({ onClose }) {
   );
 }
 
-function SettingsMenu({ variant = 'header' }) {
+function SettingsMenu() {
   const { user, logout } = useAuth();
   const { primary, secondary } = useTheme();
   const [open, setOpen] = useState(false);
@@ -533,7 +457,6 @@ function SettingsMenu({ variant = 'header' }) {
   const [showName, setShowName] = useState(false);
   const panelRef = useRef(null);
   const isHr = user?.role === 'hr';
-  const isSidebar = variant === 'sidebar';
 
   useEffect(() => {
     function onDocClick(e) {
@@ -556,47 +479,24 @@ function SettingsMenu({ variant = 'header' }) {
 
   return (
     <>
-      <div className={isSidebar ? 'sidebar-profile-wrap' : 'bell-wrap'} ref={panelRef}>
-        {isSidebar ? (
-          <button
-            type="button"
-            className="sidebar-profile"
-            onClick={toggle}
-            aria-label="Account menu"
-            aria-expanded={open}
-          >
-            <img className="sidebar-profile-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
-            <span className="sidebar-profile-copy">
-              <strong>{user?.name || 'Account'}</strong>
-              <span>{user?.email || ''}</span>
-            </span>
-            <span className="sidebar-profile-more" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="18" height="18">
-                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
-              </svg>
-            </span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="bell-btn settings-btn"
-            onClick={toggle}
-            aria-label="Account menu"
-            title={user?.name || 'Account'}
-            aria-expanded={open}
-          >
-            <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
-            <span
-              className="theme-swatch"
-              style={{ background: `linear-gradient(135deg, ${primary} 50%, ${secondary} 50%)` }}
-            />
-          </button>
-        )}
+      <div className="bell-wrap" ref={panelRef}>
+        <button
+          type="button"
+          className="bell-btn settings-btn"
+          onClick={toggle}
+          aria-label="Account menu"
+          title={user?.name || 'Account'}
+          aria-expanded={open}
+        >
+          <img className="settings-avatar" src={avatarSrc(user?.profilePhoto)} alt="" />
+          <span
+            className="theme-swatch"
+            style={{ background: `linear-gradient(135deg, ${primary} 50%, ${secondary} 50%)` }}
+          />
+        </button>
 
         {open && (
-          <div className={`settings-panel${isSidebar ? ' settings-panel-up' : ''}${view === 'color' ? ' is-theme' : ''}`}>
+          <div className={`settings-panel${view === 'color' ? ' is-theme' : ''}`}>
             {view === 'color' ? (
               <ColorPanel onClose={() => setView('menu')} />
             ) : (
@@ -677,33 +577,11 @@ function SettingsMenu({ variant = 'header' }) {
 }
 
 function PageTitle({ title }) {
-  if (typeof title === 'string' && title.startsWith('Welcome ')) {
-    const name = title.slice('Welcome '.length).trim();
-    return (
-      <h1 className="welcome-title">
-        <img src="/assets/welcome-wave.webp" alt="" className="welcome-icon" />
-        <span className="welcome-label">Welcome</span>
-        <span className="welcome-name">{name}</span>
-      </h1>
-    );
-  }
-  if (title === 'Feed') {
-    return (
-      <div className="feed-page-heading">
-        <h1>
-          Feed{' '}
-          <svg className="feed-sparkle" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 2.4 13.6 8.4 19.6 10 13.6 11.6 12 17.6 10.4 11.6 4.4 10 10.4 8.4 12 2.4Z"
-            />
-          </svg>
-        </h1>
-        <p className="feed-page-kicker">Stay connected. Celebrate together.</p>
-      </div>
-    );
-  }
-  return <h1>{title}</h1>;
+  if (!title) return null;
+  let label = String(title).trim();
+  if (label.startsWith('Welcome ')) label = 'Home';
+  if (label.includes(' · ')) label = label.split(' · ')[0].trim();
+  return <h1 className="page-section-title">{label}</h1>;
 }
 
 export default function AppShell({ title, nav, children }) {
@@ -713,11 +591,19 @@ export default function AppShell({ title, nav, children }) {
   const [celebrate, setCelebrate] = useState(false);
   const [managerCelebrate, setManagerCelebrate] = useState(false);
   const [creditNotice, setCreditNotice] = useState(null);
-  const [pendingApprovals, setPendingApprovals] = useState(0);
-  const [unreadByPath, setUnreadByPath] = useState({});
   const [mobileOpen, setMobileOpen] = useState(false);
   const navRef = useRef(null);
   const [indicator, setIndicator] = useState({ y: 0, h: 44, visible: false });
+  const {
+    notifications,
+    unreadCount,
+    unreadByPath,
+    refresh: refreshNotifications,
+    markIdsRead,
+    markAllRead,
+    clearAll: clearNotifications,
+    markPathRead,
+  } = useNotifications(user?.role);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1';
@@ -725,89 +611,51 @@ export default function AppShell({ title, nav, children }) {
       return false;
     }
   });
-  const roleIsUser = user?.role === 'user';
-  const sidebarNav = roleIsUser ? USER_ICONS : nav;
+  const sidebarNav = nav || [];
 
-  const moveIndicator = useCallback((el) => {
+  const moveIndicator = useCallback(() => {
     const nav = navRef.current;
-    const target = el || nav?.querySelector('.sidebar-link.active');
+    const target = nav?.querySelector('.sidebar-link.active');
     if (!nav || !target) {
       setIndicator((s) => (s.visible ? { ...s, visible: false } : s));
       return;
     }
-    const y = target.offsetTop;
-    const h = target.offsetHeight;
+    const y = Math.round(target.offsetTop);
+    const h = Math.round(target.offsetHeight);
     setIndicator((s) => (s.y === y && s.h === h && s.visible ? s : { y, h, visible: true }));
   }, []);
 
   useLayoutEffect(() => {
     moveIndicator();
-  }, [location.pathname, collapsed, sidebarNav, mobileOpen, moveIndicator, unreadByPath, pendingApprovals]);
+  }, [location.pathname, collapsed, mobileOpen, moveIndicator]);
 
   useEffect(() => {
-    const onResize = () => moveIndicator();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [moveIndicator]);
+    const nav = navRef.current;
+    if (!nav) return undefined;
+    let frame = 0;
+    const scheduleMove = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => moveIndicator());
+    };
+    window.addEventListener('resize', scheduleMove);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleMove) : null;
+    observer?.observe(nav);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', scheduleMove);
+      observer?.disconnect();
+    };
+  }, [moveIndicator, location.pathname, collapsed, mobileOpen]);
 
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
 
-  const recountUnread = useCallback((list) => {
-    const counts = {};
-    for (const n of list || []) {
-      if (n.read) continue;
-      const path = pathForNotification(user?.role, n.type);
-      counts[path] = (counts[path] || 0) + 1;
-    }
-    setUnreadByPath(counts);
-  }, [user?.role]);
-
-  const markPathRead = useCallback(
-    async (pathname) => {
-      if (!pathname) return;
-      try {
-        const notes = await api('/notifications');
-        const ids = (notes.notifications || [])
-          .filter((n) => !n.read && pathForNotification(user?.role, n.type) === pathname)
-          .map((n) => n.id);
-        if (ids.length) {
-          await api('/notifications/read', { method: 'PATCH', body: { ids } });
-          emitNotificationsUpdated();
-        }
-        const remaining = (notes.notifications || []).map((n) =>
-          ids.includes(n.id) ? { ...n, read: true } : n
-        );
-        recountUnread(remaining);
-      } catch {
-        // ignore
-      }
-    },
-    [user?.role, recountUnread]
-  );
-
   useEffect(() => {
-    let cancelled = false;
-    async function loadBadges() {
-      try {
-        const notes = await api('/notifications');
-        if (cancelled) return;
-        recountUnread(notes.notifications || []);
-      } catch {
-        if (!cancelled) setUnreadByPath({});
-      }
-    }
-    loadBadges();
-    const timer = setInterval(loadBadges, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [user?.role, recountUnread]);
-
-  useEffect(() => {
-    markPathRead(location.pathname);
+    const timer = window.setTimeout(() => {
+      markPathRead(location.pathname);
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [location.pathname, markPathRead]);
 
   function navBadgeFor(item) {
@@ -843,10 +691,12 @@ export default function AppShell({ title, nav, children }) {
       data-sidebar-open={mobileOpen ? 'true' : 'false'}
       style={shellStyle}
     >
-      <ApprovedCelebration
+      <StatusCelebration
         show={celebrate}
         onDone={() => setCelebrate(false)}
         message="Leave approved!"
+        imageSrc="/assets/leave-approved.gif"
+        durationMs={2800}
       />
       <StatusCelebration
         show={managerCelebrate}
@@ -888,23 +738,22 @@ export default function AppShell({ title, nav, children }) {
             <span />
           </button>
         </div>
-        <div className="sidebar-nav-stage" ref={navRef}>
-          <span
-            className={`sidebar-indicator${indicator.visible ? ' is-on' : ''}`}
-            style={{ transform: `translateY(${indicator.y}px)`, height: indicator.h }}
-            aria-hidden="true"
-          />
-          <nav className="sidebar-nav">
-            {sidebarNav.map((item, index) => {
+        <div className="sidebar-nav-stage">
+          <nav className="sidebar-nav" ref={navRef}>
+            <span
+              className={`sidebar-indicator${indicator.visible ? ' is-on' : ''}`}
+              style={{ transform: `translate3d(0, ${indicator.y}px, 0)`, height: indicator.h }}
+              aria-hidden="true"
+            />
+            {sidebarNav.map((item) => {
               const badge = navBadgeFor(item);
               return (
                 <NavLink
                   key={item.to}
                   to={item.to}
                   end={item.end}
-                  title={item.label}
+                  title={collapsed ? item.label : undefined}
                   className="sidebar-link"
-                  style={{ '--i': index }}
                   onClick={() => markPathRead(item.to)}
                 >
                   <span className="sidebar-link-icon">
@@ -921,7 +770,6 @@ export default function AppShell({ title, nav, children }) {
             })}
           </nav>
         </div>
-        <SettingsMenu variant="sidebar" />
       </aside>
       <main className="main">
         <header className="page-header with-tools">
@@ -937,18 +785,30 @@ export default function AppShell({ title, nav, children }) {
           </button>
           <PageTitle title={title} />
           <div className="header-tools">
-            <NotificationBell
-              onApprovedNotice={() => setCelebrate(true)}
-              onManagerApproved={() => setManagerCelebrate(true)}
-              onBalanceCredited={(n) =>
-                setCreditNotice(n.message || 'Leave balance credited to your account.')
-              }
-            />
-            <SettingsMenu />
+            <div className="header-tools-cluster">
+              <NotificationBell
+                items={notifications}
+                unread={unreadCount}
+                refresh={refreshNotifications}
+                markIdsRead={markIdsRead}
+                markAllRead={markAllRead}
+                clearAll={async () => {
+                  const ok = window.confirm('Clear all notifications?');
+                  if (ok) await clearNotifications();
+                }}
+                onApprovedNotice={() => setCelebrate(true)}
+                onManagerApproved={() => setManagerCelebrate(true)}
+                onBalanceCredited={(n) =>
+                  setCreditNotice(n.message || 'Leave balance credited to your account.')
+                }
+              />
+              <SettingsMenu />
+            </div>
           </div>
         </header>
         {children}
       </main>
+      <HrLeaveApplyShortcuts />
     </div>
   );
 }

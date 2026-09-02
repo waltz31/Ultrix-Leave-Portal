@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { getPortalRoot } from '../portalRoot';
+import { useTheme } from '../theme';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
 import {
@@ -22,13 +23,9 @@ import {
   RH_ONLY_PUBLISHED_DATES,
   toYmd,
 } from '../utils';
-
-const BALANCE_CARDS = [
-  { key: 'earned', label: 'Earned Leave', tone: 'indigo' },
-  { key: 'sick', label: 'Sick Leave', tone: 'amber' },
-  { key: 'casual', label: 'Casual Leave', tone: 'teal' },
-  { key: 'restricted', label: 'Restricted Leave', tone: 'rose' },
-];
+import LeaveBalanceSummaryCards, {
+  computePersonalLeaveTotals,
+} from './LeaveBalanceSummaryCards';
 
 function initials(name) {
   const parts = String(name || '')
@@ -55,14 +52,6 @@ function estimateDays(startDate, endDate, session, restricted) {
   return days.length;
 }
 
-function usageFor(leaves, type, remaining) {
-  const used = (leaves || [])
-    .filter((leave) => leave.leaveType === type && leave.status === 'approved')
-    .reduce((sum, leave) => sum + Number(leave.days || 0), 0);
-  const allocated = Math.max(remaining + used, remaining, 0);
-  return { remaining, used, allocated };
-}
-
 const EMPTY_FORM = {
   leaveType: 'casual',
   startDate: '',
@@ -73,6 +62,7 @@ const EMPTY_FORM = {
 
 export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
   const { user } = useAuth();
+  const { mode: themeMode } = useTheme();
   const year = appToday().getFullYear();
   const [balances, setBalances] = useState(null);
   const [leaves, setLeaves] = useState([]);
@@ -91,7 +81,9 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
   async function reload() {
     setLoading(true);
     try {
-      const mineQuery = user?.id ? `/leaves?userId=${user.id}` : '/leaves';
+      const mineQuery = user?.id
+        ? `/leaves?userId=${user.id}&from=${year}-01-01&to=${year}-12-31`
+        : `/leaves?from=${year}-01-01&to=${year}-12-31`;
       const [balanceData, leaveData, holidays] = await Promise.all([
         api('/balances/me'),
         api(mineQuery),
@@ -104,7 +96,7 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
       setLeaves(mine);
       setHolidayData(holidays);
     } catch {
-      setBalances({ casual: 0, earned: 0, sick: 0, restricted: 2 });
+      setBalances({ casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 });
       setLeaves([]);
     } finally {
       setLoading(false);
@@ -125,16 +117,22 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
     () => new Set((holidayData?.restricted || []).map((h) => toYmd(h.startDate))),
     [holidayData]
   );
-  const cards = restrictedOnly
-    ? BALANCE_CARDS.filter((card) => card.key === 'restricted')
-    : BALANCE_CARDS;
+  const balanceCards = useMemo(() => {
+    const totals = computePersonalLeaveTotals(balances, leaves, user?.id);
+    return restrictedOnly ? totals.filter((card) => card.key === 'restricted') : totals;
+  }, [balances, leaves, user?.id, restrictedOnly]);
   const typeOptions = restrictedOnly
     ? [['restricted', APPLY_LABELS.restricted]]
     : Object.entries(APPLY_LABELS);
   const restricted = form.leaveType === 'restricted';
+  const celebration = form.leaveType === 'celebration';
   const wfh = isWfh(form.leaveType);
-  const halfDay = !restricted && form.session !== 'full';
-  const requestedDays = estimateDays(form.startDate, form.endDate, form.session, restricted);
+  const halfDay = !restricted && !celebration && form.session !== 'full';
+  const requestedDays = celebration
+    ? form.startDate
+      ? 1
+      : 0
+    : estimateDays(form.startDate, form.endDate, form.session, restricted);
   const recent = leaves.slice(0, 8);
 
   function showApplyError(message, title = 'Cannot apply leave') {
@@ -159,9 +157,14 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
     setForm((current) => ({
       ...current,
       leaveType: key,
-      session: key === 'restricted' ? 'full' : current.session,
+      session: key === 'restricted' || key === 'celebration' ? 'full' : current.session,
       startDate: key === 'restricted' ? '' : current.startDate,
-      endDate: key === 'restricted' ? '' : current.endDate,
+      endDate:
+        key === 'restricted'
+          ? ''
+          : key === 'celebration'
+            ? current.startDate || current.endDate
+            : current.endDate,
     }));
   }
 
@@ -267,17 +270,19 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
             {showModal ? (
               <div
                 className="modal-backdrop leave-dash-backdrop"
+                data-theme={themeMode}
                 onClick={() => setShowModal(false)}
               >
                 <div
                   className="leave-dash-modal"
+                  data-theme={themeMode}
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="leave-dash-modal-title"
                   onClick={(event) => event.stopPropagation()}
                 >
                   <header>
-                    <h3 id="leave-dash-modal-title">Request Leave Time Off</h3>
+                    <h3 id="leave-dash-modal-title">Apply Leave</h3>
                     <button
                       type="button"
                       className="leave-dash-close"
@@ -343,6 +348,30 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
                           ))}
                         </select>
                       </label>
+                    ) : celebration ? (
+                      <>
+                        <p className="muted leave-dash-hint">
+                          Celebration leave is 1 day credited each year after your birthday. Apply it
+                          on your birthday date only.
+                        </p>
+                        <label>
+                          <span className="leave-dash-field-label">Birthday date</span>
+                          <input
+                            type="date"
+                            value={form.startDate}
+                            required
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setForm((current) => ({
+                                ...current,
+                                startDate: value,
+                                endDate: value,
+                                session: 'full',
+                              }));
+                            }}
+                          />
+                        </label>
+                      </>
                     ) : (
                       <>
                         {!wfh && (
@@ -444,64 +473,46 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
         )
       : null;
   return (
-    <section className="leave-dash">
+    <div className="apply-leave">
       {overlays}
 
-      <header className="leave-dash-head">
-        <div className="leave-dash-who">
-          <span className="leave-dash-avatar">{initials(user?.name)}</span>
+      <header className="apply-leave-head">
+        <div className="apply-leave-who">
+          <span className="apply-leave-avatar">{initials(user?.name)}</span>
           <div>
-            <h2>Time Off &amp; Leave Balance</h2>
+            <strong className="apply-leave-who-name">{user?.name || 'Employee'}</strong>
             <p>
-              {user?.name || 'Employee'} ·{' '}
               {restrictedOnly ? 'Manager' : user?.role === 'hr' ? 'HR' : 'Employee'} · Active
             </p>
           </div>
         </div>
-        <button type="button" className="leave-dash-request" onClick={openModal}>
+        <button type="button" className="btn apply-leave-cta" onClick={openModal}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 4v16m8-8H4" />
           </svg>
-          Request Time Off
+          Apply Leave
         </button>
       </header>
 
       {loading && !balances ? (
-        <p className="muted">Loading balances…</p>
+        <p className="muted apply-leave-loading">Loading balances…</p>
       ) : (
-        <div className={`leave-dash-cards${restrictedOnly ? ' is-single' : ''}`}>
-          {cards.map((card) => {
-            const stats = usageFor(leaves, card.key, Number(balances?.[card.key] ?? 0));
-            return (
-              <article key={card.key} className={`leave-dash-card tone-${card.tone}`}>
-                <div>
-                  <span className="leave-dash-pill">{card.label}</span>
-                  <p className="leave-dash-remain">
-                    <strong>{Number(stats.remaining).toFixed(stats.remaining % 1 ? 1 : 0)}</strong>
-                    <span>days left</span>
-                  </p>
-                  <p className="leave-dash-alloc">
-                    Allocated: {Number(stats.allocated).toFixed(stats.allocated % 1 ? 1 : 0)} days
-                    {' · '}
-                    Used: {Number(stats.used).toFixed(stats.used % 1 ? 1 : 0)}
-                  </p>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+        <LeaveBalanceSummaryCards
+          className={`apply-leave-balances${restrictedOnly ? ' is-single' : ''}`}
+          items={balanceCards}
+        />
       )}
 
-      <div className="leave-dash-table-wrap">
-        <div className="leave-dash-table-head">
-          <h3>Recent Leave Requests Logs</h3>
+      <section className="apply-leave-panel">
+        <div className="apply-leave-panel-head">
+          <h2>Recent Leave Requests</h2>
           <span>Updated from your requests</span>
         </div>
         {!recent.length ? (
-          <p className="empty leave-dash-empty">No leave requests yet.</p>
+          <p className="empty apply-leave-empty">No leave requests yet.</p>
         ) : (
-          <div className="leave-dash-table-scroll">
-            <table className="leave-dash-table">
+          <div className="apply-leave-table-wrap">
+            <table className="apply-leave-table">
               <thead>
                 <tr>
                   <th>Leave Type</th>
@@ -520,8 +531,8 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
                       {Number(leave.days) === 1 ? 'day' : 'days'}
                     </td>
                     <td>
-                      <span className={`leave-dash-status is-${statusTone(leave.status)}`}>
-                        · {STATUS_LABELS[leave.status] || leave.status}
+                      <span className={`apply-leave-status is-${statusTone(leave.status)}`}>
+                        {STATUS_LABELS[leave.status] || leave.status}
                       </span>
                     </td>
                   </tr>
@@ -530,7 +541,7 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
             </table>
           </div>
         )}
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

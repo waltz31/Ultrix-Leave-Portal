@@ -17,6 +17,7 @@ const DEFAULT_DEVICE_MAP = [
   ['3001', 'Ashish Mohapatra'],
   ['3007', 'Yashi Mishra'],
   ['3008', 'Siddharth Singh'],
+  ['ST093', 'Shreyansh Singhal'],
 ];
 
 export function parseDeviceMap(raw = env('ATT4U_DEVICE_MAP')) {
@@ -51,7 +52,7 @@ export function punchConfig() {
     portalPassword: env('ATT4U_PORTAL_PASSWORD', env('ATT4U_CLOUD_PASSWORD')),
     serials: serials.length ? serials : [''],
     lookbackDays: Math.max(1, Number(env('ATT4U_LOOKBACK_DAYS', '7')) || 7),
-    pollMs: Math.max(3_000, Number(env('ATT4U_POLL_MS', '4000')) || 4_000),
+    pollMs: Math.max(10_000, Number(env('ATT4U_POLL_MS', '30000')) || 30_000),
     deviceMap: parseDeviceMap(),
   };
 }
@@ -223,6 +224,10 @@ async function fetchDeviceLogs({ fromDateTime, toDateTime, serialNumber }) {
 
 let userMapCache = { until: 0, map: null, allowed: null };
 
+export function invalidatePunchUserMapCache() {
+  userMapCache = { until: 0, map: null, allowed: null };
+}
+
 function mapLookup(userMap, deviceUserCode) {
   const raw = String(deviceUserCode ?? '').trim();
   if (!raw) return null;
@@ -233,26 +238,39 @@ async function loadUserCodeMap() {
   if (userMapCache.map && Date.now() < userMapCache.until) return userMapCache;
   const entries = punchConfig().deviceMap;
   const users = await db
-    .prepare(`SELECT id, name FROM users WHERE active = 1`)
+    .prepare(`SELECT id, name, employee_number FROM users WHERE active = 1`)
     .all();
   const byName = new Map();
+  const byEmployeeNumber = new Map();
   for (const row of users) {
     const key = String(row.name || '').trim().toLowerCase();
     if (key && !byName.has(key)) byName.set(key, row.id);
+    const empNo = String(row.employee_number || '').trim();
+    if (empNo) {
+      byEmployeeNumber.set(empNo, row.id);
+      byEmployeeNumber.set(normalizeDeviceCode(empNo), row.id);
+      byEmployeeNumber.set(empNo.toUpperCase(), row.id);
+    }
   }
   const map = new Map();
   const allowed = new Set();
   for (const [code, name] of entries) {
     const raw = String(code).trim();
     const norm = normalizeDeviceCode(raw);
-    const userId = byName.get(String(name).trim().toLowerCase());
+    const userId =
+      byName.get(String(name).trim().toLowerCase()) ||
+      byEmployeeNumber.get(raw) ||
+      byEmployeeNumber.get(norm) ||
+      byEmployeeNumber.get(raw.toUpperCase());
     if (!userId) {
-      console.warn(`Punch map: no active user named "${name}" for device code ${raw}`);
+      console.warn(`Punch map: no active user named "${name}" (or emp # ${raw}) for device code ${raw}`);
       continue;
     }
     if (raw) {
       map.set(raw, userId);
       allowed.add(raw);
+      map.set(raw.toUpperCase(), userId);
+      allowed.add(raw.toUpperCase());
     }
     if (norm) {
       map.set(norm, userId);
@@ -577,6 +595,8 @@ export function summarizeDaySessions(punches) {
       userId: first.userId ?? null,
       userName: first.userName ?? null,
       employeeNumber: first.employeeNumber ?? null,
+      profilePhoto: first.profilePhoto ?? null,
+      designation: first.designation ?? null,
       deviceUserCode: first.deviceUserCode,
       punchDate: first.punchDate,
       punchIn,
@@ -615,6 +635,8 @@ export function mapPunch(row) {
     userId: row.user_id ?? null,
     userName: row.user_name ?? null,
     employeeNumber: row.employee_number ?? null,
+    profilePhoto: row.profile_photo ?? null,
+    designation: row.designation ?? null,
     deviceUserCode: row.device_user_code,
     punchedAt: row.punched_at,
     punchDate: row.punch_date,
@@ -635,6 +657,17 @@ export async function punchStatus() {
     lastOkAt: await getMeta('punch_last_ok'),
     lastError: await getMeta('punch_last_error'),
   };
+}
+
+let punchStatusCache = { at: 0, value: null };
+
+export async function punchStatusCached(maxAgeMs = 30_000) {
+  if (punchStatusCache.value && Date.now() - punchStatusCache.at < maxAgeMs) {
+    return punchStatusCache.value;
+  }
+  punchStatusCache.value = await punchStatus();
+  punchStatusCache.at = Date.now();
+  return punchStatusCache.value;
 }
 
 export function startPunchPolling() {

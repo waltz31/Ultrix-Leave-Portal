@@ -46,6 +46,7 @@ import { api } from '../api';
 import { getPortalRoot } from '../portalRoot';
 import { createPortal } from 'react-dom';
 import TeamRosterCalendar from './TeamRosterCalendar';
+import { setLeaveApplyFocus } from '../leaveApplyFocus';
 
 const WEEK_STARTS_ON = 0;
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -92,7 +93,7 @@ function monthTheme(date) {
 }
 
 function BalanceTooltip({ leave, balances }) {
-  const bal = balances || { casual: 0, earned: 0, sick: 0, restricted: 2 };
+  const bal = balances || { casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 };
 
   return (
     <div className="cal-tooltip" role="tooltip">
@@ -504,6 +505,7 @@ export default function LeaveCalendar({
 
   function handleRosterCell(employee, day, cell) {
     const ymd = format(day, 'yyyy-MM-dd');
+    setLeaveApplyFocus({ userId: String(employee.id), dayYmd: ymd });
     if (cell.leave && !isHolidayLeave(cell.leave)) {
       setSelected({ id: cell.leave.id, day: ymd });
       setAttendanceDay(null);
@@ -585,7 +587,7 @@ export default function LeaveCalendar({
     if (done !== false) setSelected(null);
   }
 
-  function openCreate(dayKey = '', userId = '') {
+  function openCreate(dayKey = '', userId = '', session = 'full') {
     const dayYmd = toYmd(dayKey);
     const rh = restrictedHolidayOptions.find((h) => toYmd(h.startDate) === dayYmd);
     if (dayYmd && !rh) {
@@ -595,13 +597,14 @@ export default function LeaveCalendar({
         return;
       }
     }
+    const nextSession = rh ? 'full' : SESSION_LABELS[session] ? session : 'full';
     setCreateErr('');
     setCreateForm({
       userId: userId || employeeFilter || (employeeOptions[0] ? String(employeeOptions[0].id) : ''),
       leaveType: rh ? 'restricted' : 'casual',
       startDate: dayYmd,
       endDate: dayYmd,
-      session: 'full',
+      session: nextSession,
       reason: rh ? rh.userName || '' : '',
     });
     setShowCreate(true);
@@ -676,6 +679,11 @@ export default function LeaveCalendar({
           onCellClick={handleRosterCell}
           canCreate={canCreate}
           onAddLeave={() => openCreate()}
+          shortcutsHint={
+            canCreate
+              ? 'Shortcuts (any screen, a/A): A full day · A.P morning · P.A afternoon — click a cell to prefill'
+              : null
+          }
           today={today}
           loading={!attendanceReady}
         />

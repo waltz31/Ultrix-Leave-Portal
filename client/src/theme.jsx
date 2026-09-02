@@ -177,6 +177,9 @@ export function ThemeProvider({ children }) {
     const wash = withAlpha(resolved.bgColor, mode === 'light' ? 0.78 : 0.55);
     const washDeep = withAlpha(resolved.bgColor, mode === 'light' ? 0.88 : 0.72);
     const brandDeep = darken(primary, 0.16);
+    const text = mode === 'light' ? '#000000' : '#ffffff';
+    const muted = mode === 'light' ? 'rgba(0, 0, 0, 0.72)' : 'rgba(255, 255, 255, 0.78)';
+    const faint = mode === 'light' ? 'rgba(0, 0, 0, 0.58)' : 'rgba(255, 255, 255, 0.62)';
     return {
       '--shell-wash': wash,
       '--shell-wash-deep': washDeep,
@@ -185,8 +188,41 @@ export function ThemeProvider({ children }) {
       '--brand-deep': brandDeep,
       '--brand-grad': `linear-gradient(90deg, ${primary}, ${secondary})`,
       '--accent': secondary,
-      '--ok': primary,
       '--sidebar-badge': primary,
+      /* High-contrast text: pure white/black by theme (not brand) */
+      '--ink': text,
+      '--muted': muted,
+      '--fg': text,
+      '--shell-fg': text,
+      '--shell-strong': text,
+      '--shell-panel-fg': text,
+      '--shell-input-fg': text,
+      '--shell-modal-fg': text,
+      '--shell-popover-fg': text,
+      '--shell-btn-ghost-fg': text,
+      '--shell-badge-fg': text,
+      '--shell-bell-fg': text,
+      '--shell-muted': muted,
+      '--shell-muted-soft': muted,
+      '--shell-muted-faint': faint,
+      '--shell-subtle': muted,
+      '--shell-faint': faint,
+      '--shell-th-fg': faint,
+      '--shell-progress-label': muted,
+      '--shell-progress-dot-fg': muted,
+      '--shell-bell-muted': muted,
+      '--welcome-label': text,
+      '--sidebar-link': muted,
+      '--sidebar-link-active': text,
+      '--elb-fg': text,
+      '--elb-muted': muted,
+      '--elb-faint': faint,
+      /* Keep semantic status colors independent of brand */
+      '--ok': mode === 'light' ? '#16a34a' : '#4ade80',
+      '--approved': mode === 'light' ? '#16a34a' : '#4ade80',
+      '--pending': mode === 'light' ? '#d97706' : '#fbbf24',
+      '--rejected': mode === 'light' ? '#dc2626' : '#f87171',
+      '--danger': mode === 'light' ? '#dc2626' : '#f87171',
     };
   }, [resolved.bgColor, mode, primary, secondary]);
 
@@ -194,6 +230,7 @@ export function ThemeProvider({ children }) {
     const root = document.documentElement;
     root.dataset.theme = mode;
     root.dataset.themeId = resolved.id;
+    root.style.colorScheme = mode;
     Object.entries(shellStyle).forEach(([key, value]) => {
       root.style.setProperty(key, value);
     });
