@@ -39,11 +39,12 @@ const insertBal = db.prepare(
   `INSERT INTO leave_balances (user_id, casual, earned, sick, restricted, celebration) VALUES (?, ?, ?, ?, ?, ?)`
 );
 
+const hrPasswordHash = await hashPassword('hr123');
 await db.transaction(async () => {
   const hr = await insertUser.run(
     'Portal HR',
     HR_EMAIL,
-    hashPassword('hr123'),
+    hrPasswordHash,
     'hr',
     null
   );

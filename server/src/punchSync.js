@@ -52,7 +52,7 @@ export function punchConfig() {
     portalPassword: env('ATT4U_PORTAL_PASSWORD', env('ATT4U_CLOUD_PASSWORD')),
     serials: serials.length ? serials : [''],
     lookbackDays: Math.max(1, Number(env('ATT4U_LOOKBACK_DAYS', '7')) || 7),
-    pollMs: Math.max(10_000, Number(env('ATT4U_POLL_MS', '30000')) || 30_000),
+    pollMs: Math.max(30_000, Number(env('ATT4U_POLL_MS', '60000')) || 60_000),
     deviceMap: parseDeviceMap(),
   };
 }
@@ -677,6 +677,10 @@ export function startPunchPolling() {
     return;
   }
   let delay = cfg.pollMs;
+  const bootDelayMs = Math.max(
+    0,
+    Number(env('ATT4U_BOOT_DELAY_MS', '45000')) || 45_000
+  );
   const run = async () => {
     let result = null;
     try {
@@ -696,21 +700,28 @@ export function startPunchPolling() {
   console.log(
     `Punch device sync: every ${Math.round(cfg.pollMs / 1000)}s → ${
       cfg.portalPassword ? cfg.portalUrl : cfg.url
-    }`
+    } (first run in ${Math.round(bootDelayMs / 1000)}s)`
   );
   console.log(`Punch allowlist: ${mapped}`);
-  reconcilePunchAllowlist()
-    .then((summary) => {
-      if (summary.deleted || summary.remapped) {
-        console.log(
-          `Punch allowlist cleanup: removed ${summary.deleted}, remapped ${summary.remapped}`
-        );
-      }
-    })
-    .catch((err) => {
-      console.error('Punch allowlist cleanup failed:', err?.message || err);
-    })
-    .finally(() => {
-      run();
-    });
+  const startLoop = () => {
+    reconcilePunchAllowlist()
+      .then((summary) => {
+        if (summary.deleted || summary.remapped) {
+          console.log(
+            `Punch allowlist cleanup: removed ${summary.deleted}, remapped ${summary.remapped}`
+          );
+        }
+      })
+      .catch((err) => {
+        console.error('Punch allowlist cleanup failed:', err?.message || err);
+      })
+      .finally(() => {
+        run();
+      });
+  };
+  if (bootDelayMs > 0) {
+    setTimeout(startLoop, bootDelayMs);
+  } else {
+    startLoop();
+  }
 }

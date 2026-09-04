@@ -208,7 +208,7 @@ export function buildCelebrations(rows, todayYmd, windowDays = 45) {
           out.push({
             userId: row.id,
             name: row.name,
-            photo: row.profile_photo || null,
+            photo: null,
             initials: initialsFromName(row.name),
             designation: row.designation || null,
             department: row.department || null,
@@ -233,7 +233,7 @@ export function buildCelebrations(rows, todayYmd, windowDays = 45) {
             out.push({
               userId: row.id,
               name: row.name,
-              photo: row.profile_photo || null,
+              photo: null,
               initials: initialsFromName(row.name),
               designation: row.designation || null,
               department: row.department || null,
@@ -274,7 +274,8 @@ function mapPerson(row) {
     userId: row.user_id,
     author: row.author_name,
     initials: initialsFromName(row.author_name),
-    photo: row.profile_photo || null,
+    // Avatars use default — skip base64 profile blobs in feed payloads.
+    photo: null,
     role: row.author_role || null,
     designation: row.designation || null,
     department: row.department || null,

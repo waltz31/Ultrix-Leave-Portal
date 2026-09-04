@@ -235,7 +235,7 @@ export default function HrAttendanceOverview({ scope = 'hr' }) {
       });
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') load().catch(() => {});
-    }, 60_000);
+    }, 120_000);
     return () => {
       cancelled = true;
       clearInterval(timer);

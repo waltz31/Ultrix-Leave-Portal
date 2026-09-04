@@ -32,13 +32,13 @@ export async function buildAttendanceMuster(db, query = {}) {
 
   const employeeSql = managerId
     ? `SELECT u.id, u.name, u.employee_number, u.role, u.active,
-              ep.department, ep.location, ep.profile_photo, ep.work_mode
+              ep.department, ep.location, ep.work_mode
        FROM users u
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
        WHERE ${attendanceRosterSql('u')}
          AND (u.manager_id = ? OR u.id = ?)`
     : `SELECT u.id, u.name, u.employee_number, u.role, u.active,
-              ep.department, ep.location, ep.profile_photo, ep.work_mode
+              ep.department, ep.location, ep.work_mode
        FROM users u
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
        WHERE ${attendanceRosterSql('u')}`;
@@ -142,7 +142,7 @@ export async function buildAttendanceMuster(db, query = {}) {
         employeeNumber: emp.employee_number || null,
         department: emp.department || null,
         location: emp.location || null,
-        profilePhoto: emp.profile_photo || null,
+        profilePhoto: null,
         punchIn: session?.punchIn || null,
         punchOut: session?.punchOut || null,
         workHours: session?.workHours || null,

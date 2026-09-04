@@ -8,6 +8,7 @@ import HrEmployeeBalanceDirectory from '../components/HrEmployeeBalanceDirectory
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection } from '../components/LeaveReports';
+import LazySection from '../components/LazySection';
 import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import CompanyFeed from '../components/CompanyFeed';
@@ -49,7 +50,7 @@ function useLoad(loader, deps = []) {
 export function ManagerOverview() {
   const { user } = useAuth();
   const { data: stats, error, loading } = useLoad(() => api('/dashboard/stats'));
-  const { data: report } = useLoad(() => api('/reports/overview'));
+  const { data: report } = useLoad(() => api('/reports/overview?lite=1'));
 
   return (
     <AppShell title={`Welcome ${user?.name || ''}`} nav={NAV}>
@@ -83,7 +84,12 @@ export function ManagerOverview() {
         canApplyRestricted
       />
 
-      <LeaveReportSection />
+      <LazySection
+        minDelayMs={800}
+        placeholder={<p className="muted">Scroll for leave reports…</p>}
+      >
+        <LeaveReportSection />
+      </LazySection>
 
     </AppShell>
   );

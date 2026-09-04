@@ -19,6 +19,9 @@ const GET_CACHE_MS = {
   '/reports/overview': 60_000,
   '/users': 60_000,
   '/auth/me': 30_000,
+  '/balances/me': 30_000,
+  '/notifications': 15_000,
+  '/dashboard/stats': 30_000,
 };
 
 const getCache = new Map();
@@ -29,6 +32,8 @@ function cacheTtl(path) {
   if (GET_CACHE_MS[base]) return GET_CACHE_MS[base];
   if (base.startsWith('/holidays')) return GET_CACHE_MS['/holidays'];
   if (base.startsWith('/reports/overview')) return GET_CACHE_MS['/reports/overview'];
+  if (base.startsWith('/attendance/overview')) return 30_000;
+  if (base.startsWith('/punches')) return 20_000;
   return 0;
 }
 
@@ -39,7 +44,7 @@ export function invalidateApiCache(prefix = '') {
   }
 }
 
-async function fetchApi(path, options = {}) {
+async function fetchApi(path, options = {}, attempt = 0) {
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {}),
@@ -55,6 +60,14 @@ async function fetchApi(path, options = {}) {
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const starting =
+      res.status === 503 &&
+      /start/i.test(String(data.error || data.status || ''));
+    if (starting && attempt < 4) {
+      const waitMs = 1200 * (attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      return fetchApi(path, options, attempt + 1);
+    }
     const error = new Error(data.error || `Request failed (${res.status})`);
     error.status = res.status;
     error.data = data;

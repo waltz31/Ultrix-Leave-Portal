@@ -324,7 +324,12 @@ router.post('/auth/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
   }
-  const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  const user = await db
+    .prepare(
+      `SELECT id, name, email, role, manager_id, active, password_hash, employee_number
+       FROM users WHERE email = ?`
+    )
+    .get(email.toLowerCase().trim());
   if (!user) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
@@ -332,7 +337,7 @@ router.post('/auth/login', async (req, res) => {
   if (!isActive) {
     return res.status(401).json({ error: 'Account is inactive. Ask HR to activate it.' });
   }
-  if (!user.password_hash || !verifyPassword(String(password), user.password_hash)) {
+  if (!user.password_hash || !(await verifyPassword(String(password), user.password_hash))) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
   res.json({ token: signToken(user), user: await publicUserWithPhoto(user) });
@@ -352,11 +357,11 @@ router.patch('/auth/password', authRequired, async (req, res) => {
   }
   const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  if (!verifyPassword(currentPassword, user.password_hash)) {
+  if (!(await verifyPassword(currentPassword, user.password_hash))) {
     return res.status(401).json({ error: 'Current password is incorrect' });
   }
   await db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(
-    hashPassword(newPassword),
+    await hashPassword(newPassword),
     user.id
   );
   res.json({ ok: true });
@@ -382,7 +387,7 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
     .prepare(
       `SELECT u.id, u.name, u.email, u.role, u.active, u.created_at, u.manager_id, u.employee_number,
               m.name AS manager_name, m.email AS manager_email,
-              ep.profile_photo, ep.designation
+              ep.designation
        FROM users u
        LEFT JOIN users m ON m.id = u.manager_id
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
@@ -396,7 +401,7 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
 
 const USER_DIRECTORY_SELECT = `
   SELECT u.*, b.casual, b.earned, b.sick, b.restricted, b.celebration, m.name AS manager_name,
-         m.email AS manager_email, ep.profile_photo, ep.designation, ep.department,
+         m.email AS manager_email, ep.designation, ep.department,
          COALESCE(used.casual_used, 0) AS casual_used,
          COALESCE(used.earned_used, 0) AS earned_used,
          COALESCE(used.sick_used, 0) AS sick_used,
@@ -496,7 +501,7 @@ router.post('/users', authRequired, hrRequired, async (req, res) => {
       .run(
         name.trim(),
         email.toLowerCase().trim(),
-        hashPassword(password),
+        await hashPassword(password),
         'manager',
         nextManagerId,
         String(employeeNumber || '').trim() || null
@@ -727,6 +732,7 @@ async function createOnboardedEmployee(body) {
   payroll = applyPayStructure(payroll, payStructureKind(employment.employmentType));
   const active = activeFromEmploymentStatus(employment.employmentStatus);
 
+  const passwordHash = await hashPassword(password);
   try {
     const userId = await db.transaction(async () => {
       const result = await db
@@ -734,7 +740,7 @@ async function createOnboardedEmployee(body) {
           `INSERT INTO users (name, email, password_hash, role, manager_id, employee_number, active)
            VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(name, email, hashPassword(password), role, nextManagerId, employeeNumber, active);
+        .run(name, email, passwordHash, role, nextManagerId, employeeNumber, active);
 
       const newUserId = result.lastInsertRowid;
       await ensureBalanceRow(newUserId);
@@ -1034,7 +1040,7 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
     if (nextPassword.length < 6) {
       return res.status(400).json({ error: 'Temporary password must be at least 6 characters' });
     }
-    nextHash = hashPassword(nextPassword);
+    nextHash = await hashPassword(nextPassword);
   }
 
   try {
@@ -1206,7 +1212,7 @@ router.patch('/users/:id', authRequired, hrRequired, async (req, res) => {
   const nextName = name?.trim() || user.name;
   const nextEmail = email?.trim() ? email.toLowerCase().trim() : user.email;
   const nextActive = typeof active === 'boolean' ? (active ? 1 : 0) : user.active;
-  const nextHash = password ? hashPassword(password) : user.password_hash;
+  const nextHash = password ? await hashPassword(password) : user.password_hash;
 
   if (typeof active === 'boolean' && !active) {
     if (id === req.user.id) {
@@ -2277,79 +2283,79 @@ router.delete('/notifications', authRequired, async (req, res) => {
 
 router.get('/dashboard/stats', authRequired, managerOrHrRequired, async (req, res) => {
   if (req.user.role === 'manager') {
-    const pendingManager = (await db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM leave_requests lr
-         JOIN users u ON u.id = lr.user_id
-         WHERE lr.status = 'pending_manager' AND u.manager_id = ?`
-      )
-      .get(req.user.id)).c;
-    const team = (await db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM users WHERE role = 'user' AND active = 1 AND manager_id = ?`
-      )
-      .get(req.user.id)).c;
-    const onLeaveToday = (await db
-      .prepare(
-        `SELECT COUNT(DISTINCT lr.user_id) AS c FROM leave_requests lr
-         JOIN users u ON u.id = lr.user_id
-         WHERE lr.status = 'approved'
-           AND lr.leave_type != 'wfh'
-           AND u.manager_id = ?
-           AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date`
-      )
-      .get(req.user.id)).c;
-    const onWfhToday = (await db
-      .prepare(
-        `SELECT COUNT(DISTINCT lr.user_id) AS c FROM leave_requests lr
-         JOIN users u ON u.id = lr.user_id
-         WHERE lr.status = 'approved'
-           AND lr.leave_type = 'wfh'
-           AND u.manager_id = ?
-           AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date`
-      )
-      .get(req.user.id)).c;
+    const [pendingManager, team, onLeaveToday, onWfhToday] = await Promise.all([
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM leave_requests lr
+           JOIN users u ON u.id = lr.user_id
+           WHERE lr.status = 'pending_manager' AND u.manager_id = ?`
+        )
+        .get(req.user.id),
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM users WHERE role = 'user' AND active = 1 AND manager_id = ?`
+        )
+        .get(req.user.id),
+      db
+        .prepare(
+          `SELECT COUNT(DISTINCT lr.user_id) AS c FROM leave_requests lr
+           JOIN users u ON u.id = lr.user_id
+           WHERE lr.status = 'approved'
+             AND lr.leave_type != 'wfh'
+             AND u.manager_id = ?
+             AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date`
+        )
+        .get(req.user.id),
+      db
+        .prepare(
+          `SELECT COUNT(DISTINCT lr.user_id) AS c FROM leave_requests lr
+           JOIN users u ON u.id = lr.user_id
+           WHERE lr.status = 'approved'
+             AND lr.leave_type = 'wfh'
+             AND u.manager_id = ?
+             AND ${SQL_TODAY_IST} BETWEEN lr.start_date AND lr.end_date`
+        )
+        .get(req.user.id),
+    ]);
     return res.json({
-      pendingManager: Number(pendingManager) || 0,
+      pendingManager: Number(pendingManager?.c) || 0,
       pendingHr: 0,
-      users: Number(team) || 0,
-      onLeaveToday: Number(onLeaveToday) || 0,
-      onWfhToday: Number(onWfhToday) || 0,
+      users: Number(team?.c) || 0,
+      onLeaveToday: Number(onLeaveToday?.c) || 0,
+      onWfhToday: Number(onWfhToday?.c) || 0,
     });
   }
 
-  const pendingManager = (await db
-    .prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_manager'`)
-    .get()).c;
-  const pendingHr = (await db
-    .prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_hr'`)
-    .get()).c;
-  const users = (await db
-    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('user', 'manager', 'hr')`)
-    .get()).c;
-  const onLeaveToday = (await db
-    .prepare(
-      `SELECT COUNT(DISTINCT user_id) AS c FROM leave_requests
-       WHERE status = 'approved'
-         AND leave_type != 'wfh'
-         AND ${SQL_TODAY_IST} BETWEEN start_date AND end_date`
-    )
-    .get()).c;
-  const onWfhToday = (await db
-    .prepare(
-      `SELECT COUNT(DISTINCT user_id) AS c FROM leave_requests
-       WHERE status = 'approved'
-         AND leave_type = 'wfh'
-         AND ${SQL_TODAY_IST} BETWEEN start_date AND end_date`
-    )
-    .get()).c;
+  const [pendingManager, pendingHr, users, onLeaveToday, onWfhToday] = await Promise.all([
+    db.prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_manager'`).get(),
+    db.prepare(`SELECT COUNT(*) AS c FROM leave_requests WHERE status = 'pending_hr'`).get(),
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM users WHERE role IN ('user', 'manager', 'hr')`)
+      .get(),
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT user_id) AS c FROM leave_requests
+         WHERE status = 'approved'
+           AND leave_type != 'wfh'
+           AND ${SQL_TODAY_IST} BETWEEN start_date AND end_date`
+      )
+      .get(),
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT user_id) AS c FROM leave_requests
+         WHERE status = 'approved'
+           AND leave_type = 'wfh'
+           AND ${SQL_TODAY_IST} BETWEEN start_date AND end_date`
+      )
+      .get(),
+  ]);
   res.json({
-    pendingManager: Number(pendingManager) || 0,
-    pendingHr: Number(pendingHr) || 0,
-    pending: Number(pendingHr) || 0,
-    users: Number(users) || 0,
-    onLeaveToday: Number(onLeaveToday) || 0,
-    onWfhToday: Number(onWfhToday) || 0,
+    pendingManager: Number(pendingManager?.c) || 0,
+    pendingHr: Number(pendingHr?.c) || 0,
+    pending: Number(pendingHr?.c) || 0,
+    users: Number(users?.c) || 0,
+    onLeaveToday: Number(onLeaveToday?.c) || 0,
+    onWfhToday: Number(onWfhToday?.c) || 0,
   });
 });
 
@@ -2410,12 +2416,15 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     )
     .all(...teamLeaveParams);
 
-  if (lite && role === 'user') {
-    const teamLeavesThisMonth = (await teamLeavesPromise).map((row) => ({
-      ...mapLeave(row),
-      designation: row.designation ?? null,
-      profilePhoto: row.profile_photo ?? null,
-    }));
+  const mapTeamLeave = (row) => ({
+    ...mapLeave(row),
+    designation: row.designation ?? null,
+    // Omit base64 photos from overview payloads — avatars fall back to default.
+    profilePhoto: null,
+  });
+
+  if (lite) {
+    const teamLeavesThisMonth = (await teamLeavesPromise).map(mapTeamLeave);
     return res.json({ teamLeavesThisMonth });
   }
 
@@ -2491,7 +2500,7 @@ router.get('/reports/overview', authRequired, async (req, res) => {
   const todayOnLeave = todayRows.map((row) => ({
     ...mapLeave(row),
     designation: row.designation ?? null,
-    profilePhoto: row.profile_photo ?? null,
+    profilePhoto: null,
   }));
 
   // Fill last 6 months including zeros (IST calendar)
@@ -2515,11 +2524,7 @@ router.get('/reports/overview', authRequired, async (req, res) => {
     return { type, days: row ? row.days : 0, count: row ? row.count : 0 };
   });
 
-  const teamLeavesThisMonth = teamLeaveRows.map((row) => ({
-    ...mapLeave(row),
-    designation: row.designation ?? null,
-    profilePhoto: row.profile_photo ?? null,
-  }));
+  const teamLeavesThisMonth = teamLeaveRows.map(mapTeamLeave);
 
   res.json({
     upcoming,
@@ -2904,7 +2909,7 @@ router.get('/invoices/:id/pdf', authRequired, async (req, res) => {
 const FEED_POST_SELECT = `
   SELECT fp.id, fp.user_id, fp.category, fp.content, fp.image_data, fp.created_at,
          u.name AS author_name, u.role AS author_role,
-         ep.profile_photo, ep.designation, ep.department
+         ep.designation, ep.department
   FROM feed_posts fp
   JOIN users u ON u.id = fp.user_id
   LEFT JOIN employee_profiles ep ON ep.user_id = u.id
@@ -2913,7 +2918,7 @@ const FEED_POST_SELECT = `
 const FEED_COMMENT_SELECT = `
   SELECT fc.id, fc.post_id, fc.user_id, fc.content, fc.created_at,
          u.name AS author_name, u.role AS author_role,
-         ep.profile_photo, ep.designation, ep.department
+         ep.designation, ep.department
   FROM feed_comments fc
   JOIN users u ON u.id = fc.user_id
   LEFT JOIN employee_profiles ep ON ep.user_id = u.id
@@ -3158,7 +3163,7 @@ async function sendFeed(req, res) {
     .all();
   const people = await db
     .prepare(
-      `SELECT u.id, u.name, ep.profile_photo, ep.designation, ep.department,
+      `SELECT u.id, u.name, ep.designation, ep.department,
               ep.date_of_birth, ep.date_of_joining
        FROM users u
        JOIN employee_profiles ep ON ep.user_id = u.id
@@ -3183,7 +3188,7 @@ async function sendFeed(req, res) {
 
   const directory = await db
     .prepare(
-      `SELECT u.id, u.name, ep.profile_photo, ep.designation, ep.department, ep.location
+      `SELECT u.id, u.name, ep.designation, ep.department, ep.location
        FROM users u
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id
        WHERE u.active = 1
@@ -3199,7 +3204,7 @@ async function sendFeed(req, res) {
     people: directory.map((row) => ({
       id: row.id,
       name: row.name,
-      photo: row.profile_photo || null,
+      photo: null,
       department: row.department || null,
       location: row.location || null,
       designation: row.designation || null,
@@ -3397,7 +3402,7 @@ router.get('/attendance/overview', authRequired, managerOrHrRequired, async (req
     department: req.query.department,
     managerId: req.user.role === 'manager' ? req.user.id : null,
   });
-  res.json({ overview, status: await punchStatus() });
+  res.json({ overview, status: await punchStatusCached() });
 });
 
 router.get('/attendance/muster', authRequired, managerOrHrRequired, async (req, res) => {
@@ -3407,11 +3412,11 @@ router.get('/attendance/muster', authRequired, managerOrHrRequired, async (req, 
     department: req.query.department,
     managerId: req.user.role === 'manager' ? req.user.id : null,
   });
-  res.json({ muster, status: await punchStatus() });
+  res.json({ muster, status: await punchStatusCached() });
 });
 
 router.get('/punches/status', authRequired, async (_req, res) => {
-  res.json({ status: await punchStatus() });
+  res.json({ status: await punchStatusCached() });
 });
 
 router.post('/punches/sync', authRequired, hrRequired, async (_req, res) => {
@@ -3471,7 +3476,7 @@ async function loadPunchRows(from, to, scope = { clause: '', params: [] }) {
     .prepare(
       `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
               p.serial_number, p.direction, u.name AS user_name, u.employee_number,
-              ep.profile_photo, ep.designation
+              ep.designation
        FROM punch_logs p
        LEFT JOIN users u ON u.id = p.user_id
        LEFT JOIN employee_profiles ep ON ep.user_id = u.id

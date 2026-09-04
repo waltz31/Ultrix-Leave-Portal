@@ -51,4 +51,6 @@ services:
       - key: ATT4U_LOOKBACK_DAYS
         value: "7"
       - key: ATT4U_POLL_MS
-        value: "4000"
+        value: "60000"
+      - key: ATT4U_BOOT_DELAY_MS
+        value: "45000"

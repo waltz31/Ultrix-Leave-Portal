@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from './api';
+import { api, invalidateApiCache } from './api';
 
 export const NOTIFICATIONS_UPDATED = 'ultrix-notifications-updated';
-const POLL_MS = 60_000;
+const POLL_MS = 90_000;
 const MIN_FETCH_GAP_MS = 2_500;
 
 let inflight = null;
@@ -58,6 +58,7 @@ export async function fetchNotifications({ force = false } = {}) {
   if (!force && cache.fetchedAt && Date.now() - cache.fetchedAt < MIN_FETCH_GAP_MS) {
     return cache;
   }
+  if (force) invalidateApiCache('/notifications');
   inflight = api('/notifications')
     .then((data) => {
       cache = {

@@ -10,6 +10,10 @@ const CASUAL_NOTE_PREFIX = 'auto-accrual:casual:';
 const EARNED_NOTE_PREFIX = 'auto-accrual:earned:';
 const CELEBRATION_NOTE_PREFIX = 'auto-accrual:celebration:';
 
+/** Skip re-running accrual for the same user within the same IST day. */
+const syncedToday = new Map();
+const SYNCED_TODAY_MAX = 2_000;
+
 /** Full calendar months completed since joining (IST dates). */
 export function completedEmploymentMonths(joinYmd, todayYmd = todayIst()) {
   const join = String(joinYmd || '').slice(0, 10);
@@ -53,8 +57,17 @@ async function creditMonthlyAccrual({
   amount,
   notePrefix,
   monthsDue,
+  creditorId,
 }) {
-  if (monthsDue <= 0) return;
+  if (monthsDue <= 0 || !creditorId) return;
+
+  const countRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM balance_credits
+       WHERE user_id = ? AND leave_type = ? AND note LIKE ?`
+    )
+    .get(userId, leaveType, `${notePrefix}%`);
+  if (Number(countRow?.c || 0) >= monthsDue) return;
 
   const creditedRows = await db
     .prepare(
@@ -62,10 +75,6 @@ async function creditMonthlyAccrual({
        WHERE user_id = ? AND leave_type = ? AND note LIKE ?`
     )
     .all(userId, leaveType, `${notePrefix}%`);
-  if (creditedRows.length >= monthsDue) return;
-
-  const creditorId = await accrualCreditorId();
-  if (!creditorId) return;
 
   const credited = new Set(creditedRows.map((row) => row.note));
   const pending = [];
@@ -99,48 +108,8 @@ async function creditMonthlyAccrual({
   });
 }
 
-/** Credit 0.33 casual leave for each completed employment month not yet accrued. */
-export async function syncCasualLeaveAccrual(userId) {
-  const profile = await db
-    .prepare(`SELECT date_of_joining FROM employee_profiles WHERE user_id = ?`)
-    .get(userId);
-  const joinYmd = profile?.date_of_joining;
-  if (!joinYmd) return;
-
-  await creditMonthlyAccrual({
-    userId,
-    leaveType: 'casual',
-    amount: CASUAL_ACCRUAL_PER_MONTH,
-    notePrefix: CASUAL_NOTE_PREFIX,
-    monthsDue: completedEmploymentMonths(joinYmd),
-  });
-}
-
-/** Credit 1.5 earned leave for each completed employment month not yet accrued. */
-export async function syncEarnedLeaveAccrual(userId) {
-  const profile = await db
-    .prepare(`SELECT date_of_joining FROM employee_profiles WHERE user_id = ?`)
-    .get(userId);
-  const joinYmd = profile?.date_of_joining;
-  if (!joinYmd) return;
-
-  await creditMonthlyAccrual({
-    userId,
-    leaveType: 'earned',
-    amount: EARNED_ACCRUAL_PER_MONTH,
-    notePrefix: EARNED_NOTE_PREFIX,
-    monthsDue: completedEmploymentMonths(joinYmd),
-  });
-}
-
-/**
- * Credit 1 celebration leave per calendar year once the employee's birthday
- * for that year has arrived (requires date_of_birth).
- */
-export async function syncCelebrationLeaveAccrual(userId, todayYmd = todayIst()) {
-  const profile = await db
-    .prepare(`SELECT date_of_birth, date_of_joining FROM employee_profiles WHERE user_id = ?`)
-    .get(userId);
+async function creditCelebrationAccrual(userId, profile, todayYmd, creditorId) {
+  if (!creditorId) return;
   const dob = String(profile?.date_of_birth || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) return;
 
@@ -162,8 +131,13 @@ export async function syncCelebrationLeaveAccrual(userId, todayYmd = todayIst())
   }
   if (!yearsDue.length) return;
 
-  const creditorId = await accrualCreditorId();
-  if (!creditorId) return;
+  const countRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM balance_credits
+       WHERE user_id = ? AND leave_type = 'celebration' AND note LIKE ?`
+    )
+    .get(userId, `${CELEBRATION_NOTE_PREFIX}%`);
+  if (Number(countRow?.c || 0) >= yearsDue.length) return;
 
   const creditedRows = await db
     .prepare(
@@ -201,10 +175,85 @@ export async function syncCelebrationLeaveAccrual(userId, todayYmd = todayIst())
   });
 }
 
+/** Credit 0.33 casual leave for each completed employment month not yet accrued. */
+export async function syncCasualLeaveAccrual(userId) {
+  const profile = await db
+    .prepare(`SELECT date_of_joining FROM employee_profiles WHERE user_id = ?`)
+    .get(userId);
+  if (!profile?.date_of_joining) return;
+  const creditorId = await accrualCreditorId();
+  await creditMonthlyAccrual({
+    userId,
+    leaveType: 'casual',
+    amount: CASUAL_ACCRUAL_PER_MONTH,
+    notePrefix: CASUAL_NOTE_PREFIX,
+    monthsDue: completedEmploymentMonths(profile.date_of_joining),
+    creditorId,
+  });
+}
+
+/** Credit 1.5 earned leave for each completed employment month not yet accrued. */
+export async function syncEarnedLeaveAccrual(userId) {
+  const profile = await db
+    .prepare(`SELECT date_of_joining FROM employee_profiles WHERE user_id = ?`)
+    .get(userId);
+  if (!profile?.date_of_joining) return;
+  const creditorId = await accrualCreditorId();
+  await creditMonthlyAccrual({
+    userId,
+    leaveType: 'earned',
+    amount: EARNED_ACCRUAL_PER_MONTH,
+    notePrefix: EARNED_NOTE_PREFIX,
+    monthsDue: completedEmploymentMonths(profile.date_of_joining),
+    creditorId,
+  });
+}
+
+/**
+ * Credit 1 celebration leave per calendar year once the employee's birthday
+ * for that year has arrived (requires date_of_birth).
+ */
+export async function syncCelebrationLeaveAccrual(userId, todayYmd = todayIst()) {
+  const profile = await db
+    .prepare(`SELECT date_of_birth, date_of_joining FROM employee_profiles WHERE user_id = ?`)
+    .get(userId);
+  const creditorId = await accrualCreditorId();
+  await creditCelebrationAccrual(userId, profile, todayYmd, creditorId);
+}
+
 export async function syncLeaveAccruals(userId) {
-  await syncCasualLeaveAccrual(userId);
-  await syncEarnedLeaveAccrual(userId);
-  await syncCelebrationLeaveAccrual(userId);
+  const today = todayIst();
+  if (syncedToday.get(userId) === today) return;
+
+  const profile = await db
+    .prepare(`SELECT date_of_joining, date_of_birth FROM employee_profiles WHERE user_id = ?`)
+    .get(userId);
+
+  const creditorId = await accrualCreditorId();
+  const monthsDue = completedEmploymentMonths(profile?.date_of_joining);
+
+  await Promise.all([
+    creditMonthlyAccrual({
+      userId,
+      leaveType: 'casual',
+      amount: CASUAL_ACCRUAL_PER_MONTH,
+      notePrefix: CASUAL_NOTE_PREFIX,
+      monthsDue,
+      creditorId,
+    }),
+    creditMonthlyAccrual({
+      userId,
+      leaveType: 'earned',
+      amount: EARNED_ACCRUAL_PER_MONTH,
+      notePrefix: EARNED_NOTE_PREFIX,
+      monthsDue,
+      creditorId,
+    }),
+    creditCelebrationAccrual(userId, profile, today, creditorId),
+  ]);
+
+  if (syncedToday.size >= SYNCED_TODAY_MAX) syncedToday.clear();
+  syncedToday.set(userId, today);
 }
 
 /**
@@ -244,6 +293,7 @@ export async function syncLeaveAccrualsForAllActiveUsers() {
     .all();
   for (const row of rows) {
     await ensureBalanceRowLocal(row.id);
+    syncedToday.delete(row.id);
     await syncLeaveAccruals(row.id);
   }
   return { users: rows.length };

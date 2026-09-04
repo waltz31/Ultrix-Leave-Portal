@@ -16,12 +16,12 @@ function cacheUser(token, user) {
   authCache.set(token, { user, expiresAt: Date.now() + AUTH_CACHE_MS });
 }
 
-export function hashPassword(password) {
-  return bcrypt.hashSync(password, 10);
+export async function hashPassword(password) {
+  return bcrypt.hash(password, 10);
 }
 
-export function verifyPassword(password, hash) {
-  return bcrypt.compareSync(password, hash);
+export async function verifyPassword(password, hash) {
+  return bcrypt.compare(password, hash);
 }
 
 export function signToken(user) {
