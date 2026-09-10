@@ -2,24 +2,18 @@ import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
-import { usePollWhenVisible } from '../usePollWhenVisible';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
-import { PunchCheckoutDisplay, PunchInProgressChip } from './PunchStatusChips';
+import OfficePunchesPanel from './OfficePunchesPanel';
 import {
   REQUEST_LABELS,
   STATUS_LABELS,
   appToday,
   avatarSrc,
   formatOverviewHolidayRow,
-  formatTime,
   holidayKind,
   holidayKindLabel,
-  punchInLateness,
-  isUnderNineHours,
   insufficientRestrictedBalance,
-  expectedLogoutFromPunchIn,
-  REQUIRED_WORK_MINUTES,
   isApplyBlockError,
   toYmd,
 } from '../utils';
@@ -384,152 +378,8 @@ export function CompanyHolidaysPanel({
   );
 }
 
-export function TodayPunchesPanel({ attendanceTo = null, title = 'Office punches' }) {
-  const [punches, setPunches] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const today = toYmd(appToday());
-      const data = await api(`/punches?from=${today}&to=${today}`);
-      setPunches(data.punches || []);
-    } catch {
-      setPunches([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  usePollWhenVisible(load, 60_000, [load]);
-
-  const latest = punches.slice(0, 6);
-
-  return (
-    <section className="emp-dash-panel">
-      <header className="emp-dash-panel-head">
-        <div className="emp-dash-panel-title">
-          <span className="emp-dash-panel-icon tone-attendance" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M4 12h4l2-5 4 10 2-5h4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <div>
-            <h2>{title}</h2>
-            <p>Live check-ins for today</p>
-          </div>
-        </div>
-        {attendanceTo ? <PanelLink to={attendanceTo}>View all punches</PanelLink> : null}
-      </header>
-
-      {loading ? (
-        <p className="muted emp-dash-panel-loading">Loading punches…</p>
-      ) : !latest.length ? (
-        <p className="empty emp-dash-empty">No device punches yet today.</p>
-      ) : (
-        <ul className="emp-dash-punch-list">
-          {latest.map((session) => {
-            const punchInTone = session.punchIn ? punchInLateness(session.punchIn) : null;
-            const checkedOut = Boolean(session.punchOut);
-            return (
-              <li key={`${session.userId || session.deviceUserCode}-${session.id}`}>
-                <div className="emp-dash-punch-who">
-                  <span className="emp-dash-attendance-avatar-wrap">
-                    <img
-                      src={avatarSrc(session.profilePhoto)}
-                      alt=""
-                      className="emp-dash-team-photo"
-                    />
-                    {session.stillIn ? (
-                      <span className="emp-dash-online-dot" aria-label="Still in" />
-                    ) : null}
-                  </span>
-                  <div className="emp-dash-team-main">
-                    <strong>{session.userName || `ID ${session.deviceUserCode}`}</strong>
-                    <span>
-                      {session.designation ||
-                        session.employeeNumber ||
-                        session.deviceUserCode ||
-                        'Employee'}
-                    </span>
-                  </div>
-                  {session.stillIn ? (
-                    <span
-                      className={`emp-dash-checked-pill${
-                        punchInTone === 'on-time' ? ' is-on-time' : ' is-late'
-                      }`}
-                    >
-                      Checked In
-                    </span>
-                  ) : checkedOut ? (
-                    <span className="emp-dash-checked-pill is-out">Checked Out</span>
-                  ) : (
-                    <span className="emp-dash-checked-pill is-muted">Not checked in</span>
-                  )}
-                </div>
-                <div className="emp-dash-punch-metrics">
-                  <div>
-                    <span>In</span>
-                    <strong>
-                      {session.punchIn ? (
-                        <span
-                          className={`punch-in-sq is-sm${
-                            punchInTone ? ` is-${punchInTone}` : ''
-                          }`}
-                        >
-                          {formatTime(session.punchIn)}
-                        </span>
-                      ) : (
-                        '--:--'
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Out</span>
-                    <strong>
-                      {session.punchOut || session.stillIn ? (
-                        <PunchCheckoutDisplay
-                          session={session}
-                          formatTime={formatTime}
-                          expectedLogoutFromPunchIn={expectedLogoutFromPunchIn}
-                          requiredMinutes={REQUIRED_WORK_MINUTES}
-                        />
-                      ) : (
-                        '--:--'
-                      )}
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Hours</span>
-                    <strong>
-                      {session.workHours ? (
-                        <span
-                          className={
-                            isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined
-                          }
-                        >
-                          {session.workHours}
-                        </span>
-                      ) : session.stillIn ? (
-                        <PunchInProgressChip />
-                      ) : (
-                        '—'
-                      )}
-                    </strong>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {punches.length > 6 && attendanceTo ? (
-        <footer className="emp-dash-panel-foot">
-          <PanelLink to={attendanceTo}>View all punches</PanelLink>
-        </footer>
-      ) : null}
-    </section>
-  );
+export function TodayPunchesPanel(props) {
+  return <OfficePunchesPanel {...props} />;
 }
 
 export default function OverviewPanels({
@@ -543,7 +393,7 @@ export default function OverviewPanels({
 }) {
   return (
     <div className="overview-stack emp-dash-overview">
-      <TodayPunchesPanel attendanceTo={attendanceTo} />
+      <OfficePunchesPanel attendanceTo={attendanceTo} />
       <TeamOnLeavePanel items={todayOnLeave} title={teamTitle} calendarTo={calendarTo} />
       <CompanyHolidaysPanel
         canApplyRestricted={canApplyRestricted}

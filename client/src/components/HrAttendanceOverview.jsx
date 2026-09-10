@@ -4,8 +4,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recha
 import { api } from '../api';
 import { useChartTheme } from '../chartTheme';
 import { APP_VERSION } from '../version';
-import { appToday, avatarSrc, formatDate, formatDateTime, formatTime, isUnderNineHours, punchInLateness, toYmd } from '../utils';
-import { PunchInProgressChip } from './PunchStatusChips';
+import { appToday, formatDate, formatDateTime, toYmd } from '../utils';
 
 const TREND_METRICS = [
   { key: 'present', label: 'Present' },
@@ -610,82 +609,6 @@ export default function HrAttendanceOverview({ scope = 'hr' }) {
             </section>
           </div>
         </div>
-      )}
-
-      {data && (
-        <section className="panel attov-panel">
-          <h3>Recent punches</h3>
-          {!data.recentPunches.length && <p className="empty">No punches for this date yet.</p>}
-          {!!data.recentPunches.length && (
-            <div className="table-wrap">
-              <table className="attov-table">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Details</th>
-                    <th>Punch in</th>
-                    <th>Punch out</th>
-                    <th>Work hours</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.recentPunches.map((session) => (
-                    <tr key={`${session.userId || session.deviceUserCode}-${session.id}`}>
-                      <td>
-                        <div className="attov-emp">
-                          <img src={avatarSrc(session.profilePhoto)} alt="" />
-                          <div>
-                            <strong>{session.userName || 'Unmapped'}</strong>
-                            <div className="sub">{session.employeeNumber || session.deviceUserCode}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        {session.department || '—'}
-                        {session.location ? ` · ${session.location}` : ''}
-                      </td>
-                      <td>
-                        {session.punchIn ? (
-                          <span className={`punch-in-sq is-${punchInLateness(session.punchIn) || 'on-time'}`}>
-                            {formatTime(session.punchIn)}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td>
-                        {session.punchOut ? (
-                          formatTime(session.punchOut)
-                        ) : session.stillIn ? (
-                          <PunchInProgressChip />
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td>
-                        {session.workHours ? (
-                          <span className={isUnderNineHours(session.workMinutes) ? 'work-hours-short' : undefined}>
-                            {session.workHours}
-                          </span>
-                        ) : session.stillIn ? (
-                          <PunchInProgressChip />
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td>
-                        <Link to={links.attendance} className="attov-view" aria-label="View attendance log">
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
       )}
 
       <p className="attov-meta muted">
