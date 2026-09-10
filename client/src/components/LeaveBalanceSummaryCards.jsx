@@ -16,16 +16,23 @@ function daysText(value) {
   return `${fmtDays(n)} ${n === 1 ? 'day' : 'days'}`;
 }
 
-export function computePersonalLeaveTotals(balances, leaves, userId) {
+export function computePersonalLeaveTotals(balances, leaves, userId, options = {}) {
   const mine = userId
     ? (leaves || []).filter((leave) => String(leave.userId) === String(userId))
     : leaves || [];
+  const earnedUnlocked = options.earnedUnlocked === true;
   return LEAVE_BALANCE_TYPES.map((type) => {
-    const available = Number(balances?.[type.key] ?? 0);
+    let available = Number(balances?.[type.key] ?? 0);
+    if (type.key === 'earned' && !earnedUnlocked) available = 0;
     const used = mine
       .filter((leave) => leave.leaveType === type.key && leave.status === 'approved')
       .reduce((sum, leave) => sum + Number(leave.days || 0), 0);
-    return { ...type, available, used };
+    return {
+      ...type,
+      available,
+      used,
+      locked: type.key === 'earned' && !earnedUnlocked,
+    };
   });
 }
 
@@ -123,6 +130,9 @@ export default function LeaveBalanceSummaryCards({ items = [], className = '' })
                 <b>{daysText(type.used)}</b>
               </div>
             </div>
+            {type.locked ? (
+              <p className="elb-card-locked">Unlocks in 7th month (after 6 months)</p>
+            ) : null}
           </article>
         ))}
       </div>

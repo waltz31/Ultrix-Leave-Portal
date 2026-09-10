@@ -166,6 +166,12 @@ export default function TeamRosterCalendar({
   return (
     <div className="roster">
       <div className="roster-toolbar">
+        {canCreate && typeof onAddLeave === 'function' && (
+          <button type="button" className="btn primary roster-add" onClick={onAddLeave}>
+            Add leave
+          </button>
+        )}
+
         <div className="roster-nav">
           <button type="button" className="roster-nav-btn" onClick={onPrev} aria-label="Previous month">
             ‹
@@ -187,12 +193,6 @@ export default function TeamRosterCalendar({
             placeholder="Search employee"
           />
         </label>
-
-        {canCreate && typeof onAddLeave === 'function' && (
-          <button type="button" className="btn primary roster-add" onClick={onAddLeave}>
-            Add leave
-          </button>
-        )}
       </div>
       {shortcutsHint ? <p className="muted roster-shortcuts-hint">{shortcutsHint}</p> : null}
 

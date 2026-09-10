@@ -334,6 +334,71 @@ export async function notifyLeaveHrApproved(details) {
   });
 }
 
+export async function notifyLeavePolicyAcknowledged(details) {
+  const {
+    employeeName,
+    employeeNumber,
+    department,
+    policyVersion,
+    acknowledgedAt,
+  } = details || {};
+  const name = escapeMrkdwn(employeeName || 'Employee');
+  const empId = escapeMrkdwn(employeeNumber || '—');
+  const dept = escapeMrkdwn(department || '—');
+  const version = escapeMrkdwn(policyVersion || '1.0');
+  const when = escapeMrkdwn(acknowledgedAt || '');
+  const text = `${employeeName || 'Employee'} acknowledged the Ultrix Leave Policy (v${policyVersion || '1.0'})`;
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: 'Leave policy acknowledged', emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${name}* confirmed they have read and will adhere to the Ultrix Leave Policy.`,
+      },
+    },
+    {
+      type: 'section',
+      fields: [
+        { type: 'mrkdwn', text: `*Employee*\n${name}` },
+        { type: 'mrkdwn', text: `*Employee ID*\n${empId}` },
+        { type: 'mrkdwn', text: `*Department*\n${dept}` },
+        { type: 'mrkdwn', text: `*Policy version*\nv${version}` },
+        ...(when
+          ? [{ type: 'mrkdwn', text: `*Acknowledged*\n${when}` }]
+          : []),
+      ],
+    },
+  ];
+  const link = portalUrl();
+  if (link) {
+    blocks.push({
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Open portal', emoji: true },
+          url: link.startsWith('http') ? link : `https://${link}`,
+        },
+      ],
+    });
+  }
+
+  if (botToken() && leaveChannel()) {
+    return postViaBot({ text, blocks });
+  }
+  if (webhookUrl()) {
+    return postViaWebhook({ text, blocks });
+  }
+  console.warn(
+    'Slack: skipped leave-policy acknowledgement (set SLACK_BOT_TOKEN + SLACK_LEAVE_CHANNEL, or SLACK_WEBHOOK_URL)'
+  );
+  return { skipped: true };
+}
+
 export function verifySlackSignature(req) {
   const secret = signingSecret();
   if (!secret) return false;

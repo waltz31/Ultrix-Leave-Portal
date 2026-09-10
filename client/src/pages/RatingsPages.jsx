@@ -40,6 +40,47 @@ function formatPeriodLabel(year, month) {
   return label ? `${label} ${year}` : '';
 }
 
+const STAR_LABELS = {
+  1: 'Poor',
+  2: 'Fair',
+  3: 'Average',
+  4: 'Good',
+  5: 'Excellent',
+};
+
+const AVATAR_TONES = 6;
+
+function personInitials(name) {
+  const parts = String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function avatarTone(seed) {
+  const s = String(seed || '');
+  let hash = 0;
+  for (let i = 0; i < s.length; i += 1) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return hash % AVATAR_TONES;
+}
+
+/** Map stored 1–10 score to a 1–5 star UI value. */
+function scoreToStars(score) {
+  const n = Number(score) || 0;
+  if (n <= 0) return 0;
+  if (n <= 5) return Math.round(n);
+  return Math.min(5, Math.max(1, Math.round(n / 2)));
+}
+
+/** Store star picks as even scores so existing /10 gauges stay meaningful. */
+function starsToScore(stars) {
+  const n = Math.min(5, Math.max(1, Number(stars) || 0));
+  return n * 2;
+}
+
 const MONTHS = [
   { value: '', label: 'All months' },
   { value: '1', label: 'January' },
@@ -399,13 +440,19 @@ export function ManagerRatings() {
   const [ratings, setRatings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [pick, setPick] = useState(null);
   const [search, setSearch] = useState('');
+  const [drafts, setDrafts] = useState({});
+  const [busyId, setBusyId] = useState(null);
+  const [rowError, setRowError] = useState({});
+  const [toast, setToast] = useState('');
+
+  const period = useMemo(() => defaultPeriod(), []);
+  const periodLabel = formatPeriodLabel(period.year, period.month);
 
   function reload() {
     setLoading(true);
     setError('');
-    Promise.all([api('/ratings/employees'), api('/ratings')])
+    return Promise.all([api('/ratings/employees'), api('/ratings')])
       .then(([emp, rat]) => {
         setEmployees(emp.employees || []);
         setRatings(rat.ratings || []);
@@ -418,6 +465,14 @@ export function ManagerRatings() {
     reload();
   }, []);
 
+  const ratedThisPeriod = useMemo(() => {
+    const map = new Map();
+    for (const r of ratings) {
+      if (r.periodLabel === periodLabel) map.set(Number(r.userId), r);
+    }
+    return map;
+  }, [ratings, periodLabel]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return employees;
@@ -429,39 +484,203 @@ export function ManagerRatings() {
     );
   }, [employees, search]);
 
+  function draftFor(emp) {
+    const existing = ratedThisPeriod.get(Number(emp.id));
+    const d = drafts[emp.id];
+    if (d) return d;
+    if (existing) {
+      return {
+        stars: scoreToStars(existing.score),
+        feedback: existing.feedback === 'No additional comment.' ? '' : existing.feedback || '',
+      };
+    }
+    return { stars: 0, feedback: '' };
+  }
+
+  function setDraft(empId, patch) {
+    setDrafts((prev) => {
+      const existing = ratedThisPeriod.get(Number(empId));
+      const base = prev[empId] ||
+        (existing
+          ? {
+              stars: scoreToStars(existing.score),
+              feedback: existing.feedback === 'No additional comment.' ? '' : existing.feedback || '',
+            }
+          : { stars: 0, feedback: '' });
+      return { ...prev, [empId]: { ...base, ...patch } };
+    });
+    setRowError((prev) => {
+      if (!prev[empId]) return prev;
+      const next = { ...prev };
+      delete next[empId];
+      return next;
+    });
+  }
+
+  async function submitRating(emp) {
+    const draft = draftFor(emp);
+    const existing = ratedThisPeriod.get(Number(emp.id));
+    if (existing) {
+      setRowError((prev) => ({
+        ...prev,
+        [emp.id]: `Already rated for ${periodLabel}.`,
+      }));
+      return;
+    }
+    if (!draft.stars) {
+      setRowError((prev) => ({ ...prev, [emp.id]: 'Select a rating first.' }));
+      return;
+    }
+    setBusyId(emp.id);
+    setRowError((prev) => {
+      const next = { ...prev };
+      delete next[emp.id];
+      return next;
+    });
+    try {
+      const comment = String(draft.feedback || '').trim();
+      await api('/ratings', {
+        method: 'POST',
+        body: {
+          userId: emp.id,
+          score: starsToScore(draft.stars),
+          feedback: comment || 'No additional comment.',
+          periodLabel,
+        },
+      });
+      setToast(`Rated ${emp.name}`);
+      setTimeout(() => setToast(''), 2500);
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[emp.id];
+        return next;
+      });
+      await reload();
+    } catch (err) {
+      setRowError((prev) => ({ ...prev, [emp.id]: err.message || 'Could not save rating' }));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <AppShell title={`Rate employees · ${user?.name || ''}`} nav={MANAGER_NAV}>
-      <section className="panel">
-        <h2>Rate an employee</h2>
-        <input
-          type="search"
-          className="search-input"
-          placeholder="Search by name, email, or employee number…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <section className="panel mgr-rate-panel">
+        <header className="mgr-rate-head">
+          <span className="mgr-rate-head-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20">
+              <path
+                fill="currentColor"
+                d="M12 2.8 14.6 9l6.7.5-5.1 4.3 1.6 6.4L12 16.8 6.2 20.2l1.6-6.4-5.1-4.3L9.4 9 12 2.8Z"
+              />
+            </svg>
+          </span>
+          <div>
+            <h2>Rate an Employee</h2>
+            <p>Share your feedback and help us recognize great work.</p>
+          </div>
+        </header>
+
+        <div className="mgr-rate-toolbar">
+          <input
+            type="search"
+            className="search-input mgr-rate-search"
+            placeholder="Search by name, email, or employee number…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <span className="mgr-rate-period muted">Period · {periodLabel}</span>
+        </div>
+
         {loading && <p className="muted">Loading…</p>}
         {error && <p className="form-error">{error}</p>}
+        {toast ? <p className="mgr-rate-toast">{toast}</p> : null}
+
         {!loading && (
-          <div className="employee-rate-grid">
-            {filtered.map((emp) => (
-              <div key={emp.id} className="employee-rate-card">
-                <div>
-                  <strong>{emp.name}</strong>
-                  {emp.employeeNumber && (
-                    <span className="muted"> · #{emp.employeeNumber}</span>
-                  )}
-                  <p className="muted small">{emp.email}</p>
-                </div>
-                <button type="button" className="btn review-manager" onClick={() => setPick(emp)}>
-                  Rate
-                </button>
-              </div>
-            ))}
+          <ul className="mgr-rate-list">
+            {filtered.map((emp) => {
+              const draft = draftFor(emp);
+              const existing = ratedThisPeriod.get(Number(emp.id));
+              const tone = avatarTone(emp.id || emp.email || emp.name);
+              const label = STAR_LABELS[draft.stars] || '';
+              const busy = busyId === emp.id;
+              return (
+                <li key={emp.id} className={`mgr-rate-row${existing ? ' is-done' : ''}`}>
+                  <div className="mgr-rate-who">
+                    <span className={`mgr-rate-avatar tone-${tone}`}>{personInitials(emp.name)}</span>
+                    <div className="mgr-rate-identity">
+                      <div className="mgr-rate-name-row">
+                        <strong>{emp.name}</strong>
+                        {emp.employeeNumber ? (
+                          <span className={`mgr-rate-id tone-${tone}`}>#{emp.employeeNumber}</span>
+                        ) : null}
+                      </div>
+                      <span className="mgr-rate-email">{emp.email || '—'}</span>
+                    </div>
+                  </div>
+
+                  <div className="mgr-rate-score">
+                    <span className="mgr-rate-score-label">Your Rating</span>
+                    <div className="mgr-rate-stars" role="group" aria-label={`Rate ${emp.name}`}>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`mgr-rate-star${draft.stars >= n ? ' is-on' : ''}`}
+                          aria-label={`${n} star${n === 1 ? '' : 's'}`}
+                          aria-pressed={draft.stars === n}
+                          disabled={Boolean(existing) || busy}
+                          onClick={() => setDraft(emp.id, { stars: n })}
+                        >
+                          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+                            <path
+                              fill="currentColor"
+                              d="M12 2.8 14.6 9l6.7.5-5.1 4.3 1.6 6.4L12 16.8 6.2 20.2l1.6-6.4-5.1-4.3L9.4 9 12 2.8Z"
+                            />
+                          </svg>
+                        </button>
+                      ))}
+                      <div className="mgr-rate-score-meta">
+                        <strong>{draft.stars ? `${draft.stars.toFixed(1)}` : '—'}</strong>
+                        {label ? <em>{label}</em> : null}
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="mgr-rate-comment">
+                    <span className="sr-only">Comment</span>
+                    <input
+                      type="text"
+                      placeholder="Add a comment (optional)..."
+                      value={draft.feedback}
+                      disabled={Boolean(existing) || busy}
+                      onChange={(e) => setDraft(emp.id, { feedback: e.target.value })}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    className="btn mgr-rate-submit"
+                    disabled={Boolean(existing) || busy || !draft.stars}
+                    onClick={() => submitRating(emp)}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M3.2 11.1 20.4 3.4c.7-.3 1.4.4 1.1 1.1L13.8 21.7c-.3.7-1.3.6-1.5-.2l-1.9-7.1-7.1-1.9c-.8-.2-.9-1.2-.1-1.4Z"
+                      />
+                    </svg>
+                    {existing ? 'Rated' : busy ? 'Saving…' : 'Rate'}
+                  </button>
+
+                  {rowError[emp.id] ? <p className="mgr-rate-row-error">{rowError[emp.id]}</p> : null}
+                </li>
+              );
+            })}
             {filtered.length === 0 && (
-              <p className="muted">No employees match your search.</p>
+              <li className="mgr-rate-empty muted">No employees match your search.</li>
             )}
-          </div>
+          </ul>
         )}
       </section>
 
@@ -477,15 +696,6 @@ export function ManagerRatings() {
           </div>
         )}
       </section>
-
-      {pick && (
-        <RateEmployeeModal
-          employee={pick}
-          existingRatings={ratings.filter((r) => r.userId === pick.id)}
-          onClose={() => setPick(null)}
-          onSaved={reload}
-        />
-      )}
     </AppShell>
   );
 }

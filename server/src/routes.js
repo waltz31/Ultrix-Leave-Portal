@@ -29,14 +29,14 @@ import {
   DEFAULT_RESTRICTED_BALANCE,
 } from './leaveUtils.js';
 import { parseHolidayType, RH_ONLY_PUBLISHED_DATES, assertRegularLeaveWindow } from './holidays.js';
-import { notifyLeaveApplied } from './slack.js';
+import { notifyLeaveApplied, notifyLeavePolicyAcknowledged } from './slack.js';
 import { LeaveReviewError, reviewLeaveRequest } from './leaveReview.js';
 import {
   mailLeaveApplied,
   mailCancelled,
 } from './mail.js';
 import { todayIst } from './time.js';
-import { syncLeaveAccruals, assertCelebrationLeaveRequest } from './leaveAccrual.js';
+import { syncLeaveAccruals, assertCelebrationLeaveRequest, assertEarnedLeaveUnlocked, getEarnedLeaveUnlockInfo, isEarnedLeaveUnlocked, visibleEarnedBalance, completedEmploymentMonths, EARNED_UNLOCK_COMPLETED_MONTHS } from './leaveAccrual.js';
 import {
   mapPunch,
   punchStatus,
@@ -52,6 +52,7 @@ import {
 } from './punchSync.js';
 import { buildAttendanceOverview } from './attendanceOverview.js';
 import { buildAttendanceMuster } from './attendanceMuster.js';
+import { cacheGet, cacheSet } from './attendanceCache.js';
 import {
   REGULARIZE_SELECT,
   applyApprovedOverride,
@@ -109,7 +110,6 @@ import {
   parsePayrollFields,
   parseItPayrollForCreate,
   parseAssetsList,
-  payStructureKind,
   applyPayStructure,
 } from './employeeProfileUtils.js';
 import {
@@ -401,7 +401,7 @@ router.get('/managers', authRequired, hrRequired, async (_req, res) => {
 
 const USER_DIRECTORY_SELECT = `
   SELECT u.*, b.casual, b.earned, b.sick, b.restricted, b.celebration, m.name AS manager_name,
-         m.email AS manager_email, ep.designation, ep.department,
+         m.email AS manager_email, ep.designation, ep.department, ep.date_of_joining,
          COALESCE(used.casual_used, 0) AS casual_used,
          COALESCE(used.earned_used, 0) AS earned_used,
          COALESCE(used.sick_used, 0) AS sick_used,
@@ -426,9 +426,19 @@ const USER_DIRECTORY_SELECT = `
 `;
 
 function mapUserWithBalances(row) {
+  const balances = mapBalance(row);
+  const join = row.date_of_joining || null;
+  const unlocked = isEarnedLeaveUnlocked(join);
+  balances.earned = visibleEarnedBalance(balances.earned, join);
   return {
     ...publicUser(row),
-    balances: mapBalance(row),
+    balances,
+    earnedLeave: {
+      unlocked,
+      completedMonths: completedEmploymentMonths(join),
+      unlockAfterMonths: EARNED_UNLOCK_COMPLETED_MONTHS,
+      dateOfJoining: join,
+    },
     usage: {
       casual: Number(row.casual_used || 0),
       earned: Number(row.earned_used || 0),
@@ -729,7 +739,7 @@ async function createOnboardedEmployee(body) {
     employeeCategory: null,
   };
   let { assets, payroll } = parseItPayrollForCreate(body);
-  payroll = applyPayStructure(payroll, payStructureKind(employment.employmentType));
+  payroll = applyPayStructure(payroll);
   const active = activeFromEmploymentStatus(employment.employmentStatus);
 
   const passwordHash = await hashPassword(password);
@@ -756,8 +766,9 @@ async function createOnboardedEmployee(body) {
              basic_salary, hra, allowances, variable_pay, bonuses, deductions,
              pf_epf_details, professional_tax, tds, net_salary,
              salary_history, payslips, bank_account_details,
-             stipend, fixed_pay, joining_bonus, retention_bonus, esops, bonus_amount, bonus_frequency
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             stipend, fixed_pay, service_fee_annual, joining_bonus, joining_bonus_months,
+             retention_bonus, retention_bonus_months, esops, bonus_amount, bonus_frequency
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           newUserId,
@@ -796,8 +807,11 @@ async function createOnboardedEmployee(body) {
           payroll.bankAccountDetails,
           payroll.stipend,
           payroll.fixedPay,
+          payroll.serviceFeeAnnual,
           payroll.joiningBonus,
+          payroll.joiningBonusMonths,
           payroll.retentionBonus,
+          payroll.retentionBonusMonths,
           payroll.esops,
           payroll.bonusAmount,
           payroll.bonusFrequency
@@ -996,10 +1010,7 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
       employeeCategory: null,
     };
     assets = body.assets !== undefined ? parseAssetsList(body) : null;
-    payroll = applyPayStructure(
-      parsePayrollFields(body, existing),
-      payStructureKind(employment.employmentType)
-    );
+    payroll = applyPayStructure(parsePayrollFields(body, existing));
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message });
     throw err;
@@ -1075,7 +1086,8 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
              basic_salary = ?, hra = ?, allowances = ?, variable_pay = ?, bonuses = ?, deductions = ?,
              pf_epf_details = ?, professional_tax = ?, tds = ?, net_salary = ?,
              salary_history = ?, payslips = ?, bank_account_details = ?,
-             stipend = ?, fixed_pay = ?, joining_bonus = ?, retention_bonus = ?,
+             stipend = ?, fixed_pay = ?, service_fee_annual = ?, joining_bonus = ?, joining_bonus_months = ?,
+             retention_bonus = ?, retention_bonus_months = ?,
              esops = ?, bonus_amount = ?, bonus_frequency = ?,
              updated_at = ${SQL_NOW_IST}
            WHERE user_id = ?`
@@ -1116,8 +1128,11 @@ router.patch('/onboarding/:userId', authRequired, hrRequired, async (req, res) =
           payroll.bankAccountDetails,
           payroll.stipend,
           payroll.fixedPay,
+          payroll.serviceFeeAnnual,
           payroll.joiningBonus,
+          payroll.joiningBonusMonths,
           payroll.retentionBonus,
+          payroll.retentionBonusMonths,
           payroll.esops,
           payroll.bonusAmount,
           payroll.bonusFrequency,
@@ -1283,17 +1298,128 @@ router.delete('/users/:id', authRequired, hrRequired, async (req, res) => {
     await db.prepare(`DELETE FROM balance_credits WHERE user_id = ? OR credited_by = ?`).run(id, id);
     await db.prepare(`DELETE FROM leave_requests WHERE user_id = ?`).run(id);
     await db.prepare(`DELETE FROM leave_balances WHERE user_id = ?`).run(id);
+    await db.prepare(`DELETE FROM leave_policy_acknowledgements WHERE user_id = ?`).run(id);
     await db.prepare(`DELETE FROM users WHERE id = ?`).run(id);
   });
 
   res.json({ ok: true });
 });
 
+const LEAVE_POLICY_VERSION = '1.0';
+
+function formatAckDate(iso) {
+  const raw = String(iso || '').trim();
+  if (!raw) return '';
+  const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+// ——— Leave policy acknowledgement ———
+router.get('/leave-policy/acknowledgement', authRequired, async (req, res) => {
+  const row = await db
+    .prepare(
+      `SELECT u.name, u.employee_number, ep.department,
+              a.policy_version, a.acknowledged_at
+       FROM users u
+       LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+       LEFT JOIN leave_policy_acknowledgements a
+         ON a.user_id = u.id AND a.policy_version = ?
+       WHERE u.id = ?`
+    )
+    .get(LEAVE_POLICY_VERSION, req.user.id);
+  res.json({
+    policyVersion: LEAVE_POLICY_VERSION,
+    acknowledged: Boolean(row?.acknowledged_at),
+    acknowledgedAt: row?.acknowledged_at || null,
+    employee: {
+      name: row?.name || req.user.name,
+      employeeNumber: row?.employee_number || null,
+      department: row?.department || null,
+    },
+  });
+});
+
+router.post('/leave-policy/acknowledge', authRequired, async (req, res) => {
+  const existing = await db
+    .prepare(
+      `SELECT id, policy_version, acknowledged_at
+       FROM leave_policy_acknowledgements
+       WHERE user_id = ? AND policy_version = ?`
+    )
+    .get(req.user.id, LEAVE_POLICY_VERSION);
+
+  let acknowledgedAt = existing?.acknowledged_at || null;
+  if (!existing) {
+    const result = await db
+      .prepare(
+        `INSERT INTO leave_policy_acknowledgements (user_id, policy_version)
+         VALUES (?, ?)`
+      )
+      .run(req.user.id, LEAVE_POLICY_VERSION);
+    const inserted = await db
+      .prepare(
+        `SELECT acknowledged_at FROM leave_policy_acknowledgements WHERE id = ?`
+      )
+      .get(result.lastInsertRowid);
+    acknowledgedAt = inserted?.acknowledged_at || null;
+  }
+
+  const [userRow, profile] = await Promise.all([
+    db
+      .prepare(`SELECT name, employee_number FROM users WHERE id = ?`)
+      .get(req.user.id),
+    db
+      .prepare(`SELECT department FROM employee_profiles WHERE user_id = ?`)
+      .get(req.user.id),
+  ]);
+  const department = profile?.department || null;
+  const employeeNumber = userRow?.employee_number || null;
+  const employeeName = userRow?.name || req.user.name;
+
+  if (!existing) {
+    void notifyLeavePolicyAcknowledged({
+      employeeName,
+      employeeNumber,
+      department,
+      policyVersion: LEAVE_POLICY_VERSION,
+      acknowledgedAt: formatAckDate(acknowledgedAt),
+    }).catch((err) => console.error('Slack leave-policy ack failed:', err?.message || err));
+  }
+
+  res.json({
+    ok: true,
+    alreadyAcknowledged: Boolean(existing),
+    policyVersion: LEAVE_POLICY_VERSION,
+    acknowledged: true,
+    acknowledgedAt,
+    employee: {
+      name: employeeName,
+      employeeNumber,
+      department,
+    },
+  });
+});
+
 // ——— Balances ———
 router.get('/balances/me', authRequired, async (req, res) => {
   await ensureBalanceRow(req.user.id);
   await syncLeaveAccruals(req.user.id);
-  res.json({ balances: mapBalance(await getBalance(req.user.id)) });
+  const [earnedLeave, balRow] = await Promise.all([
+    getEarnedLeaveUnlockInfo(req.user.id),
+    getBalance(req.user.id),
+  ]);
+  const balances = mapBalance(balRow);
+  // Until the 7th month, always expose earned as 0.
+  balances.earned = visibleEarnedBalance(balances.earned, earnedLeave.dateOfJoining);
+  res.json({ balances, earnedLeave });
 });
 
 router.get('/balances/credits', authRequired, hrRequired, async (_req, res) => {
@@ -1357,6 +1483,12 @@ router.post('/balances/credit', authRequired, hrRequired, async (req, res) => {
     ).run(userId, leaveType, amt, note || null, req.user.id);
     return mapBalance(await getBalance(userId));
   });
+  if (leaveType === 'earned') {
+    const profile = await db
+      .prepare(`SELECT date_of_joining FROM employee_profiles WHERE user_id = ?`)
+      .get(userId);
+    balances.earned = visibleEarnedBalance(balances.earned, profile?.date_of_joining);
+  }
   const typeLabel = leaveLabel(leaveType);
   const absAmt = Math.abs(amt);
   const dayLabel = absAmt === 1 ? 'day' : 'days';
@@ -1725,6 +1857,13 @@ router.post('/leaves', authRequired, async (req, res) => {
   if (isBalanceType(leaveType)) {
     await ensureBalanceRow(req.user.id);
     await syncLeaveAccruals(req.user.id);
+    if (leaveType === 'earned') {
+      try {
+        await assertEarnedLeaveUnlocked(req.user.id);
+      } catch (err) {
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+    }
     const bal = await getBalance(req.user.id);
     if (bal[leaveType] < days) {
       return res.status(400).json({
@@ -1908,6 +2047,13 @@ router.post('/leaves/admin', authRequired, hrRequired, async (req, res) => {
   if (isBalanceType(leaveType)) {
     await ensureBalanceRow(employeeId);
     await syncLeaveAccruals(employeeId);
+    if (leaveType === 'earned') {
+      try {
+        await assertEarnedLeaveUnlocked(employeeId);
+      } catch (err) {
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+    }
     const bal = await getBalance(employeeId);
     if ((bal[leaveType] ?? 0) < days) {
       return res.status(400).json({
@@ -2621,8 +2767,8 @@ router.post('/ratings', authRequired, managerRequired, async (req, res) => {
     return res.status(400).json({ error: 'score must be between 1 and 10' });
   }
   const trimmedFeedback = String(feedback || '').trim();
-  if (trimmedFeedback.length < 10) {
-    return res.status(400).json({ error: 'feedback is required (at least 10 characters)' });
+  if (trimmedFeedback.length > 0 && trimmedFeedback.length < 3) {
+    return res.status(400).json({ error: 'Comment is too short' });
   }
 
   const employee = await db
@@ -3396,23 +3542,49 @@ router.post('/feed/comments/:id/reactions', authRequired, async (req, res) => {
 });
 
 router.get('/attendance/overview', authRequired, managerOrHrRequired, async (req, res) => {
-  const overview = await buildAttendanceOverview(db, {
-    date: req.query.date,
-    location: req.query.location,
-    department: req.query.department,
-    managerId: req.user.role === 'manager' ? req.user.id : null,
-  });
-  res.json({ overview, status: await punchStatusCached() });
+  const cacheKey = `attendance:overview:${req.user.role}:${req.user.id}:${req.query.date || ''}:${req.query.location || ''}:${req.query.department || ''}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.json(cached);
+
+  const [overview, status] = await Promise.all([
+    buildAttendanceOverview(db, {
+      date: req.query.date,
+      location: req.query.location,
+      department: req.query.department,
+      managerId: req.user.role === 'manager' ? req.user.id : null,
+    }),
+    punchStatusCached(60_000),
+  ]);
+    const payload = { overview, status };
+  cacheSet(cacheKey, payload, 45_000);
+  res.json(payload);
 });
 
 router.get('/attendance/muster', authRequired, managerOrHrRequired, async (req, res) => {
-  const muster = await buildAttendanceMuster(db, {
-    date: req.query.date,
-    location: req.query.location,
-    department: req.query.department,
-    managerId: req.user.role === 'manager' ? req.user.id : null,
-  });
-  res.json({ muster, status: await punchStatusCached() });
+  const cacheKey = `attendance:muster:${req.user.role}:${req.user.id}:${req.query.month || ''}:${req.query.date || ''}:${req.query.location || ''}:${req.query.department || ''}:${req.query.category || ''}:${req.query.userId || ''}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const [muster, status] = await Promise.all([
+      buildAttendanceMuster(db, {
+        month: req.query.month,
+        date: req.query.date,
+        location: req.query.location,
+        department: req.query.department,
+        category: req.query.category,
+        userId: req.query.userId,
+        managerId: req.user.role === 'manager' ? req.user.id : null,
+      }),
+      punchStatusCached(60_000),
+    ]);
+    const payload = { muster, status };
+    cacheSet(cacheKey, payload, 45_000);
+    res.json(payload);
+  } catch (err) {
+    console.error('Attendance muster failed:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'Could not load attendance muster' });
+  }
 });
 
 router.get('/punches/status', authRequired, async (_req, res) => {
@@ -3437,21 +3609,27 @@ router.get('/punches', authRequired, async (req, res) => {
   const from = String(req.query.from || date).slice(0, 10);
   const to = String(req.query.to || date).slice(0, 10);
   const scope = punchScopeForUser(req.user);
-  const rows = await loadPunchRows(from, to, scope);
+  const includeStatus = req.user.role !== 'user';
+  const overrideUserId = req.user.role === 'user' ? req.user.id : null;
+
+  const [rows, overrides, pending, status] = await Promise.all([
+    loadPunchRows(from, to, scope),
+    loadApprovedOverrides(from, to, overrideUserId),
+    db
+      .prepare(
+        `SELECT user_id, punch_date FROM attendance_regularizations
+         WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
+      )
+      .all(from, to),
+    includeStatus ? punchStatusCached() : Promise.resolve(null),
+  ]);
 
   const punches = mergeSessionsWithOverrides(
     summarizeDaySessions(rows.map(mapPunch)),
-    await loadApprovedOverrides(from, to, req.user.role === 'user' ? req.user.id : null)
+    overrides
   );
-  const pending = await db
-    .prepare(
-      `SELECT user_id, punch_date FROM attendance_regularizations
-       WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
-    )
-    .all(from, to);
   const pendingKeys = new Set(pending.map((p) => `${p.user_id}|${p.punch_date}`));
   const today = todayIst();
-  const includeStatus = req.user.role !== 'user';
   res.json({
     from,
     to,
@@ -3466,7 +3644,7 @@ router.get('/punches', authRequired, async (req, res) => {
         isRegularizeEligible(session, today) &&
         !pendingKeys.has(`${session.userId}|${session.punchDate}`),
     })),
-    ...(includeStatus ? { status: await punchStatusCached() } : {}),
+    ...(includeStatus ? { status } : {}),
   });
 });
 
@@ -3514,29 +3692,30 @@ router.get('/attendance/calendar', authRequired, async (req, res) => {
   const to = String(req.query.to || from).slice(0, 10);
   const filterUserId = req.query.userId ? Number(req.query.userId) : null;
   const scope = punchScopeForUser(req.user, filterUserId);
-  const rows = await loadPunchRows(from, to, scope);
-
-  let sessions = summarizeDaySessions(rows.map(mapPunch));
-  const overrides = await loadApprovedOverrides(
-    from,
-    to,
+  const overrideUserId =
     req.user.role === 'user'
       ? req.user.id
-      : req.user.role === 'manager' && filterUserId
+      : (req.user.role === 'manager' || req.user.role === 'hr') && filterUserId
         ? filterUserId
-        : req.user.role === 'hr' && filterUserId
-          ? filterUserId
-          : null
-  );
-  sessions = mergeSessionsWithOverrides(sessions, overrides);
+        : null;
 
-  const pending = await db
-    .prepare(
-      `SELECT user_id, punch_date FROM attendance_regularizations
-       WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
-    )
-    .all(from, to);
+  const [rows, overrides, pending] = await Promise.all([
+    loadPunchRows(from, to, scope),
+    loadApprovedOverrides(from, to, overrideUserId),
+    db
+      .prepare(
+        `SELECT user_id, punch_date FROM attendance_regularizations
+         WHERE status = 'pending' AND punch_date >= ? AND punch_date <= ?`
+      )
+      .all(from, to),
+  ]);
+
+  let sessions = mergeSessionsWithOverrides(
+    summarizeDaySessions(rows.map(mapPunch)),
+    overrides
+  );
   const pendingKeys = new Set(pending.map((p) => `${p.user_id}|${p.punch_date}`));
+  const today = todayIst();
 
   sessions = sessions.map((s) => ({
     ...s,
@@ -3544,7 +3723,7 @@ router.get('/attendance/calendar', authRequired, async (req, res) => {
     canRegularize:
       req.user.role === 'user' &&
       s.userId === req.user.id &&
-      isRegularizeEligible(s, todayIst()) &&
+      isRegularizeEligible(s, today) &&
       !pendingKeys.has(`${s.userId}|${s.punchDate}`),
   }));
 

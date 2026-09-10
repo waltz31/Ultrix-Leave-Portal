@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ConsultantAgreementDisplay } from './ConsultantAgreementSalary';
 
 export function formatMoney(value) {
   if (value === undefined || value === null || value === '') return '—';
@@ -11,65 +12,49 @@ export function formatMoney(value) {
   });
 }
 
-export const SALARY_COMPONENT_FIELDS = [
-  { key: 'basicSalary', label: 'Basic salary', money: true },
-  { key: 'hra', label: 'HRA', money: true },
-  { key: 'allowances', label: 'Allowances', money: true },
-  { key: 'variablePay', label: 'Variable pay / incentives', money: true },
-  { key: 'bonuses', label: 'Bonuses', money: true },
-  { key: 'deductions', label: 'Deductions', money: true, negative: true },
-  { key: 'pfEpfDetails', label: 'PF / EPF details', money: false },
-  { key: 'professionalTax', label: 'Professional tax', money: true, negative: true },
-  { key: 'tds', label: 'TDS', money: true, negative: true },
-  { key: 'netSalary', label: 'Net salary', money: true, highlight: true },
-];
-
-export const INTERN_PAY_FIELDS = [{ key: 'stipend', label: 'Stipend', money: true, highlight: true }];
-
 export const CONSULTANT_PAY_FIELDS = [
-  { key: 'fixedPay', label: 'Fixed pay', money: true, highlight: true },
-  { key: 'joiningBonus', label: 'Joining bonus', money: true },
-  { key: 'retentionBonus', label: 'Retention bonus', money: true },
-  { key: 'esops', label: 'ESOPs', money: false },
-  { key: 'bonusAmount', label: 'Bonus', money: true },
-  { key: 'bonusFrequency', label: 'Bonus frequency', money: false },
+  { key: 'joiningBonus', label: 'Joining Bonus', money: true },
+  { key: 'retentionBonus', label: 'Retention Bonus', money: true },
+  { key: 'joiningBonusMonths', label: 'Joining Clause', money: false },
+  { key: 'retentionBonusMonths', label: 'Retention Clause', money: false },
+  { key: 'serviceFeeAnnual', label: 'Annual Service Fee', money: true },
+  { key: 'fixedPay', label: 'Monthly Service Fee', money: true, highlight: true },
 ];
 
-export const BONUS_FREQUENCY_LABELS = {
-  monthly: 'Monthly',
-  quarterly: 'Quarterly',
-  half_yearly: 'Half yearly',
-  yearly: 'Yearly',
-};
+/** @deprecated Kept for older imports; payroll is consultant-only. */
+export const SALARY_COMPONENT_FIELDS = CONSULTANT_PAY_FIELDS;
+/** @deprecated Kept for older imports; payroll is consultant-only. */
+export const INTERN_PAY_FIELDS = CONSULTANT_PAY_FIELDS;
 
-export function payStructureKind(employmentType) {
-  const type = String(employmentType || '').trim().toLowerCase();
-  if (type === 'intern') return 'intern';
-  if (type === 'consultant') return 'consultant';
-  return 'employee';
+export const AGREEMENT_FIELD_KEYS = CONSULTANT_PAY_FIELDS.map((f) => f.key);
+
+export function hasAgreementPayroll(payroll) {
+  return AGREEMENT_FIELD_KEYS.some((key) => {
+    const v = payroll?.[key];
+    return v !== undefined && v !== null && v !== '';
+  });
 }
 
-export function payrollFieldsFor(employmentType) {
-  const kind = payStructureKind(employmentType);
-  if (kind === 'intern') return INTERN_PAY_FIELDS;
-  if (kind === 'consultant') return CONSULTANT_PAY_FIELDS;
-  return SALARY_COMPONENT_FIELDS;
+export function payStructureKind() {
+  return 'consultant';
+}
+
+export function payrollFieldsFor() {
+  return CONSULTANT_PAY_FIELDS;
 }
 
 export function formatPayrollValue(field, payroll) {
   const value = payroll?.[field.key];
-  if (field.key === 'bonusFrequency') {
-    return BONUS_FREQUENCY_LABELS[value] || value || '—';
+  if (field.key === 'joiningBonusMonths' || field.key === 'retentionBonusMonths') {
+    if (value === undefined || value === null || value === '') return '—';
+    const n = Number(value);
+    return `${n} month${n === 1 ? '' : 's'}`;
   }
   if (field.money) return formatMoney(value);
   return value || '—';
 }
 
-export const SALARY_SENSITIVE_FIELDS = [
-  { key: 'salaryHistory', label: 'Salary history' },
-  { key: 'payslips', label: 'Payslips' },
-  { key: 'bankAccountDetails', label: 'Bank account details' },
-];
+export const SALARY_SENSITIVE_FIELDS = [];
 
 export const IT_FIELDS = [
   { key: 'laptopDesktopAssigned', label: 'Laptop / desktop assigned' },
@@ -130,11 +115,9 @@ export function DetailList({ items }) {
 
 export function SalaryComponentsView({
   payroll,
-  employmentType,
-  showSensitive = false,
   title = 'Salary components',
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(true);
 
   if (!payroll) {
     return (
@@ -145,32 +128,11 @@ export function SalaryComponentsView({
     );
   }
 
-  const kind = payStructureKind(employmentType);
-  const fields = payrollFieldsFor(employmentType);
-  const highlightField =
-    fields.find((f) => f.highlight) || fields.find((f) => f.key === 'netSalary') || fields[0];
-  const lineFields = fields.filter((f) => f.key !== highlightField?.key);
-
-  const earnings = lineFields.filter((f) => !f.negative);
-  const deductions = lineFields.filter((f) => f.negative);
-
-  const sensitive =
-    showSensitive && kind === 'employee'
-      ? SALARY_SENSITIVE_FIELDS.map((f) => ({
-          label: f.label,
-          value: payroll[f.key] || '—',
-        })).filter((item) => item.value && item.value !== '—')
-      : [];
-
-  const headlineRaw = formatPayrollValue(highlightField, payroll);
-  const structureLabel =
-    kind === 'intern' ? 'Internship stipend' : kind === 'consultant' ? 'Consultant pay' : 'Monthly CTC view';
-
   return (
     <section className={`panel salary-slip${revealed ? ' is-revealed' : ' is-masked'}`}>
       <div className="salary-slip-top">
         <div>
-          <p className="salary-slip-kicker">{structureLabel}</p>
+          <p className="salary-slip-kicker">Consultant salary structure</p>
           <h2 className="salary-slip-title">{title}</h2>
         </div>
         <button
@@ -187,67 +149,18 @@ export function SalaryComponentsView({
       </div>
 
       <div className="salary-hero">
-        <span className="salary-hero-label">{highlightField?.label || 'Take-home'}</span>
+        <span className="salary-hero-label">Monthly Service Fee</span>
         <strong className={`salary-hero-value${revealed ? '' : ' is-masked'}`}>
-          {displayValue(headlineRaw, revealed)}
+          {displayValue(formatMoney(payroll.fixedPay), revealed)}
         </strong>
+        {payroll?.serviceFeeAnnual != null && payroll?.serviceFeeAnnual !== '' ? (
+          <span className="salary-hero-sub">
+            Annual Service Fee {revealed ? formatMoney(payroll.serviceFeeAnnual) : MASK}
+          </span>
+        ) : null}
       </div>
 
-      <div className="salary-slip-grid">
-        {!!earnings.length && (
-          <div className="salary-slip-block">
-            <h3>Earnings</h3>
-            <ul className="salary-lines">
-              {earnings.map((f) => {
-                const raw = formatPayrollValue(f, payroll);
-                return (
-                  <li key={f.key}>
-                    <span>{f.label}</span>
-                    <strong className={revealed ? '' : 'is-masked'}>
-                      {displayValue(raw, revealed)}
-                    </strong>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        {!!deductions.length && (
-          <div className="salary-slip-block salary-slip-deductions">
-            <h3>Deductions</h3>
-            <ul className="salary-lines">
-              {deductions.map((f) => {
-                const raw = formatPayrollValue(f, payroll);
-                return (
-                  <li key={f.key}>
-                    <span>{f.label}</span>
-                    <strong className={revealed ? '' : 'is-masked'}>
-                      {displayValue(raw, revealed)}
-                    </strong>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-      </div>
-
-      {!!sensitive.length && (
-        <div className="salary-slip-block salary-slip-bank">
-          <h3>Bank &amp; records</h3>
-          <ul className="salary-lines salary-lines-stack">
-            {sensitive.map((item) => (
-              <li key={item.label}>
-                <span>{item.label}</span>
-                <strong className={revealed ? '' : 'is-masked'}>
-                  {displayValue(item.value, revealed)}
-                </strong>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <ConsultantAgreementDisplay payroll={payroll} revealed={revealed} mask={MASK} />
     </section>
   );
 }

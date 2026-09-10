@@ -47,7 +47,7 @@ export async function authRequired(req, res, next) {
     const payload = jwt.verify(token, JWT_SECRET);
     const user = await db
       .prepare(
-        `SELECT id, name, email, role, manager_id, active FROM users WHERE id = ?`
+        `SELECT id, name, email, role, manager_id, employee_number, active FROM users WHERE id = ?`
       )
       .get(payload.id);
     if (!user || !(user.active === true || user.active === 1 || user.active === '1')) {

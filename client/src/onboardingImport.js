@@ -2,7 +2,6 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import {
   ASSET_CATEGORY_OPTIONS,
-  BONUS_FREQUENCY_OPTIONS,
   EMPTY_ASSET,
   EMPTY_ONBOARDING_FORM,
   EMPLOYMENT_STATUS_OPTIONS,
@@ -39,26 +38,12 @@ export const ONBOARDING_COLUMNS = [
   { key: 'probationPeriod', header: 'Probation period', example: '3 months' },
   { key: 'confirmationDate', header: 'Confirmation date', example: '2026-11-01' },
   ...assetColumns(),
-  { key: 'basicSalary', header: 'Basic salary', example: '50000' },
-  { key: 'hra', header: 'HRA', example: '20000' },
-  { key: 'allowances', header: 'Allowances', example: '8000' },
-  { key: 'variablePay', header: 'Variable pay', example: '10000' },
-  { key: 'bonuses', header: 'Bonuses', example: '0' },
-  { key: 'deductions', header: 'Deductions', example: '2000' },
-  { key: 'pfEpfDetails', header: 'PF / EPF details', example: 'UAN 100123' },
-  { key: 'professionalTax', header: 'Professional tax', example: '200' },
-  { key: 'tds', header: 'TDS', example: '1500' },
-  { key: 'netSalary', header: 'Net salary', example: '74300' },
-  { key: 'salaryHistory', header: 'Salary history', example: '' },
-  { key: 'payslips', header: 'Payslips', example: '' },
-  { key: 'bankAccountDetails', header: 'Bank account details', example: 'HDFC 000111 IFSC HDFC0001234' },
-  { key: 'stipend', header: 'Stipend (intern)', example: '' },
-  { key: 'fixedPay', header: 'Fixed pay (consultant)', example: '' },
-  { key: 'joiningBonus', header: 'Joining bonus (consultant)', example: '' },
-  { key: 'retentionBonus', header: 'Retention bonus (consultant)', example: '' },
-  { key: 'esops', header: 'ESOPs (consultant)', example: '' },
-  { key: 'bonusAmount', header: 'Bonus (consultant)', example: '' },
-  { key: 'bonusFrequency', header: 'Bonus frequency (consultant)', example: 'Quarterly', list: 'bonusFrequency' },
+  { key: 'joiningBonus', header: 'Joining bonus', example: '50000' },
+  { key: 'joiningBonusMonths', header: 'Joining clause months', example: '12' },
+  { key: 'retentionBonus', header: 'Retention bonus', example: '100000' },
+  { key: 'retentionBonusMonths', header: 'Retention clause months', example: '12' },
+  { key: 'serviceFeeAnnual', header: 'Annual service fee', example: '1200000' },
+  { key: 'fixedPay', header: 'Monthly service fee', example: '' },
 ];
 
 function assetColumns() {
@@ -139,16 +124,17 @@ const HEADER_ALIASES = {
   status: 'employmentStatus',
   probation: 'probationPeriod',
   confirmation: 'confirmationDate',
-  basicsal: 'basicSalary',
-  basic: 'basicSalary',
-  pf: 'pfEpfDetails',
-  epf: 'pfEpfDetails',
-  uan: 'pfEpfDetails',
-  pt: 'professionalTax',
-  bank: 'bankAccountDetails',
-  bankdetails: 'bankAccountDetails',
-  accountnumber: 'bankAccountDetails',
-  internstipend: 'stipend',
+  joiningbonus: 'joiningBonus',
+  joiningclause: 'joiningBonusMonths',
+  joiningclausemonths: 'joiningBonusMonths',
+  joiningbonusclausemonths: 'joiningBonusMonths',
+  retentionbonus: 'retentionBonus',
+  retentionclause: 'retentionBonusMonths',
+  retentionclausemonths: 'retentionBonusMonths',
+  annualservicefee: 'serviceFeeAnnual',
+  servicefeeannual: 'serviceFeeAnnual',
+  monthlyservicefee: 'fixedPay',
+  servicefeemonthly: 'fixedPay',
 };
 
 const ASSET_HEADER_SUFFIX = {
@@ -350,31 +336,25 @@ export function rowToForm(raw, managers = []) {
   }
 
   const moneyKeys = [
-    'basicSalary',
-    'hra',
-    'allowances',
-    'variablePay',
-    'bonuses',
-    'deductions',
-    'professionalTax',
-    'tds',
-    'netSalary',
-    'stipend',
     'fixedPay',
+    'serviceFeeAnnual',
     'joiningBonus',
     'retentionBonus',
-    'bonusAmount',
   ];
   for (const key of moneyKeys) {
     const text = cellText(raw[key]).replace(/[,₹$]/g, '').replace(/\s/g, '');
     if (text) form[key] = text;
   }
-  set('pfEpfDetails', cellText(raw.pfEpfDetails));
-  set('salaryHistory', cellText(raw.salaryHistory));
-  set('payslips', cellText(raw.payslips));
-  set('bankAccountDetails', cellText(raw.bankAccountDetails));
-  set('esops', cellText(raw.esops));
-  set('bonusFrequency', matchOption(BONUS_FREQUENCY_OPTIONS, raw.bonusFrequency) || form.bonusFrequency);
+  if (form.serviceFeeAnnual && !form.fixedPay) {
+    const annual = Number(form.serviceFeeAnnual);
+    if (Number.isFinite(annual)) {
+      form.fixedPay = String(Math.round((annual / 12) * 100) / 100);
+    }
+  }
+  for (const key of ['joiningBonusMonths', 'retentionBonusMonths']) {
+    const text = cellText(raw[key]).replace(/\s/g, '');
+    if (text) form[key] = text;
+  }
 
   const assetSlots = Math.max(
     ASSET_SLOTS,
@@ -539,7 +519,6 @@ const DROPDOWN_LISTS = {
   workMode: WORK_MODE_OPTIONS.map((o) => o.label),
   employmentStatus: EMPLOYMENT_STATUS_OPTIONS.map((o) => o.label),
   assetCategory: ASSET_CATEGORY_OPTIONS.map((o) => o.label),
-  bonusFrequency: BONUS_FREQUENCY_OPTIONS.map((o) => o.label),
 };
 
 const DATA_ROW_START = 2;

@@ -2,8 +2,6 @@ import * as XLSX from 'xlsx';
 import {
   ASSET_CATEGORIES,
   ASSET_CATEGORY_LABELS,
-  BONUS_FREQUENCIES,
-  BONUS_FREQUENCY_LABELS,
   EMPLOYMENT_STATUS_LABELS,
   EMPLOYMENT_STATUSES,
   EMPLOYMENT_TYPE_LABELS,
@@ -69,9 +67,12 @@ const COLUMN_HEADERS = [
   ['payslips', 'Payslips'],
   ['bankAccountDetails', 'Bank account details'],
   ['stipend', 'Stipend (intern)'],
-  ['fixedPay', 'Fixed pay (consultant)'],
+  ['serviceFeeAnnual', 'Service fee annual (consultant)'],
+  ['fixedPay', 'Service fee monthly (consultant)'],
   ['joiningBonus', 'Joining bonus (consultant)'],
+  ['joiningBonusMonths', 'Joining bonus clause months (consultant)'],
   ['retentionBonus', 'Retention bonus (consultant)'],
+  ['retentionBonusMonths', 'Retention bonus clause months (consultant)'],
   ['esops', 'ESOPs (consultant)'],
   ['bonusAmount', 'Bonus (consultant)'],
   ['bonusFrequency', 'Bonus frequency (consultant)'],
@@ -129,6 +130,17 @@ const HEADER_ALIASES = {
   status: 'employmentStatus',
   probation: 'probationPeriod',
   confirmation: 'confirmationDate',
+  joiningbonus: 'joiningBonus',
+  joiningclause: 'joiningBonusMonths',
+  joiningclausemonths: 'joiningBonusMonths',
+  joiningbonusclausemonths: 'joiningBonusMonths',
+  retentionbonus: 'retentionBonus',
+  retentionclause: 'retentionBonusMonths',
+  retentionclausemonths: 'retentionBonusMonths',
+  annualservicefee: 'serviceFeeAnnual',
+  servicefeeannual: 'serviceFeeAnnual',
+  monthlyservicefee: 'fixedPay',
+  servicefeemonthly: 'fixedPay',
   basicsal: 'basicSalary',
   basic: 'basicSalary',
   pf: 'pfEpfDetails',
@@ -167,7 +179,6 @@ const EMPLOYMENT_TYPE_OPTIONS = optionsFrom(EMPLOYMENT_TYPES, EMPLOYMENT_TYPE_LA
 const WORK_MODE_OPTIONS = optionsFrom(WORK_MODES, WORK_MODE_LABELS);
 const EMPLOYMENT_STATUS_OPTIONS = optionsFrom(EMPLOYMENT_STATUSES, EMPLOYMENT_STATUS_LABELS);
 const ASSET_CATEGORY_OPTIONS = optionsFrom(ASSET_CATEGORIES, ASSET_CATEGORY_LABELS);
-const BONUS_FREQUENCY_OPTIONS = optionsFrom(BONUS_FREQUENCIES, BONUS_FREQUENCY_LABELS);
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -488,31 +499,25 @@ export function rowToOnboardingBody(raw, managers = []) {
   }
 
   const moneyKeys = [
-    'basicSalary',
-    'hra',
-    'allowances',
-    'variablePay',
-    'bonuses',
-    'deductions',
-    'professionalTax',
-    'tds',
-    'netSalary',
-    'stipend',
     'fixedPay',
+    'serviceFeeAnnual',
     'joiningBonus',
     'retentionBonus',
-    'bonusAmount',
   ];
   for (const key of moneyKeys) {
     const text = cellText(raw[key]).replace(/[,₹$]/g, '').replace(/\s/g, '');
     if (text) form[key] = text;
   }
-  set('pfEpfDetails', cellText(raw.pfEpfDetails));
-  set('salaryHistory', cellText(raw.salaryHistory));
-  set('payslips', cellText(raw.payslips));
-  set('bankAccountDetails', cellText(raw.bankAccountDetails));
-  set('esops', cellText(raw.esops));
-  set('bonusFrequency', matchOption(BONUS_FREQUENCY_OPTIONS, raw.bonusFrequency));
+  if (form.serviceFeeAnnual && !form.fixedPay) {
+    const annual = Number(form.serviceFeeAnnual);
+    if (Number.isFinite(annual)) {
+      form.fixedPay = String(Math.round((annual / 12) * 100) / 100);
+    }
+  }
+  for (const key of ['joiningBonusMonths', 'retentionBonusMonths']) {
+    const text = cellText(raw[key]).replace(/\s/g, '');
+    if (text) form[key] = text;
+  }
 
   const assetSlots = Math.max(
     ASSET_SLOTS,

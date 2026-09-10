@@ -15,7 +15,55 @@ export const REQUEST_LABELS = {
   ...APPLY_LABELS,
   general: 'General Holiday',
   mandatory: 'Company Holiday',
+  national: 'National Holiday',
+  regional: 'Regional Holiday',
 };
+
+/** Fixed Indian national holiday month-days (IST calendar). */
+export const NATIONAL_HOLIDAY_MONTH_DAYS = new Set([
+  '01-26', // Republic Day
+  '05-01', // May Day
+  '08-15', // Independence Day
+  '10-02', // Gandhi Jayanti
+]);
+
+export const HOLIDAY_KIND_LABELS = {
+  national: 'National',
+  regional: 'Regional',
+  restricted: 'Restricted',
+};
+
+/**
+ * Classify a published/mandatory holiday for UI:
+ * - restricted → Restricted
+ * - fixed national dates → National
+ * - other general/company holidays → Regional
+ */
+export function holidayKind(holiday) {
+  const type = String(holiday?.holidayType || holiday?.leaveType || '').toLowerCase();
+  if (type === 'restricted') return 'restricted';
+
+  const ymd = toYmd(holiday?.startDate || holiday?.date || holiday?.endDate);
+  if (ymd && NATIONAL_HOLIDAY_MONTH_DAYS.has(ymd.slice(5, 10))) return 'national';
+
+  const title = String(
+    holiday?.userName || holiday?.title || holiday?.name || holiday?.holiday || ''
+  ).toLowerCase();
+  if (
+    /republic\s*day/.test(title) ||
+    /independence\s*day/.test(title) ||
+    /gandhi\s*jayanti/.test(title) ||
+    /may\s*day|labour\s*day|labor\s*day/.test(title)
+  ) {
+    return 'national';
+  }
+
+  return 'regional';
+}
+
+export function holidayKindLabel(kind) {
+  return HOLIDAY_KIND_LABELS[kind] || HOLIDAY_KIND_LABELS.regional;
+}
 
 export const SESSION_LABELS = {
   full: 'Full day',
@@ -282,6 +330,15 @@ export function isUnderNineHours(workMinutes) {
   return Number(workMinutes) < REQUIRED_WORK_MINUTES;
 }
 
+/** First punch-in + required work day (9h) → expected logout timestamp (Date), or null. */
+export function expectedLogoutFromPunchIn(punchIn, workMinutes = REQUIRED_WORK_MINUTES) {
+  const start = parseAppDateTime(punchIn);
+  if (!start) return null;
+  const mins = Number(workMinutes);
+  if (!Number.isFinite(mins) || mins <= 0) return null;
+  return new Date(start.getTime() + mins * 60_000);
+}
+
 export function hasMissingPunchOut(session, todayYmd) {
   if (!session) return false;
   if (session.missingPunchOut) return true;
@@ -292,7 +349,7 @@ export function hasMissingPunchOut(session, todayYmd) {
 
 /** Time only, e.g. "2:50 PM" — for punch times when the date is already shown. */
 export function formatTime(value) {
-  const d = parseAppDateTime(value);
+  const d = value instanceof Date && !Number.isNaN(value.getTime()) ? value : parseAppDateTime(value);
   if (!d) return value || '—';
   return d.toLocaleTimeString(APP_LOCALE, {
     timeZone: APP_TIMEZONE,

@@ -26,6 +26,7 @@ import {
 import LeaveBalanceSummaryCards, {
   computePersonalLeaveTotals,
 } from './LeaveBalanceSummaryCards';
+import LeavePolicyPanel from './LeavePolicyPanel';
 
 function initials(name) {
   const parts = String(name || '')
@@ -65,6 +66,7 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
   const { mode: themeMode } = useTheme();
   const year = appToday().getFullYear();
   const [balances, setBalances] = useState(null);
+  const [earnedLeaveUnlocked, setEarnedLeaveUnlocked] = useState(false);
   const [leaves, setLeaves] = useState([]);
   const [holidayData, setHolidayData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -90,6 +92,7 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
         api(`/holidays?year=${year}`),
       ]);
       setBalances(balanceData.balances);
+      setEarnedLeaveUnlocked(balanceData.earnedLeave?.unlocked === true);
       const mine = (leaveData.leaves || []).filter(
         (leave) => String(leave.userId) === String(user?.id)
       );
@@ -97,6 +100,7 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
       setHolidayData(holidays);
     } catch {
       setBalances({ casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 });
+      setEarnedLeaveUnlocked(true);
       setLeaves([]);
     } finally {
       setLoading(false);
@@ -118,12 +122,14 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
     [holidayData]
   );
   const balanceCards = useMemo(() => {
-    const totals = computePersonalLeaveTotals(balances, leaves, user?.id);
+    const totals = computePersonalLeaveTotals(balances, leaves, user?.id, {
+      earnedUnlocked: earnedLeaveUnlocked,
+    });
     return restrictedOnly ? totals.filter((card) => card.key === 'restricted') : totals;
-  }, [balances, leaves, user?.id, restrictedOnly]);
+  }, [balances, leaves, user?.id, restrictedOnly, earnedLeaveUnlocked]);
   const typeOptions = restrictedOnly
     ? [['restricted', APPLY_LABELS.restricted]]
-    : Object.entries(APPLY_LABELS);
+    : Object.entries(APPLY_LABELS).filter(([key]) => earnedLeaveUnlocked || key !== 'earned');
   const restricted = form.leaveType === 'restricted';
   const celebration = form.leaveType === 'celebration';
   const wfh = isWfh(form.leaveType);
@@ -542,6 +548,8 @@ export default function LeaveBalanceDashboard({ restrictedOnly = false }) {
           </div>
         )}
       </section>
+
+      {!restrictedOnly ? <LeavePolicyPanel /> : null}
     </div>
   );
 }

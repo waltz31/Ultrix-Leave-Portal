@@ -5,7 +5,7 @@ import { useAuth } from '../auth';
 import { usePollWhenVisible } from '../usePollWhenVisible';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
-import { PunchInProgressChip, PunchStillInChip } from './PunchStatusChips';
+import { PunchCheckoutDisplay, PunchInProgressChip } from './PunchStatusChips';
 import {
   REQUEST_LABELS,
   STATUS_LABELS,
@@ -13,9 +13,13 @@ import {
   avatarSrc,
   formatOverviewHolidayRow,
   formatTime,
+  holidayKind,
+  holidayKindLabel,
   punchInLateness,
   isUnderNineHours,
   insufficientRestrictedBalance,
+  expectedLogoutFromPunchIn,
+  REQUIRED_WORK_MINUTES,
   isApplyBlockError,
   toYmd,
 } from '../utils';
@@ -343,13 +347,17 @@ export function CompanyHolidaysPanel({
             const { day, month, weekdayShort } = holidayCardDate(holiday.startDate);
             const { date, weekday } = formatOverviewHolidayRow(holiday.startDate);
             const name = holiday.userName || holiday.title || 'Holiday';
-            const isRestricted = holiday.holidayType === 'restricted';
+            const kind = holidayKind(holiday);
+            const isRestricted = kind === 'restricted';
             return (
               <li
                 key={holiday.id || `${holiday.startDate}-${name}`}
-                className={`overview-holiday-card ${isRestricted ? 'is-restricted' : 'is-general'}`.trim()}
-                aria-label={`${name}, ${date}${weekday ? `, ${weekday}` : ''}`}
+                className={`overview-holiday-card is-${kind}${kind === 'national' ? ' has-india-flag' : ''}`.trim()}
+                aria-label={`${name}, ${holidayKindLabel(kind)}, ${date}${weekday ? `, ${weekday}` : ''}`}
               >
+                {kind === 'national' ? (
+                  <span className="india-flag-backdrop" aria-hidden="true" />
+                ) : null}
                 <div className="overview-holiday-dateblock" aria-hidden>
                   <span className="overview-holiday-day">{day}</span>
                   <span className="overview-holiday-month">{month}</span>
@@ -362,7 +370,9 @@ export function CompanyHolidaysPanel({
                   {isRestricted ? (
                     actionFor(holiday)
                   ) : (
-                    <span className="badge type-general">General</span>
+                    <span className={`badge type-${kind === 'national' ? 'national' : 'regional'}`}>
+                      {holidayKindLabel(kind)}
+                    </span>
                   )}
                 </div>
               </li>
@@ -476,10 +486,13 @@ export function TodayPunchesPanel({ attendanceTo = null, title = 'Office punches
                   <div>
                     <span>Out</span>
                     <strong>
-                      {session.punchOut ? (
-                        formatTime(session.punchOut)
-                      ) : session.stillIn ? (
-                        <PunchStillInChip />
+                      {session.punchOut || session.stillIn ? (
+                        <PunchCheckoutDisplay
+                          session={session}
+                          formatTime={formatTime}
+                          expectedLogoutFromPunchIn={expectedLogoutFromPunchIn}
+                          requiredMinutes={REQUIRED_WORK_MINUTES}
+                        />
                       ) : (
                         '--:--'
                       )}

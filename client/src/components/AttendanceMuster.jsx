@@ -3,47 +3,56 @@ import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { api } from '../api';
 import { usePollWhenVisible } from '../usePollWhenVisible';
-import {
-  APPLY_LABELS,
-  appToday,
-  avatarSrc,
-  formatDate,
-  formatTime,
-  isUnderNineHours,
-  punchInLateness,
-  toYmd,
-} from '../utils';
-import { PunchInProgressChip, PunchStillInChip } from './PunchStatusChips';
+import { appToday, toYmd } from '../utils';
 
-const STATUS_META = {
-  present: { label: 'Present', className: 'is-present' },
-  late: { label: 'Late', className: 'is-late' },
-  absent: { label: 'Absent', className: 'is-absent' },
-  on_leave: { label: 'On leave', className: 'is-leave' },
-  wfh: { label: 'WFH', className: 'is-wfh' },
-  weekend: { label: 'Weekend', className: 'is-off' },
-  holiday: { label: 'Holiday', className: 'is-off' },
-};
+function monthLabel(month) {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) return month || '';
+  const [y, m] = month.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+}
 
-function statusLabel(row) {
-  if (row.status === 'on_leave' && row.leaveType) {
-    return APPLY_LABELS[row.leaveType] || STATUS_META.on_leave.label;
+function shiftMonth(month, delta) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  const yy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${yy}-${mm}`;
+}
+
+function monthOptions(around) {
+  const opts = [];
+  for (let i = -8; i <= 2; i += 1) {
+    const value = shiftMonth(around, i);
+    opts.push({ value, label: monthLabel(value) });
   }
-  if (row.status === 'holiday') return STATUS_META.holiday.label;
-  return STATUS_META[row.status]?.label || row.status;
+  return opts;
 }
 
 function downloadMusterExcel(muster, filename) {
-  const rows = (muster?.rows || []).map((row) => ({
-    Employee: row.userName || '',
-    'Employee ID': row.employeeNumber || '',
-    Department: row.department || '',
-    Location: row.location || '',
-    'Punch In': row.punchIn ? formatTime(row.punchIn) : '',
-    'Punch Out': row.punchOut ? formatTime(row.punchOut) : row.stillIn ? 'Still in' : '',
-    'Work Hours': row.workHours || (row.stillIn ? 'In progress' : ''),
-    Status: statusLabel(row),
-  }));
+  const days = muster?.days || [];
+  const totalKeys = muster?.totalKeys || [];
+  const balanceLabelByKey = Object.fromEntries(
+    (muster?.balanceColumns || []).map((col) => [col.key, col.label || col.key])
+  );
+  const rows = (muster?.rows || []).map((row) => {
+    const out = {
+      Employee: row.userName || '',
+      'Employee ID': row.employeeNumber || '',
+      Designation: row.designation || '',
+      Location: row.location || '',
+      Department: row.department || '',
+    };
+    for (const day of days) {
+      out[`${day.day} ${day.weekday}`] = row.cells?.[day.ymd]?.code || '-';
+    }
+    for (const key of totalKeys) {
+      const label = balanceLabelByKey[key] || key;
+      const n = Number(row.totals?.[key]);
+      out[`${label} Bal`] = Number.isFinite(n) ? n : 0;
+    }
+    return out;
+  });
+
   const sheet = XLSX.utils.json_to_sheet(
     rows.length
       ? rows
@@ -51,38 +60,41 @@ function downloadMusterExcel(muster, filename) {
           {
             Employee: '',
             'Employee ID': '',
-            Department: '',
+            Designation: '',
             Location: '',
-            'Punch In': '',
-            'Punch Out': '',
-            'Work Hours': '',
-            Status: '',
+            Department: '',
           },
         ]
   );
-  sheet['!cols'] = [
-    { wch: 28 },
-    { wch: 14 },
-    { wch: 18 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 16 },
-  ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Muster');
-  XLSX.writeFile(workbook, filename || `attendance-muster-${muster?.date || 'export'}.xlsx`);
+  XLSX.writeFile(workbook, filename || `attendance-muster-${muster?.month || 'export'}.xlsx`);
+}
+
+function fmtBalance(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return n % 1 ? n.toFixed(1) : String(n);
+}
+
+function cellTitle(cell, day) {
+  if (!cell) return '';
+  const bits = [cell.code];
+  if (cell.leaveType) bits.push(cell.leaveType);
+  if (cell.holidayTitle) bits.push(cell.holidayTitle);
+  if (day?.holiday?.title) bits.push(day.holiday.title);
+  if (cell.late) bits.push('Grace / late');
+  return bits.filter(Boolean).join(' · ');
 }
 
 export default function AttendanceMuster({ canSync = false }) {
   const [searchParams] = useSearchParams();
   const today = toYmd(appToday());
-  const [date, setDate] = useState(searchParams.get('date') || today);
-  const [location, setLocation] = useState('');
-  const [department, setDepartment] = useState('');
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('focus') || '');
-  const [query, setQuery] = useState('');
+  const initialMonth = (searchParams.get('month') || searchParams.get('date') || today).slice(0, 7);
+
+  const [month, setMonth] = useState(initialMonth);
+  const [employeeId, setEmployeeId] = useState('');
+  const [category, setCategory] = useState('');
   const [data, setData] = useState(null);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
@@ -90,14 +102,14 @@ export default function AttendanceMuster({ canSync = false }) {
   const [syncing, setSyncing] = useState(false);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ date });
-    if (location) params.set('location', location);
-    if (department) params.set('department', department);
+    const params = new URLSearchParams({ month });
+    if (category) params.set('department', category);
+    if (employeeId) params.set('userId', employeeId);
     const res = await api(`/attendance/muster?${params}`);
     setData(res.muster);
     setStatus(res.status || null);
     setError('');
-  }, [date, location, department]);
+  }, [month, category, employeeId]);
 
   usePollWhenVisible(
     () => {
@@ -105,7 +117,7 @@ export default function AttendanceMuster({ canSync = false }) {
         .catch((err) => setError(err.message || 'Could not load attendance muster'))
         .finally(() => setLoading(false));
     },
-    60_000,
+    120_000,
     [load]
   );
 
@@ -128,52 +140,31 @@ export default function AttendanceMuster({ canSync = false }) {
     }
   }
 
-  const kpis = data?.kpis;
-  const filters = data?.filters || { locations: [], departments: [] };
-
-  const rows = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return (data?.rows || []).filter((row) => {
-      if (statusFilter === 'present' && !(row.status === 'present' || row.status === 'late')) return false;
-      if (statusFilter === 'late' && row.status !== 'late') return false;
-      if (statusFilter === 'absent' && row.status !== 'absent') return false;
-      if (statusFilter === 'on_leave' && row.status !== 'on_leave') return false;
-      if (statusFilter === 'wfh' && row.status !== 'wfh') return false;
-      if (statusFilter === 'off' && row.status !== 'weekend' && row.status !== 'holiday') return false;
-      if (!q) return true;
-      const hay = [row.userName, row.employeeNumber, row.department, row.location]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [data, query, statusFilter]);
-
-  const dayNote = data?.dayOff?.holiday?.title
-    ? `Holiday · ${data.dayOff.holiday.title}`
-    : data?.dayOff?.weekend
-      ? 'Weekend'
-      : null;
+  const filters = data?.filters || { locations: [], departments: [], employees: [] };
+  const days = data?.days || [];
+  const totalKeys = data?.totalKeys || [];
+  const balanceLabelByKey = useMemo(() => {
+    const map = {};
+    for (const col of data?.balanceColumns || []) {
+      map[col.key] = col.label || col.key;
+    }
+    return map;
+  }, [data?.balanceColumns]);
+  const rows = data?.rows || [];
+  const months = useMemo(() => monthOptions(today.slice(0, 7)), [today]);
 
   return (
-    <div className="muster">
+    <div className="muster muster-monthly">
       <div className="muster-head">
         <div>
           <h2>Attendance Muster</h2>
-          <p className="muted">
-            Daily attendance for {formatDate(date)}
-            {dayNote ? ` · ${dayNote}` : ''}.
-          </p>
+          <p className="muted">{monthLabel(month)} · monthly roll</p>
         </div>
         <div className="muster-toolbar">
-          <label>
-            Date
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </label>
           <button
             type="button"
             className="btn secondary"
-            disabled={!data?.rows?.length}
+            disabled={!rows.length}
             onClick={() => downloadMusterExcel(data)}
           >
             Export Excel
@@ -186,69 +177,39 @@ export default function AttendanceMuster({ canSync = false }) {
         </div>
       </div>
 
-      {status && !status.configured && (
-        <p className="form-error">Punch API password is not configured on the server.</p>
-      )}
-      {status?.lastError ? <p className="form-error">{status.lastError}</p> : null}
-      {error && <p className="form-error">{error}</p>}
-      {loading && !data && <p className="muted">Loading muster…</p>}
-
-      {kpis && (
-        <div className="muster-kpis">
-          <div className="panel muster-kpi">
-            <span>Total</span>
-            <strong>{kpis.totalEmployees}</strong>
-          </div>
-          <div className="panel muster-kpi is-present">
-            <span>Present</span>
-            <strong>{kpis.present}</strong>
-            <em>{kpis.presentPct}%</em>
-          </div>
-          <div className="panel muster-kpi is-late">
-            <span>Late</span>
-            <strong>{kpis.late}</strong>
-            <em>{kpis.latePct}%</em>
-          </div>
-          <div className="panel muster-kpi is-absent">
-            <span>Absent</span>
-            <strong>{kpis.absent}</strong>
-            <em>{kpis.absentPct}%</em>
-          </div>
-          <div className="panel muster-kpi is-leave">
-            <span>On leave</span>
-            <strong>{kpis.onLeave}</strong>
-            <em>{kpis.onLeavePct}%</em>
-          </div>
-          <div className="panel muster-kpi is-wfh">
-            <span>WFH</span>
-            <strong>{kpis.wfh}</strong>
-            <em>{kpis.wfhPct}%</em>
-          </div>
-          <div className="panel muster-kpi is-off">
-            <span>Weekend / Holiday</span>
-            <strong>{kpis.weekendHoliday}</strong>
-          </div>
-          <div className="panel muster-kpi is-rate">
-            <span>Attendance rate</span>
-            <strong>{kpis.attendanceRate}%</strong>
-          </div>
-        </div>
-      )}
-
-      <div className="filters muster-filters">
-        <label className="muster-search">
-          Search
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Name or employee ID…"
-          />
+      <div className="muster-roll-filters">
+        <label>
+          <span className="sr-only">Month</span>
+          <select value={month} onChange={(e) => setMonth(e.target.value)}>
+            {months.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                Month: {opt.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
-          Department
-          <select value={department} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">All departments</option>
+          <span className="sr-only">Attendance cycle</span>
+          <select value="default" disabled>
+            <option value="default">Default Attendance Cycle</option>
+          </select>
+        </label>
+        <label>
+          <span className="sr-only">Employee</span>
+          <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+            <option value="">Employee: All</option>
+            {filters.employees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name}
+                {emp.employeeNumber ? ` [${emp.employeeNumber}]` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span className="sr-only">Category</span>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">Category: All</option>
             {filters.departments.map((dept) => (
               <option key={dept} value={dept}>
                 {dept}
@@ -256,105 +217,98 @@ export default function AttendanceMuster({ canSync = false }) {
             ))}
           </select>
         </label>
-        <label>
-          Location
-          <select value={location} onChange={(e) => setLocation(e.target.value)}>
-            <option value="">All locations</option>
-            {filters.locations.map((loc) => (
-              <option key={loc} value={loc}>
-                {loc}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="present">Present</option>
-            <option value="late">Late</option>
-            <option value="absent">Absent</option>
-            <option value="on_leave">On leave</option>
-            <option value="wfh">WFH</option>
-            <option value="off">Weekend / Holiday</option>
-          </select>
-        </label>
       </div>
+
+      {status && !status.configured && (
+        <p className="form-error">Punch API password is not configured on the server.</p>
+      )}
+      {status?.lastError ? <p className="form-error">{status.lastError}</p> : null}
+      {error && <p className="form-error">{error}</p>}
+      {loading && !data && <p className="muted">Loading muster…</p>}
 
       {!loading && data && !rows.length && (
         <p className="empty">No employees match these filters.</p>
       )}
 
       {!!rows.length && (
-        <div className="table-wrap">
-          <table className="muster-table">
+        <div className="muster-roll-wrap">
+          <table className="muster-roll-table">
             <thead>
               <tr>
-                <th>Employee</th>
-                <th>Department</th>
-                <th>Punch in</th>
-                <th>Punch out</th>
-                <th>Work hours</th>
-                <th>Status</th>
+                <th className="muster-roll-emp-col">Employee</th>
+                {days.map((day) => (
+                  <th
+                    key={day.ymd}
+                    className={`muster-roll-day-col${day.isWeekend ? ' is-weekend' : ''}${
+                      day.holiday ? ' is-holiday' : ''
+                    }`}
+                    title={day.holiday?.title || undefined}
+                  >
+                    <span>{day.day}</span>
+                    <em>{day.weekday}</em>
+                  </th>
+                ))}
+                {totalKeys.map((key) => (
+                  <th key={key} className="muster-roll-total-col" title={`${balanceLabelByKey[key] || key} balance`}>
+                    {balanceLabelByKey[key] || key}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
-                const meta = STATUS_META[row.status] || STATUS_META.absent;
-                return (
-                  <tr key={row.userId}>
-                    <td>
-                      <div className="muster-emp">
-                        <img src={avatarSrc(row.profilePhoto)} alt="" />
-                        <div>
-                          <strong>{row.userName || '—'}</strong>
-                          <div className="sub">{row.employeeNumber || '—'}</div>
-                        </div>
-                      </div>
+              {rows.map((row) => (
+                <tr key={row.userId}>
+                  <th className="muster-roll-emp-col" scope="row">
+                    <div className="muster-roll-emp">
+                      <strong>
+                        {row.userName || '—'}
+                        {row.employeeNumber ? (
+                          <span className="muster-roll-emp-id"> [{row.employeeNumber}]</span>
+                        ) : null}
+                      </strong>
+                      {row.subtitle ? <span className="muster-roll-emp-sub">{row.subtitle}</span> : null}
+                    </div>
+                  </th>
+                  {days.map((day) => {
+                    const cell = row.cells?.[day.ymd] || { code: '-', tone: 'future' };
+                    return (
+                      <td
+                        key={day.ymd}
+                        className={`muster-roll-cell tone-${cell.tone || 'empty'}${
+                          cell.code === 'A' ? ' is-absent' : ''
+                        }`}
+                        title={cellTitle(cell, day)}
+                      >
+                        <span>{cell.code || '-'}</span>
+                      </td>
+                    );
+                  })}
+                  {totalKeys.map((key) => (
+                    <td key={key} className="muster-roll-total-cell">
+                      {fmtBalance(row.totals?.[key])}
                     </td>
-                    <td>
-                      {row.department || '—'}
-                      {row.location ? <div className="sub">{row.location}</div> : null}
-                    </td>
-                    <td>
-                      {row.punchIn ? (
-                        <span className={`punch-in-sq is-${punchInLateness(row.punchIn) || 'on-time'}`}>
-                          {formatTime(row.punchIn)}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td>
-                      {row.punchOut ? (
-                        formatTime(row.punchOut)
-                      ) : row.stillIn ? (
-                        <PunchStillInChip />
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td>
-                      {row.workHours ? (
-                        <span className={isUnderNineHours(row.workMinutes) ? 'work-hours-short' : undefined}>
-                          {row.workHours}
-                        </span>
-                      ) : row.stillIn ? (
-                        <PunchInProgressChip />
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td>
-                      <span className={`muster-status ${meta.className}`}>{statusLabel(row)}</span>
-                    </td>
-                  </tr>
-                );
-              })}
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {data?.legend?.length ? (
+        <div className="muster-roll-footer">
+          <div className="muster-roll-legend">
+            <h3>Legend</h3>
+            <div className="muster-roll-legend-list">
+              {data.legend.map((item) => (
+                <span key={`${item.code}-${item.label}`} className={`muster-roll-chip tone-${item.tone}`}>
+                  {item.label}: {item.code}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

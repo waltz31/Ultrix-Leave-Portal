@@ -42,14 +42,20 @@ export function UserHome() {
   const { data, error, loading, reload } = useLoad(
     () =>
       Promise.all([
-        api('/balances/me').then((d) => d.balances),
+        api('/balances/me'),
         api(`/leaves?from=${year}-01-01&to=${year}-12-31`).then((d) => d.leaves),
         api('/reports/overview?lite=1'),
-      ]).then(([balances, leaves, report]) => ({ balances, leaves, report })),
+      ]).then(([balanceData, leaves, report]) => ({
+        balances: balanceData.balances,
+        earnedLeaveUnlocked: balanceData.earnedLeave?.unlocked === true,
+        leaves,
+        report,
+      })),
     [year]
   );
 
   const balances = data?.balances;
+  const earnedLeaveUnlocked = data?.earnedLeaveUnlocked === true;
   const leaves = data?.leaves;
   const report = data?.report;
 
@@ -61,6 +67,7 @@ export function UserHome() {
     <AppShell title="Dashboard" nav={NAV}>
       <EmployeeDashboard
         balances={balances}
+        earnedLeaveUnlocked={earnedLeaveUnlocked}
         leaves={leaves}
         report={report}
         loading={loading}
@@ -128,7 +135,7 @@ export function UserSalary() {
           payroll={data.payroll}
           employmentType={data.employment?.employmentType}
           showSensitive
-          title={`${data.name} · salary components`}
+          title={`${data.name} · salary structure`}
         />
       )}
     </AppShell>

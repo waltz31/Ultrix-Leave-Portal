@@ -18,10 +18,13 @@ const GET_CACHE_MS = {
   '/holidays': 5 * 60_000,
   '/reports/overview': 60_000,
   '/users': 60_000,
+  '/managers': 60_000,
+  '/onboarding': 45_000,
   '/auth/me': 30_000,
   '/balances/me': 30_000,
   '/notifications': 15_000,
   '/dashboard/stats': 30_000,
+  '/leave-policy/acknowledgement': 60_000,
 };
 
 const getCache = new Map();
@@ -32,8 +35,11 @@ function cacheTtl(path) {
   if (GET_CACHE_MS[base]) return GET_CACHE_MS[base];
   if (base.startsWith('/holidays')) return GET_CACHE_MS['/holidays'];
   if (base.startsWith('/reports/overview')) return GET_CACHE_MS['/reports/overview'];
-  if (base.startsWith('/attendance/overview')) return 30_000;
+  if (base.startsWith('/attendance/overview')) return 45_000;
+  if (base.startsWith('/attendance/muster')) return 45_000;
+  if (base.startsWith('/attendance/calendar')) return 30_000;
   if (base.startsWith('/punches')) return 20_000;
+  if (base.startsWith('/leaves')) return 15_000;
   return 0;
 }
 
@@ -87,6 +93,11 @@ export async function api(path, options = {}) {
       invalidateApiCache('/holidays');
       invalidateApiCache('/attendance');
       invalidateApiCache('/punches');
+      invalidateApiCache('/onboarding');
+      invalidateApiCache('/users');
+      invalidateApiCache('/managers');
+      invalidateApiCache('/leave-policy');
+      invalidateApiCache('/dashboard');
     }
     return fetchApi(path, options);
   }

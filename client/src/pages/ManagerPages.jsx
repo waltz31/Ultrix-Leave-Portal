@@ -3,8 +3,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
-import LeaveCalendar from '../components/LeaveCalendar';
-import HrEmployeeBalanceDirectory from '../components/HrEmployeeBalanceDirectory';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveReportSection } from '../components/LeaveReports';
@@ -12,9 +10,10 @@ import LazySection from '../components/LazySection';
 import OverviewPanels from '../components/OverviewPanels';
 import LeaveBalanceDashboard from '../components/LeaveBalanceDashboard';
 import CompanyFeed from '../components/CompanyFeed';
-import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, includeInAttendanceRoster, isWfh } from '../utils';
+import { APPLY_LABELS, REQUEST_LABELS, SESSION_LABELS, STATUS_LABELS, appToday, formatLeaveSpan, isWfh } from '../utils';
 import AttendanceMuster from '../components/AttendanceMuster';
 import HrAttendanceOverview from '../components/HrAttendanceOverview';
+import TeamAttendanceCalendar from '../components/TeamAttendanceCalendar';
 import RegularizationInbox from '../components/RegularizationInbox';
 import HistoryWorkspace from '../components/HistoryWorkspace';
 import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
@@ -310,52 +309,15 @@ export function ManagerApprovals() {
 export function ManagerApply() {
   return (
     <AppShell title="Apply Leave" nav={NAV}>
-      <LeaveBalanceDashboard restrictedOnly />
+      <LeaveBalanceDashboard />
     </AppShell>
   );
 }
 
 export function ManagerCalendar() {
-  const now = appToday();
-  const year = now.getFullYear();
-  const from = `${year}-01-01`;
-  const to = `${year}-12-31`;
-  const { data, error, loading, reload } = useLoad(
-    () =>
-      Promise.all([
-        api(`/leaves/calendar?from=${from}&to=${to}`).then((d) => d.leaves),
-        api('/users').then((d) => d.users),
-      ]).then(([leaves, users]) => ({
-        leaves,
-        users,
-        balancesByUserId: Object.fromEntries(
-          users.map((u) => [
-            u.id,
-            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 },
-          ])
-        ),
-      })),
-    [from, to]
-  );
-
   return (
     <AppShell title="Attendance Info" nav={NAV}>
-      {loading && <p className="muted">Loading…</p>}
-      {error && <p className="form-error">{error}</p>}
-      {data && (
-        <div className="leave-mgmt-stack">
-          <HrEmployeeBalanceDirectory
-            users={(data.users || []).filter((u) => includeInAttendanceRoster(u))}
-          />
-          <LeaveCalendar
-            leaves={data.leaves}
-            showNames
-            layout="roster"
-            balancesByUserId={data.balancesByUserId}
-            employees={(data.users || []).filter((u) => includeInAttendanceRoster(u))}
-          />
-        </div>
-      )}
+      <TeamAttendanceCalendar scope="manager" />
     </AppShell>
   );
 }
@@ -388,7 +350,7 @@ export function ManagerSalary() {
           payroll={data.payroll}
           employmentType={data.employment?.employmentType}
           showSensitive
-          title={`${data.name} · salary components`}
+          title={`${data.name} · salary structure`}
         />
       )}
     </AppShell>

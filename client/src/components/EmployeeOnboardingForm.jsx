@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { avatarSrc, managerOptionLabel } from '../utils';
+import { ConsultantAgreementForm, monthlyFromAnnualInput } from './ConsultantAgreementSalary';
 
 export const EMPLOYMENT_TYPE_OPTIONS = [
   { value: 'full_time', label: 'Full-time' },
@@ -44,20 +45,6 @@ export const ASSET_CATEGORY_OPTIONS = [
   { value: 'access_card', label: 'Access card' },
   { value: 'other', label: 'Other' },
 ];
-
-export const BONUS_FREQUENCY_OPTIONS = [
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'half_yearly', label: 'Half yearly' },
-  { value: 'yearly', label: 'Yearly' },
-];
-
-export function payStructureKind(employmentType) {
-  const type = String(employmentType || '').trim().toLowerCase();
-  if (type === 'intern') return 'intern';
-  if (type === 'consultant') return 'consultant';
-  return 'employee';
-}
 
 export const EMPTY_ASSET = {
   assetCategory: 'laptop_desktop',
@@ -113,8 +100,11 @@ export const EMPTY_ONBOARDING_FORM = {
   bankAccountDetails: '',
   stipend: '',
   fixedPay: '',
+  serviceFeeAnnual: '',
   joiningBonus: '',
+  joiningBonusMonths: '',
   retentionBonus: '',
+  retentionBonusMonths: '',
   esops: '',
   bonusAmount: '',
   bonusFrequency: '',
@@ -207,9 +197,17 @@ export function profileToForm(profile) {
     payslips: profile.payroll?.payslips || '',
     bankAccountDetails: profile.payroll?.bankAccountDetails || '',
     stipend: profile.payroll?.stipend ?? '',
-    fixedPay: profile.payroll?.fixedPay ?? '',
+    serviceFeeAnnual: profile.payroll?.serviceFeeAnnual ?? '',
+    fixedPay:
+      profile.payroll?.serviceFeeAnnual !== undefined &&
+      profile.payroll?.serviceFeeAnnual !== null &&
+      profile.payroll?.serviceFeeAnnual !== ''
+        ? monthlyFromAnnualInput(profile.payroll.serviceFeeAnnual)
+        : (profile.payroll?.fixedPay ?? ''),
     joiningBonus: profile.payroll?.joiningBonus ?? '',
+    joiningBonusMonths: profile.payroll?.joiningBonusMonths ?? '',
     retentionBonus: profile.payroll?.retentionBonus ?? '',
+    retentionBonusMonths: profile.payroll?.retentionBonusMonths ?? '',
     esops: profile.payroll?.esops || '',
     bonusAmount: profile.payroll?.bonusAmount ?? '',
     bonusFrequency: profile.payroll?.bonusFrequency || '',
@@ -583,7 +581,16 @@ export default function EmployeeOnboardingForm({
           </label>
           <label>
             Employment type
-            <select {...field('employmentType')}>
+            <select
+              value={form.employmentType}
+              onChange={(e) => {
+                const employmentType = e.target.value;
+                setForm((f) => ({ ...f, employmentType }));
+                if (employmentType) {
+                  setOpenSections((s) => ({ ...s, payroll: true }));
+                }
+              }}
+            >
               <option value="">Select…</option>
               {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -837,111 +844,7 @@ export default function EmployeeOnboardingForm({
         open={openSections.payroll}
         onToggle={toggleSection}
       >
-        <div className="form-grid">
-          {payStructureKind(form.employmentType) === 'intern' && (
-            <label>
-              Stipend
-              <input type="number" min="0" step="0.01" {...field('stipend')} />
-            </label>
-          )}
-
-          {payStructureKind(form.employmentType) === 'consultant' && (
-            <>
-              <label>
-                Fixed pay
-                <input type="number" min="0" step="0.01" {...field('fixedPay')} />
-              </label>
-              <label>
-                Joining bonus
-                <input type="number" min="0" step="0.01" {...field('joiningBonus')} />
-              </label>
-              <label>
-                Retention bonus
-                <input type="number" min="0" step="0.01" {...field('retentionBonus')} />
-              </label>
-              <label className="full">
-                ESOPs
-                <input {...field('esops')} placeholder="Grant size, vesting notes" />
-              </label>
-              <label>
-                Bonus
-                <input type="number" min="0" step="0.01" {...field('bonusAmount')} />
-              </label>
-              <label>
-                Bonus frequency
-                <select {...field('bonusFrequency')}>
-                  <option value="">Select…</option>
-                  {BONUS_FREQUENCY_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </>
-          )}
-
-          {payStructureKind(form.employmentType) === 'employee' && (
-            <>
-              <label>
-                Basic salary
-                <input type="number" min="0" step="0.01" {...field('basicSalary')} />
-              </label>
-              <label>
-                HRA
-                <input type="number" min="0" step="0.01" {...field('hra')} />
-              </label>
-              <label>
-                Allowances
-                <input type="number" min="0" step="0.01" {...field('allowances')} />
-              </label>
-              <label>
-                Variable pay / incentives
-                <input type="number" min="0" step="0.01" {...field('variablePay')} />
-              </label>
-              <label>
-                Bonuses
-                <input type="number" min="0" step="0.01" {...field('bonuses')} />
-              </label>
-              <label>
-                Deductions
-                <input type="number" min="0" step="0.01" {...field('deductions')} />
-              </label>
-              <label className="full">
-                PF / EPF details
-                <input {...field('pfEpfDetails')} placeholder="UAN, contribution notes" />
-              </label>
-              <label>
-                Professional tax
-                <input type="number" min="0" step="0.01" {...field('professionalTax')} />
-              </label>
-              <label>
-                TDS
-                <input type="number" min="0" step="0.01" {...field('tds')} />
-              </label>
-              <label>
-                Net salary
-                <input type="number" min="0" step="0.01" {...field('netSalary')} />
-              </label>
-              <label className="full">
-                Salary history
-                <textarea {...field('salaryHistory')} rows={2} placeholder="Past revisions / notes" />
-              </label>
-              <label className="full">
-                Payslips
-                <textarea {...field('payslips')} rows={2} placeholder="Links or storage notes" />
-              </label>
-              <label className="full">
-                Bank account details for salary
-                <textarea
-                  {...field('bankAccountDetails')}
-                  rows={2}
-                  placeholder="Bank name, account number, IFSC"
-                />
-              </label>
-            </>
-          )}
-        </div>
+        <ConsultantAgreementForm form={form} setForm={setForm} requireAnnual />
       </CollapsibleSection>
 
       <div className="onboarding-actions">

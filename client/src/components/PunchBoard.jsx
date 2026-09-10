@@ -4,8 +4,8 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { downloadPunchesExcel } from '../exportPunches';
 import { usePollWhenVisible } from '../usePollWhenVisible';
-import { formatDate, formatTime, isUnderNineHours, punchInLateness } from '../utils';
-import { PunchInProgressChip, PunchStillInChip } from './PunchStatusChips';
+import { formatDate, formatTime, isUnderNineHours, punchInLateness, expectedLogoutFromPunchIn, REQUIRED_WORK_MINUTES } from '../utils';
+import { PunchCheckoutDisplay, PunchInProgressChip } from './PunchStatusChips';
 import RegularizeRequestModal from './RegularizeRequestModal';
 import StatusCelebration from './StatusCelebration';
 
@@ -58,7 +58,7 @@ export default function PunchBoard({ canSync = false, teamView = false }) {
     }
   }, [range]);
 
-  usePollWhenVisible(load, 60_000, [load]);
+  usePollWhenVisible(load, 120_000, [load]);
 
   async function syncNow() {
     setSyncing(true);
@@ -207,10 +207,13 @@ export default function PunchBoard({ canSync = false, teamView = false }) {
                     )}
                   </td>
                   <td>
-                    {session.punchOut ? (
-                      formatTime(session.punchOut)
-                    ) : session.stillIn ? (
-                      <PunchStillInChip />
+                    {session.punchOut || session.stillIn ? (
+                      <PunchCheckoutDisplay
+                        session={session}
+                        formatTime={formatTime}
+                        expectedLogoutFromPunchIn={expectedLogoutFromPunchIn}
+                        requiredMinutes={REQUIRED_WORK_MINUTES}
+                      />
                     ) : (
                       '—'
                     )}

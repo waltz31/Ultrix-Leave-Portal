@@ -4,17 +4,20 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { usePollWhenVisible } from '../usePollWhenVisible';
 import LeaveBalanceSummaryCards, { computePersonalLeaveTotals } from './LeaveBalanceSummaryCards';
-import { PunchInProgressChip } from './PunchStatusChips';
 import ErrorPopup from './ErrorPopup';
 import StatusCelebration from './StatusCelebration';
 import {
   REQUEST_LABELS,
+  REQUIRED_WORK_MINUTES,
   STATUS_LABELS,
   appToday,
   avatarSrc,
+  expectedLogoutFromPunchIn,
   formatDate,
   formatOverviewHolidayRow,
   formatTime,
+  holidayKind,
+  holidayKindLabel,
   insufficientRestrictedBalance,
   isApplyBlockError,
   displayEmployeeId,
@@ -96,6 +99,15 @@ function PanelLink({ to, children, tone }) {
   );
 }
 
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function TodayAttendance({ user, profile, attendanceTo }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +132,10 @@ function TodayAttendance({ user, profile, attendanceTo }) {
   const punchInTone = session?.punchIn ? punchInLateness(session.punchIn) : null;
   const onTimeCheckIn = punchInTone === 'on-time';
   const empId = displayEmployeeId(user, profile, session);
+  const expectedLogout = session?.punchIn
+    ? expectedLogoutFromPunchIn(session.punchIn, REQUIRED_WORK_MINUTES)
+    : null;
+  const expectedLogoutLabel = expectedLogout ? formatTime(expectedLogout) : null;
 
   return (
     <section className="emp-dash-panel">
@@ -138,19 +154,17 @@ function TodayAttendance({ user, profile, attendanceTo }) {
       {loading ? (
         <p className="muted emp-dash-panel-loading">Loading attendance…</p>
       ) : (
-        <div className="emp-dash-attendance">
-          <div className="emp-dash-attendance-who">
+        <div className="emp-punch-card">
+          <div className="emp-punch-card-who">
             <span className="emp-dash-attendance-avatar-wrap">
               <img src={avatarSrc(user?.profilePhoto)} alt="" className="emp-dash-attendance-photo" />
-              {checkedIn && !checkedOut ? (
-                <span className="emp-dash-online-dot" aria-label="Checked in" />
-              ) : null}
+              {stillIn ? <span className="emp-dash-online-dot" aria-label="Checked in" /> : null}
             </span>
-            <div>
+            <div className="emp-punch-card-identity">
               <strong>{user?.name || 'Employee'}</strong>
               <span>{empId}</span>
             </div>
-            {checkedIn && !checkedOut ? (
+            {stillIn ? (
               <span className={`emp-dash-checked-pill${onTimeCheckIn ? ' is-on-time' : ' is-late'}`}>
                 Checked In
               </span>
@@ -161,52 +175,76 @@ function TodayAttendance({ user, profile, attendanceTo }) {
             )}
           </div>
 
-          <div className="emp-dash-attendance-cols">
-            <div className="emp-dash-attendance-col">
-              <span className="emp-dash-attendance-col-label">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
+          <div className="emp-punch-card-cols">
+            <div className="emp-punch-card-col">
+              <span className="emp-punch-card-label">
+                <ClockIcon />
                 Checked In
               </span>
-              <strong>
-                {session?.punchIn ? (
-                  <span
-                    className={`punch-in-sq is-sm${
-                      punchInTone ? ` is-${punchInTone}` : ''
-                    }`}
-                  >
-                    {formatTime(session.punchIn)}
-                  </span>
-                ) : (
-                  '--:--'
-                )}
-              </strong>
+              {session?.punchIn ? (
+                <span
+                  className={`emp-punch-value-pill is-in${punchInTone ? ` is-${punchInTone}` : ''}`}
+                >
+                  {formatTime(session.punchIn)}
+                </span>
+              ) : (
+                <span className="emp-punch-value-pill is-empty">--:--</span>
+              )}
               <em>{checkedIn ? 'Today' : 'Not checked in'}</em>
             </div>
-            <div className="emp-dash-attendance-col">
-              <span className="emp-dash-attendance-col-label">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                  <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                </svg>
+
+            <div className="emp-punch-card-col">
+              <span className="emp-punch-card-label">
+                <ClockIcon />
                 Checked Out
               </span>
-              <strong>{session?.punchOut ? formatTime(session.punchOut) : '--:--'}</strong>
-              <em>{checkedOut ? 'Today' : 'Not checked out'}</em>
+              {checkedOut ? (
+                <>
+                  <span className="emp-punch-value-pill is-out-time">
+                    {formatTime(session.punchOut)}
+                  </span>
+                  <em>Today</em>
+                </>
+              ) : stillIn ? (
+                <>
+                  <span className="emp-punch-value-pill is-progress">
+                    <span className="emp-punch-progress-spin" aria-hidden="true" />
+                    In progress
+                  </span>
+                  <em>Not checked out</em>
+                </>
+              ) : (
+                <>
+                  <span className="emp-punch-value-pill is-empty">--:--</span>
+                  <em>Not checked out</em>
+                </>
+              )}
             </div>
-            <div className="emp-dash-attendance-col">
-              <span className="emp-dash-attendance-col-label">Status</span>
-              <div className="emp-dash-attendance-status">
-                {stillIn ? (
-                  <PunchInProgressChip />
-                ) : checkedOut ? (
-                  <span className="emp-dash-status-pill is-done">Completed</span>
-                ) : (
-                  <span className="emp-dash-status-pill is-muted">Awaiting punch</span>
-                )}
-              </div>
+
+            <div className="emp-punch-card-col">
+              <span className="emp-punch-card-label">
+                <ClockIcon />
+                Expected Logout
+              </span>
+              {expectedLogoutLabel ? (
+                <span className="emp-punch-value-pill is-expected">{expectedLogoutLabel}</span>
+              ) : (
+                <span className="emp-punch-value-pill is-empty">--:--</span>
+              )}
+              <em>
+                {expectedLogoutLabel ? 'Based on 9h minimum logout.' : 'Available after punch-in'}
+              </em>
+            </div>
+
+            <div className="emp-punch-card-col">
+              <span className="emp-punch-card-label is-status">Status</span>
+              {stillIn ? (
+                <span className="emp-punch-value-pill is-office">In office</span>
+              ) : checkedOut ? (
+                <span className="emp-punch-value-pill is-done">Completed</span>
+              ) : (
+                <span className="emp-punch-value-pill is-awaiting">Awaiting punch</span>
+              )}
             </div>
           </div>
         </div>
@@ -474,13 +512,16 @@ function UpcomingHolidays({
             {visible.map((holiday) => {
               const { day, month, full } = holidayCardDate(holiday.startDate);
               const name = holiday.userName || holiday.title || 'Holiday';
-              const isRestricted = holiday.holidayType === 'restricted';
+              const kind = holidayKind(holiday);
               const action = actionFor(holiday);
               return (
                 <li key={holiday.id || `${holiday.startDate}-${name}`}>
                   <article
-                    className={`emp-dash-holiday-card ${isRestricted ? 'is-restricted' : 'is-national'}`}
+                    className={`emp-dash-holiday-card is-${kind}${kind === 'national' ? ' has-india-flag' : ''}`}
                   >
+                    {kind === 'national' ? (
+                      <span className="india-flag-backdrop" aria-hidden="true" />
+                    ) : null}
                     <div className="emp-dash-holiday-dateblock" aria-hidden="true">
                       <span className="emp-dash-holiday-day">{day}</span>
                       <span className="emp-dash-holiday-month">{month}</span>
@@ -489,10 +530,8 @@ function UpcomingHolidays({
                       <strong className="emp-dash-holiday-name">{name}</strong>
                       <span className="emp-dash-holiday-full">{full}</span>
                       <div className="emp-dash-holiday-footer">
-                        <em
-                          className={`emp-dash-holiday-tag ${isRestricted ? 'is-restricted' : 'is-national'}`}
-                        >
-                          {isRestricted ? 'Restricted' : 'National'}
+                        <em className={`emp-dash-holiday-tag is-${kind}`}>
+                          {holidayKindLabel(kind)}
                         </em>
                         {action}
                       </div>
@@ -507,7 +546,14 @@ function UpcomingHolidays({
               <span className="emp-dash-holiday-legend-dot is-national" aria-hidden="true" />
               <div>
                 <strong>National Holidays</strong>
-                <span>Gazetted holidays declared by government</span>
+                <span>Republic Day, Independence Day, May Day, Gandhi Jayanti</span>
+              </div>
+            </div>
+            <div className="emp-dash-holiday-legend-item">
+              <span className="emp-dash-holiday-legend-dot is-regional" aria-hidden="true" />
+              <div>
+                <strong>Regional Holidays</strong>
+                <span>Other company / regional holidays</span>
               </div>
             </div>
             <div className="emp-dash-holiday-legend-item">
@@ -624,6 +670,7 @@ function ProfileSidebar({ user, profile }) {
 
 export default function EmployeeDashboard({
   balances,
+  earnedLeaveUnlocked = false,
   leaves,
   report,
   loading,
@@ -645,8 +692,11 @@ export default function EmployeeDashboard({
   }, [user?.id]);
 
   const balanceItems = useMemo(
-    () => (balances ? computePersonalLeaveTotals(balances, leaves, user?.id) : []),
-    [balances, leaves, user?.id]
+    () =>
+      balances
+        ? computePersonalLeaveTotals(balances, leaves, user?.id, { earnedUnlocked: earnedLeaveUnlocked })
+        : [],
+    [balances, leaves, user?.id, earnedLeaveUnlocked]
   );
 
   return (

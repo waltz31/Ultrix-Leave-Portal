@@ -100,7 +100,10 @@ export default function OnboardingIdCard({
             </div>
             <h3>{profile.name || 'Unnamed'}</h3>
             <p className="id-badge-role">{employment.designation || ROLE_LABELS[profile.role] || 'Employee'}</p>
-            <p className="id-badge-dept">{employment.department || '—'}</p>
+            <p className="id-badge-dept">
+              {[employment.department, employment.location].filter(Boolean).join(' · ') || '—'}
+            </p>
+            {profile.email ? <p className="id-badge-email">{profile.email}</p> : null}
           </div>
 
           <footer className="id-badge-meta">

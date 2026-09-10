@@ -17,6 +17,8 @@ const DEFAULT_DEVICE_MAP = [
   ['3001', 'Ashish Mohapatra'],
   ['3007', 'Yashi Mishra'],
   ['3008', 'Siddharth Singh'],
+  // Device logs use "093"; employee_number in portal is ST093.
+  ['093', 'Shreyansh Singhal'],
   ['ST093', 'Shreyansh Singhal'],
 ];
 
@@ -286,6 +288,18 @@ async function getMeta(key) {
   return row?.value ?? '';
 }
 
+async function getMetas(keys) {
+  if (!keys?.length) return {};
+  const placeholders = keys.map(() => '?').join(',');
+  const rows = await db
+    .prepare(`SELECT key, value FROM app_meta WHERE key IN (${placeholders})`)
+    .all(...keys);
+  const out = {};
+  for (const key of keys) out[key] = '';
+  for (const row of rows) out[row.key] = row.value ?? '';
+  return out;
+}
+
 async function setMeta(key, value) {
   const updated = await db.prepare(`UPDATE app_meta SET value = ? WHERE key = ?`).run(value, key);
   if (!updated?.changes) {
@@ -404,6 +418,23 @@ let inflight = null;
 let lastFullExportAt = 0;
 let hadPunchError = true;
 
+function isTransientNetError(err) {
+  const code = String(err?.code || '');
+  const message = String(err?.message || err || '');
+  return (
+    code === 'EADDRNOTAVAIL' ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ETIMEDOUT' ||
+    code === 'ENOTFOUND' ||
+    code === 'EPIPE' ||
+    /\bEADDRNOTAVAIL\b/i.test(message) ||
+    /\bECONNRESET\b/i.test(message) ||
+    /\bENOTFOUND\b/i.test(message) ||
+    /\bread EADDRNOTAVAIL\b/i.test(message)
+  );
+}
+
 export async function syncPunchesFromDevice() {
   const cfg = punchConfig();
   if (!cfg.enabled) {
@@ -460,16 +491,26 @@ export async function syncPunchesSafe() {
   inflight = (async () => {
     try {
       const result = await syncPunchesFromDevice();
+      punchStatusCache = { at: 0, value: null };
+      if (result?.inserted > 0) {
+        const { cacheInvalidate } = await import('./attendanceCache.js');
+        cacheInvalidate('attendance:');
+      }
       return result;
     } catch (err) {
       const message = err?.message || 'Punch sync failed';
+      if (isTransientNetError(err)) {
+        return { ok: false, transient: true, error: message };
+      }
       console.error('Punch sync failed:', message);
       try {
         await setMeta('punch_last_sync_at', nowIst());
         await setMeta('punch_last_error', message.slice(0, 500));
         hadPunchError = true;
       } catch (metaErr) {
-        console.error('Punch sync meta write failed:', metaErr?.message || metaErr);
+        if (!isTransientNetError(metaErr)) {
+          console.error('Punch sync meta write failed:', metaErr?.message || metaErr);
+        }
       }
       return { ok: false, error: message };
     } finally {
@@ -572,20 +613,28 @@ export function summarizeDaySessions(punches) {
     groups.get(key).push(punch);
   }
   const sessions = [];
+  // Ignore double-taps when inferring punch-out from last scan (device often marks both as Check-In).
+  const MIN_OUT_GAP_MINUTES = 2;
   for (const list of groups.values()) {
     list.sort((a, b) => String(a.punchedAt).localeCompare(String(b.punchedAt)));
     const first = list[0];
     const last = list[list.length - 1];
     const punchIn = first.punchedAt;
     const punchDate = String(first.punchDate || '').slice(0, 10);
-    const dayClosed = punchDate && punchDate < todayIst();
-    const lastIsOut =
-      last.direction === 'out' ||
-      (last.direction !== 'in' && list.length > 1 && list.length % 2 === 0);
-    let punchOut = lastIsOut && list.length > 1 ? last.punchedAt : null;
-    if (!punchOut && dayClosed) {
-      punchOut = last.punchedAt;
+
+    let punchOut = null;
+    const explicitOuts = list.filter(
+      (p) => p.direction === 'out' && String(p.punchedAt) > String(punchIn)
+    );
+    if (explicitOuts.length) {
+      punchOut = explicitOuts[explicitOuts.length - 1].punchedAt;
+    } else if (list.length > 1 && last.punchedAt !== punchIn) {
+      const gap = workMinutesBetween(punchIn, last.punchedAt);
+      if (gap != null && gap >= MIN_OUT_GAP_MINUTES) {
+        punchOut = last.punchedAt;
+      }
     }
+
     let workMinutes = null;
     if (punchOut) {
       workMinutes = workMinutesBetween(punchIn, punchOut);
@@ -647,15 +696,18 @@ export function mapPunch(row) {
 
 export async function punchStatus() {
   const cfg = punchConfig();
+  const meta = await getMetas(['punch_last_sync_at', 'punch_last_ok', 'punch_last_error']);
   return {
     enabled: cfg.enabled && Boolean(cfg.portalPassword || cfg.password),
     configured: Boolean(cfg.portalPassword || cfg.password),
     url: cfg.portalPassword ? cfg.portalUrl : cfg.url,
     serials: cfg.serials.filter(Boolean),
     allowlist: cfg.deviceMap.map(([code, name]) => ({ deviceUserCode: code, name })),
-    lastSyncAt: await getMeta('punch_last_sync_at'),
-    lastOkAt: await getMeta('punch_last_ok'),
-    lastError: await getMeta('punch_last_error'),
+    lastSyncAt: meta.punch_last_sync_at || '',
+    lastOkAt: meta.punch_last_ok || '',
+    lastError: isTransientNetError(meta.punch_last_error || '')
+      ? ''
+      : meta.punch_last_error || '',
   };
 }
 
@@ -687,7 +739,7 @@ export function startPunchPolling() {
       result = await syncPunchesSafe();
       if (result?.ok && result.inserted > 0) {
         console.log(`Punch sync: stored ${result.inserted} new punch(es)`);
-      } else if (result?.error) {
+      } else if (result?.error && !result?.transient && !isTransientNetError(result.error)) {
         console.log(`Punch sync: ${result.error}`);
       }
     } catch (err) {

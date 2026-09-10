@@ -109,7 +109,22 @@ migrateFeedTables();
 migratePunchLogsTable();
 migrateReimbursementsTable();
 migrateAttendanceRegularizationsTable();
+migrateLeavePolicyAcknowledgementsTable();
 migratePerformanceIndexes();
+
+function migrateLeavePolicyAcknowledgementsTable() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leave_policy_acknowledgements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      policy_version TEXT NOT NULL,
+      acknowledged_at TEXT NOT NULL DEFAULT (${SQL_NOW_IST}),
+      UNIQUE (user_id, policy_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_leave_policy_ack_user
+      ON leave_policy_acknowledgements(user_id, acknowledged_at);
+  `);
+}
 
 function migratePerformanceIndexes() {
   db.exec(`
@@ -819,8 +834,11 @@ function migrateEmployeeProfilesTable() {
     ['bank_account_details', 'TEXT'],
     ['stipend', 'REAL'],
     ['fixed_pay', 'REAL'],
+    ['service_fee_annual', 'REAL'],
     ['joining_bonus', 'REAL'],
+    ['joining_bonus_months', 'INTEGER'],
     ['retention_bonus', 'REAL'],
+    ['retention_bonus_months', 'INTEGER'],
     ['esops', 'TEXT'],
     ['bonus_amount', 'REAL'],
     ['bonus_frequency', 'TEXT'],

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import AppShell from '../components/AppShell';
-import LeaveCalendar from '../components/LeaveCalendar';
 import ApprovalProgress from '../components/ApprovalProgress';
 import StatusCelebration from '../components/StatusCelebration';
 import { LeaveExportPanel, LeaveReportSection } from '../components/LeaveReports';
@@ -24,14 +23,10 @@ import EmployeeOnboardingForm, {
   WORK_MODE_OPTIONS,
   profileToForm,
 } from '../components/EmployeeOnboardingForm';
-import {
-  SALARY_SENSITIVE_FIELDS,
-  formatPayrollValue,
-  payStructureKind,
-  payrollFieldsFor,
-} from '../components/SalaryComponentsView';
+import { SalaryComponentsView } from '../components/SalaryComponentsView';
 import AttendanceMuster from '../components/AttendanceMuster';
 import HrAttendanceOverview from '../components/HrAttendanceOverview';
+import TeamAttendanceCalendar from '../components/TeamAttendanceCalendar';
 import RegularizationInbox from '../components/RegularizationInbox';
 import HistoryWorkspace from '../components/HistoryWorkspace';
 import LeaveHistoryPanel from '../components/LeaveHistoryPanel';
@@ -1036,21 +1031,11 @@ export function HrOnboarding() {
               </section>
 
               <section className="profile-sheet-section is-wide">
-                <h3>Payroll &amp; salary</h3>
-                <ProfileFacts
-                  items={[
-                    ...payrollFieldsFor(selected.employment?.employmentType).map((f) => ({
-                      label: f.label,
-                      value: formatPayrollValue(f, selected.payroll),
-                    })),
-                    ...(payStructureKind(selected.employment?.employmentType) === 'employee'
-                      ? SALARY_SENSITIVE_FIELDS.map((f) => ({
-                          label: f.label,
-                          value: selected.payroll?.[f.key] || '—',
-                          wide: true,
-                        }))
-                      : []),
-                  ]}
+                <SalaryComponentsView
+                  payroll={selected.payroll}
+                  employmentType={selected.employment?.employmentType}
+                  showSensitive
+                  title="Payroll & salary"
                 />
               </section>
             </div>
@@ -1321,26 +1306,12 @@ export function HrUsers() {
 
 export function HrCalendar() {
   const { user } = useAuth();
-  const now = appToday();
-  const year = now.getFullYear();
-  const from = `${year}-01-01`;
-  const to = `${year}-12-31`;
-  const { data, error, loading, reload } = useLoad(
+  const { data, error, reload } = useLoad(
     () =>
-      Promise.all([
-        api(`/leaves/calendar?from=${from}&to=${to}`).then((d) => d.leaves),
-        api('/users').then((d) => d.users),
-      ]).then(([leaves, users]) => ({
-        leaves,
-        users,
-        balancesByUserId: Object.fromEntries(
-          users.map((u) => [
-            u.id,
-            u.balances || { casual: 0, earned: 0, sick: 0, restricted: 2, celebration: 0 },
-          ])
-        ),
+      api('/users').then((d) => ({
+        users: d.users,
       })),
-    [from, to]
+    []
   );
 
   useEffect(() => {
@@ -1351,7 +1322,6 @@ export function HrCalendar() {
     return () => window.removeEventListener('ultrix:admin-leave-created', onCreated);
   }, [reload]);
 
-  const [busyId, setBusyId] = useState(null);
   const [err, setErr] = useState('');
   const [mandatoryForm, setMandatoryForm] = useState({
     title: '',
@@ -1367,31 +1337,6 @@ export function HrCalendar() {
   async function createLeave(body) {
     await api('/leaves/admin', { method: 'POST', body });
     reload();
-  }
-
-  async function deleteLeave(leave) {
-    setBusyId(leave.id);
-    setErr('');
-    try {
-      if (leave.isMandatory) {
-        if (leave.leaveType === 'restricted' || leave.holidayType === 'restricted') {
-          setErr(
-            'Restricted holidays stay in Overview for applying. They appear on a calendar only after a leave request is approved.'
-          );
-          return false;
-        }
-        await api(`/mandatory-leaves/${leave.mandatoryId}`, { method: 'DELETE' });
-      } else {
-        await api(`/leaves/${leave.id}`, { method: 'DELETE' });
-      }
-      reload();
-      return true;
-    } catch (error) {
-      setErr(error.message);
-      return false;
-    } finally {
-      setBusyId(null);
-    }
   }
 
   async function submitMandatory(e) {
@@ -1467,9 +1412,15 @@ export function HrCalendar() {
 
   return (
     <AppShell title="Attendance Info" nav={NAV}>
-      <section className="panel mandatory-leave-panel">
-        <h2>Company holidays</h2>
-        <form className="mandatory-leave-form" onSubmit={submitMandatory}>
+      {error && !data && <p className="form-error">{error}</p>}
+      {err && <p className="form-error">{err}</p>}
+
+      <section className="panel company-holidays-strip">
+        <div className="company-holidays-strip-head">
+          <h2>Company holidays</h2>
+          <p className="muted">Add general or restricted holidays for the team calendar.</p>
+        </div>
+        <form className="mandatory-leave-form company-holidays-strip-form" onSubmit={submitMandatory}>
           <label>
             Holiday
             <input
@@ -1534,23 +1485,14 @@ export function HrCalendar() {
         {mandatoryMsg && <p className="form-success">{mandatoryMsg}</p>}
       </section>
 
-      {loading && <p className="muted">Loading…</p>}
-      {(error || err) && <p className="form-error">{error || err}</p>}
-      {data && (
-        <LeaveCalendar
-          leaves={data.leaves}
-          showNames
-          layout="roster"
-          balancesByUserId={data.balancesByUserId}
-          employees={(data.users || []).filter(
-            (u) => u.id !== user?.id && includeInAttendanceRoster(u)
-          )}
-          canManage
-          busyId={busyId}
-          onCreateLeave={createLeave}
-          onDeleteLeave={deleteLeave}
-        />
-      )}
+      <TeamAttendanceCalendar
+        scope="hr"
+        canManage
+        employees={(data?.users || []).filter(
+          (u) => u.id !== user?.id && includeInAttendanceRoster(u)
+        )}
+        onCreateLeave={createLeave}
+      />
     </AppShell>
   );
 }

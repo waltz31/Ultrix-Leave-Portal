@@ -150,6 +150,7 @@ export default function ReimbursementBoard({ mode = 'self' }) {
         method: 'POST',
         body: {
           ...form,
+          paymentMode: 'self',
           amount: Number(form.amount),
         },
       });
@@ -331,29 +332,6 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                           </select>
                         </label>
                       </div>
-                      <div className="rmb-payment">
-                        <span className="rmb-field-label">Payment Mode *</span>
-                        <div className="rmb-payment-options">
-                          <label className="rmb-radio">
-                            <input
-                              type="radio"
-                              name="paymentMode"
-                              checked={form.paymentMode === 'self'}
-                              onChange={() => setForm((c) => ({ ...c, paymentMode: 'self' }))}
-                            />
-                            Paid by Me
-                          </label>
-                          <label className="rmb-radio">
-                            <input
-                              type="radio"
-                              name="paymentMode"
-                              checked={form.paymentMode === 'company'}
-                              onChange={() => setForm((c) => ({ ...c, paymentMode: 'company' }))}
-                            />
-                            Paid by Company
-                          </label>
-                        </div>
-                      </div>
                     </section>
 
                     <section className="rmb-section">
@@ -489,12 +467,6 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                       <div>
                         <dt>Amount</dt>
                         <dd>{formatINR(selected.amount)}</dd>
-                      </div>
-                      <div>
-                        <dt>Payment</dt>
-                        <dd>
-                          {selected.paymentMode === 'company' ? 'Paid by Company' : 'Paid by Me'}
-                        </dd>
                       </div>
                       <div>
                         <dt>Submitted</dt>

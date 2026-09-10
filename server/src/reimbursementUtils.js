@@ -109,10 +109,7 @@ export function validateReimbursementPayload(body = {}) {
   }
   if (amount > 10_000_000) return { error: 'Amount is too large' };
 
-  const paymentMode = String(body.paymentMode || 'self').trim().toLowerCase();
-  if (!PAYMENT_MODES.includes(paymentMode)) {
-    return { error: 'Select a valid payment mode' };
-  }
+  const paymentMode = 'self';
 
   const currency = String(body.currency || 'INR').trim().toUpperCase() || 'INR';
   if (currency.length > 8) return { error: 'Invalid currency' };

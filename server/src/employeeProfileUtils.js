@@ -21,11 +21,9 @@ export const BONUS_FREQUENCY_LABELS = {
   yearly: 'Yearly',
 };
 
-export function payStructureKind(employmentType) {
-  const type = String(employmentType || '').trim().toLowerCase();
-  if (type === 'intern') return 'intern';
-  if (type === 'consultant') return 'consultant';
-  return 'employee';
+export function payStructureKind(_employmentType) {
+  // Portal payroll is consultant agreement only.
+  return 'consultant';
 }
 
 export const WORK_MODE_LABELS = {
@@ -81,8 +79,11 @@ export const PROFILE_EXTRA_COLUMNS = [
   ['bank_account_details', 'TEXT'],
   ['stipend', 'DOUBLE PRECISION'],
   ['fixed_pay', 'DOUBLE PRECISION'],
+  ['service_fee_annual', 'DOUBLE PRECISION'],
   ['joining_bonus', 'DOUBLE PRECISION'],
+  ['joining_bonus_months', 'INTEGER'],
   ['retention_bonus', 'DOUBLE PRECISION'],
+  ['retention_bonus_months', 'INTEGER'],
   ['esops', 'TEXT'],
   ['bonus_amount', 'DOUBLE PRECISION'],
   ['bonus_frequency', 'TEXT'],
@@ -115,8 +116,11 @@ export function mapEmployeeProfile(row, options = {}) {
     netSalary: numOrNull(row.net_salary),
     stipend: numOrNull(row.stipend),
     fixedPay: numOrNull(row.fixed_pay),
+    serviceFeeAnnual: numOrNull(row.service_fee_annual),
     joiningBonus: numOrNull(row.joining_bonus),
+    joiningBonusMonths: numOrNull(row.joining_bonus_months),
     retentionBonus: numOrNull(row.retention_bonus),
+    retentionBonusMonths: numOrNull(row.retention_bonus_months),
     esops: row.esops || null,
     bonusAmount: numOrNull(row.bonus_amount),
     bonusFrequency: row.bonus_frequency || null,
@@ -302,6 +306,23 @@ export function normalizeMoney(value, label) {
   return Math.round(n * 100) / 100;
 }
 
+export function normalizeMonths(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+    const err = new Error(`${label} must be a whole number of months`);
+    err.status = 400;
+    throw err;
+  }
+  return n;
+}
+
+/** Derive monthly service fee from annual agreement amount. */
+export function monthlyFromAnnual(annual) {
+  if (annual == null) return null;
+  return Math.round((Number(annual) / 12) * 100) / 100;
+}
+
 /** Max ~350KB decoded → ~470KB base64 data URL */
 const MAX_PHOTO_CHARS = 500_000;
 
@@ -364,7 +385,7 @@ export function parsePayrollFields(body, existing = {}) {
     if (body[key] !== undefined) return normalize(body[key]);
     return existing[fallbackKey] ?? null;
   };
-  return {
+  const payroll = {
     basicSalary: pick('basicSalary', (v) => normalizeMoney(v, 'Basic salary'), 'basic_salary'),
     hra: pick('hra', (v) => normalizeMoney(v, 'HRA'), 'hra'),
     allowances: pick('allowances', (v) => normalizeMoney(v, 'Allowances'), 'allowances'),
@@ -387,12 +408,27 @@ export function parsePayrollFields(body, existing = {}) {
       'bank_account_details'
     ),
     stipend: pick('stipend', (v) => normalizeMoney(v, 'Stipend'), 'stipend'),
-    fixedPay: pick('fixedPay', (v) => normalizeMoney(v, 'Fixed pay'), 'fixed_pay'),
+    fixedPay: pick('fixedPay', (v) => normalizeMoney(v, 'Service fee (monthly)'), 'fixed_pay'),
+    serviceFeeAnnual: pick(
+      'serviceFeeAnnual',
+      (v) => normalizeMoney(v, 'Service fee (annual)'),
+      'service_fee_annual'
+    ),
     joiningBonus: pick('joiningBonus', (v) => normalizeMoney(v, 'Joining bonus'), 'joining_bonus'),
+    joiningBonusMonths: pick(
+      'joiningBonusMonths',
+      (v) => normalizeMonths(v, 'Joining bonus clause (months)'),
+      'joining_bonus_months'
+    ),
     retentionBonus: pick(
       'retentionBonus',
       (v) => normalizeMoney(v, 'Retention bonus'),
       'retention_bonus'
+    ),
+    retentionBonusMonths: pick(
+      'retentionBonusMonths',
+      (v) => normalizeMonths(v, 'Retention bonus clause (months)'),
+      'retention_bonus_months'
     ),
     esops: pick('esops', (v) => normalizeOptional(v, 500), 'esops'),
     bonusAmount: pick('bonusAmount', (v) => normalizeMoney(v, 'Bonus'), 'bonus_amount'),
@@ -402,10 +438,18 @@ export function parsePayrollFields(body, existing = {}) {
       'bonus_frequency'
     ),
   };
+
+  // Annual agreement drives the monthly service fee.
+  if (payroll.serviceFeeAnnual != null) {
+    payroll.fixedPay = monthlyFromAnnual(payroll.serviceFeeAnnual);
+  }
+
+  return payroll;
 }
 
-export function applyPayStructure(payroll, kind) {
-  const emptyEmployee = {
+export function applyPayStructure(payroll) {
+  return {
+    ...payroll,
     basicSalary: null,
     hra: null,
     allowances: null,
@@ -416,42 +460,16 @@ export function applyPayStructure(payroll, kind) {
     professionalTax: null,
     tds: null,
     netSalary: null,
-  };
-  const emptyIntern = { stipend: null };
-  const emptyConsultant = {
-    fixedPay: null,
-    joiningBonus: null,
-    retentionBonus: null,
+    stipend: null,
     esops: null,
     bonusAmount: null,
     bonusFrequency: null,
-  };
-
-  if (kind === 'intern') {
-    return {
-      ...payroll,
-      ...emptyEmployee,
-      ...emptyConsultant,
-      stipend: payroll.stipend,
-    };
-  }
-  if (kind === 'consultant') {
-    return {
-      ...payroll,
-      ...emptyEmployee,
-      ...emptyIntern,
-      fixedPay: payroll.fixedPay,
-      joiningBonus: payroll.joiningBonus,
-      retentionBonus: payroll.retentionBonus,
-      esops: payroll.esops,
-      bonusAmount: payroll.bonusAmount,
-      bonusFrequency: payroll.bonusFrequency,
-    };
-  }
-  return {
-    ...payroll,
-    ...emptyIntern,
-    ...emptyConsultant,
+    fixedPay: payroll.fixedPay,
+    serviceFeeAnnual: payroll.serviceFeeAnnual,
+    joiningBonus: payroll.joiningBonus,
+    joiningBonusMonths: payroll.joiningBonusMonths,
+    retentionBonus: payroll.retentionBonus,
+    retentionBonusMonths: payroll.retentionBonusMonths,
   };
 }
 

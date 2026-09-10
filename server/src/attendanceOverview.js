@@ -2,7 +2,7 @@ import { todayIst } from './time.js';
 import { summarizeDaySessions } from './punchSync.js';
 import { attendanceRosterSql } from './attendanceRoster.js';
 
-const LATE_AFTER = String(process.env.ATT4U_LATE_AFTER || '10:00:00').padEnd(8, ':00').slice(0, 8);
+const LATE_AFTER = String(process.env.ATT4U_LATE_AFTER || '11:30:00').padEnd(8, ':00').slice(0, 8);
 
 function pct(part, total) {
   if (!total) return 0;
@@ -45,12 +45,24 @@ function indexBy(list, keyFn) {
   return map;
 }
 
+function punchTime(stamp) {
+  return String(stamp || '').slice(11, 19);
+}
+
+/**
+ * Fast attendance overview:
+ * - detailed punches only for the selected date (live + recent)
+ * - month trend from per-user first/last aggregates (no full punch dump)
+ */
 export async function buildAttendanceOverview(db, query = {}) {
   const date = String(query.date || todayIst()).slice(0, 10);
+  const today = todayIst();
   const location = String(query.location || '').trim();
   const department = String(query.department || '').trim();
   const managerId = query.managerId != null ? Number(query.managerId) : null;
   const { start: monthStart, end: monthEnd } = monthBounds(date);
+  // Full month through today so the calendar has every past day, not only up to the selected date.
+  const trendEnd = monthEnd < today ? monthEnd : today;
 
   const employeeSql = managerId
     ? `SELECT u.id, u.name, u.employee_number, u.role, u.active,
@@ -69,150 +81,195 @@ export async function buildAttendanceOverview(db, query = {}) {
     await db.prepare(employeeSql).all(...(managerId ? [managerId, managerId] : []))
   ).filter((row) => matchesFilter(row, { location, department }));
 
-  const employeeIds = new Set(employees.map((e) => e.id));
+  const employeeIds = [...new Set(employees.map((e) => e.id))];
+  const employeeIdSet = new Set(employeeIds);
   const employeeById = new Map(employees.map((e) => [e.id, e]));
   const filters = {
     locations: [...new Set(employees.map((e) => e.location).filter(Boolean))].sort(),
     departments: [...new Set(employees.map((e) => e.department).filter(Boolean))].sort(),
   };
 
+  const idPlaceholders = employeeIds.length ? employeeIds.map(() => '?').join(',') : '';
+  const scopedPunchFilter = employeeIds.length
+    ? `AND (p.user_id IN (${idPlaceholders}) OR p.user_id IS NULL)`
+    : 'AND 1=0';
+  // Managers never need unmapped device punches.
+  const punchUserFilter = managerId
+    ? employeeIds.length
+      ? `AND p.user_id IN (${idPlaceholders})`
+      : 'AND 1=0'
+    : scopedPunchFilter;
+  const punchParams = employeeIds.length ? employeeIds : [];
+
   const pendingSql = managerId
-    ? `SELECT lr.created_at
+    ? `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN substr(CAST(lr.created_at AS TEXT), 1, 10) <= ? THEN 1 ELSE 0 END) AS older_than_three,
+         SUM(CASE WHEN substr(CAST(lr.created_at AS TEXT), 1, 10) >= ? THEN 1 ELSE 0 END) AS this_week
        FROM leave_requests lr
        JOIN users u ON u.id = lr.user_id
        WHERE lr.status IN ('pending_manager', 'pending_hr')
          AND (u.manager_id = ? OR u.id = ?)`
-    : `SELECT created_at FROM leave_requests
+    : `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN substr(CAST(created_at AS TEXT), 1, 10) <= ? THEN 1 ELSE 0 END) AS older_than_three,
+         SUM(CASE WHEN substr(CAST(created_at AS TEXT), 1, 10) >= ? THEN 1 ELSE 0 END) AS this_week
+       FROM leave_requests
        WHERE status IN ('pending_manager', 'pending_hr')`;
 
-  const [monthPunches, monthLeaves, pendingRows] = await Promise.all([
+  const threeDaysAgo = addDays(date, -3);
+  const weekAgo = addDays(date, -7);
+
+  const [todayPunches, dayStatsRows, monthLeaves, pendingAgg] = await Promise.all([
     db
       .prepare(
         `SELECT p.id, p.user_id, p.device_user_code, p.punched_at, p.punch_date,
-                p.serial_number, p.direction, u.name AS user_name, u.employee_number
+                p.direction, u.name AS user_name, u.employee_number
          FROM punch_logs p
          LEFT JOIN users u ON u.id = p.user_id
-         WHERE p.punch_date >= ? AND p.punch_date <= ?
+         WHERE p.punch_date = ? ${punchUserFilter}
          ORDER BY p.punched_at`
       )
-      .all(monthStart, monthEnd),
+      .all(date, ...punchParams),
+    employeeIds.length
+      ? db
+          .prepare(
+            `SELECT p.punch_date, p.user_id,
+                    MIN(p.punched_at) AS first_at,
+                    MAX(p.punched_at) AS last_at,
+                    COUNT(*) AS punch_count
+             FROM punch_logs p
+             WHERE p.punch_date >= ? AND p.punch_date <= ?
+               AND p.user_id IN (${idPlaceholders})
+             GROUP BY p.punch_date, p.user_id`
+          )
+          .all(monthStart, trendEnd, ...employeeIds)
+      : Promise.resolve([]),
+    employeeIds.length
+      ? db
+          .prepare(
+            `SELECT lr.user_id, lr.leave_type, lr.session, lr.start_date, lr.end_date,
+                    u.name AS user_name, u.employee_number,
+                    ep.department, ep.location
+             FROM leave_requests lr
+             JOIN users u ON u.id = lr.user_id
+             LEFT JOIN employee_profiles ep ON ep.user_id = u.id
+             WHERE lr.status = 'approved' AND lr.start_date <= ? AND lr.end_date >= ?
+               AND lr.user_id IN (${idPlaceholders})`
+          )
+          .all(trendEnd, monthStart, ...employeeIds)
+      : Promise.resolve([]),
     db
-      .prepare(
-        `SELECT user_id, leave_type, start_date, end_date
-         FROM leave_requests
-         WHERE status = 'approved' AND start_date <= ? AND end_date >= ?`
-      )
-      .all(monthEnd, monthStart),
-    db.prepare(pendingSql).all(...(managerId ? [managerId, managerId] : [])),
+      .prepare(pendingSql)
+      .get(
+        ...(managerId
+          ? [threeDaysAgo, weekAgo, managerId, managerId]
+          : [threeDaysAgo, weekAgo])
+      ),
   ]);
 
-  const punchesByDate = indexBy(monthPunches, (p) => p.punch_date);
   const leavesByUser = indexBy(monthLeaves, (l) => l.user_id);
 
-  function coveringLeave(userId, day, wfh) {
+  function coveringLeaveRows(userId, day, wfh) {
     const list = leavesByUser.get(userId);
-    if (!list) return false;
-    return list.some((leave) => {
+    if (!list) return [];
+    return list.filter((leave) => {
       if (leave.start_date > day || leave.end_date < day) return false;
       const isWfh = leave.leave_type === 'wfh';
       return wfh ? isWfh : !isWfh;
     });
   }
 
-  function sessionsForDay(day) {
-    const rows = punchesByDate.get(day) || [];
-    const scoped = [];
-    for (const p of rows) {
-      if (p.user_id != null) {
-        if (employeeIds.has(p.user_id)) scoped.push(p);
-      } else if (!managerId) {
-        scoped.push(p);
-      }
-    }
-    return summarizeDaySessions(
-      scoped.map((p) => ({
-        id: p.id,
-        userId: p.user_id,
-        userName: p.user_name,
-        employeeNumber: p.employee_number,
-        deviceUserCode: p.device_user_code,
-        punchedAt: p.punched_at,
-        punchDate: p.punch_date,
-        serialNumber: p.serial_number,
-        direction: p.direction,
-      }))
-    );
+  function coveringLeave(userId, day, wfh) {
+    return coveringLeaveRows(userId, day, wfh).length > 0;
   }
 
-  function statsForDay(day, { includeSessions = false } = {}) {
-    const sessions = sessionsForDay(day);
-    const byUser = new Map();
-    const unmapped = [];
-    for (const session of sessions) {
-      if (session.userId && employeeIds.has(session.userId)) {
-        byUser.set(session.userId, session);
-      } else if (!session.userId) {
-        unmapped.push(session);
-      }
+  const todaySessions = summarizeDaySessions(
+    todayPunches.map((p) => ({
+      id: p.id,
+      userId: p.user_id,
+      userName: p.user_name,
+      employeeNumber: p.employee_number,
+      deviceUserCode: p.device_user_code,
+      punchedAt: p.punched_at,
+      punchDate: p.punch_date,
+      direction: p.direction,
+    }))
+  );
+
+  const byUserToday = new Map();
+  const unmappedToday = [];
+  for (const session of todaySessions) {
+    if (session.userId && employeeIdSet.has(session.userId)) {
+      byUserToday.set(session.userId, session);
+    } else if (!session.userId && !managerId) {
+      unmappedToday.push(session);
     }
+  }
+
+  let lateToday = 0;
+  let inOffice = 0;
+  let checkedOut = 0;
+  for (const session of byUserToday.values()) {
+    if (session.punchIn && punchTime(session.punchIn) > LATE_AFTER) lateToday += 1;
+    if (session.stillIn) inOffice += 1;
+    else checkedOut += 1;
+  }
+
+  let onLeaveToday = 0;
+  let wfhToday = 0;
+  const accountedToday = new Set(byUserToday.keys());
+  for (const emp of employees) {
+    if (coveringLeave(emp.id, date, false)) {
+      onLeaveToday += 1;
+      accountedToday.add(emp.id);
+    } else if (coveringLeave(emp.id, date, true)) {
+      wfhToday += 1;
+      accountedToday.add(emp.id);
+    }
+  }
+  const presentMapped = byUserToday.size;
+  const absentToday = Math.max(0, employees.length - accountedToday.size);
+  const unmappedIn = unmappedToday.filter((s) => s.stillIn).length;
+  const unmappedOut = unmappedToday.length - unmappedIn;
+  const yetToCheckIn = Math.max(0, employees.length - presentMapped - onLeaveToday - wfhToday);
+
+  // Trend: index first punch per user/day
+  const firstByDayUser = new Map();
+  for (const row of dayStatsRows) {
+    firstByDayUser.set(`${row.punch_date}|${row.user_id}`, row);
+  }
+
+  const trend = [];
+  for (let cursor = monthStart; cursor <= trendEnd; cursor = addDays(cursor, 1)) {
+    const punchedUsers = new Set();
     let late = 0;
-    let inOffice = 0;
-    let checkedOut = 0;
-    for (const session of byUser.values()) {
-      if (session.punchIn && session.punchIn.slice(11) > LATE_AFTER) late += 1;
-      if (session.stillIn) inOffice += 1;
-      else checkedOut += 1;
+    for (const emp of employees) {
+      const row = firstByDayUser.get(`${cursor}|${emp.id}`);
+      if (!row) continue;
+      punchedUsers.add(emp.id);
+      if (punchTime(row.first_at) > LATE_AFTER) late += 1;
     }
-    const presentMapped = byUser.size;
     let onLeave = 0;
     let wfh = 0;
-    const accounted = new Set(byUser.keys());
+    const accounted = new Set(punchedUsers);
     for (const emp of employees) {
-      const leave = coveringLeave(emp.id, day, false);
-      const isWfh = !leave && coveringLeave(emp.id, day, true);
-      if (leave) {
+      if (coveringLeave(emp.id, cursor, false)) {
         onLeave += 1;
         accounted.add(emp.id);
-      } else if (isWfh) {
+      } else if (coveringLeave(emp.id, cursor, true)) {
         wfh += 1;
         accounted.add(emp.id);
       }
     }
-    const absent = Math.max(0, employees.length - accounted.size);
-    let unmappedIn = 0;
-    let unmappedOut = 0;
-    for (const session of unmapped) {
-      if (session.stillIn) unmappedIn += 1;
-      else unmappedOut += 1;
-    }
-    const yetToCheckIn = Math.max(0, employees.length - presentMapped - onLeave - wfh);
-    return {
-      total: employees.length,
-      present: presentMapped,
-      presentMapped,
-      unmapped: unmapped.length,
-      absent,
-      onLeave,
-      wfh,
-      late,
-      inOffice: inOffice + unmappedIn,
-      checkedOut: checkedOut + unmappedOut,
-      yetToCheckIn,
-      sessions: includeSessions ? sessions : null,
-      sessionByUser: includeSessions ? byUser : null,
-    };
-  }
-
-  const today = statsForDay(date, { includeSessions: true });
-  const trend = [];
-  for (let cursor = monthStart; cursor <= monthEnd && cursor <= date; cursor = addDays(cursor, 1)) {
-    const day = cursor === date ? today : statsForDay(cursor);
     trend.push({
       date: cursor,
-      present: day.presentMapped + day.unmapped,
-      absent: day.absent,
-      onLeave: day.onLeave,
-      late: day.late,
+      present: punchedUsers.size,
+      absent: Math.max(0, employees.length - accounted.size),
+      onLeave,
+      late,
+      wfh,
+      total: employees.length,
     });
   }
 
@@ -232,12 +289,12 @@ export async function buildAttendanceOverview(db, query = {}) {
     }
     const row = deptMap.get(key);
     row.total += 1;
-    const session = today.sessionByUser?.get(emp.id);
+    const session = byUserToday.get(emp.id);
     const onLeave = coveringLeave(emp.id, date, false);
     const wfh = coveringLeave(emp.id, date, true);
     if (session) {
       row.present += 1;
-      if (session.punchIn && session.punchIn.slice(11) > LATE_AFTER) row.late += 1;
+      if (session.punchIn && punchTime(session.punchIn) > LATE_AFTER) row.late += 1;
     } else if (onLeave) row.onLeave += 1;
     else if (wfh) row.wfh += 1;
     else row.absent += 1;
@@ -249,60 +306,117 @@ export async function buildAttendanceOverview(db, query = {}) {
     }))
     .sort((a, b) => b.total - a.total);
 
-  const threeDaysAgo = addDays(date, -3);
-  const weekAgo = addDays(date, -7);
   const pending = {
-    total: pendingRows.length,
-    olderThanThreeDays: pendingRows.filter((r) => String(r.created_at).slice(0, 10) <= threeDaysAgo)
-      .length,
-    thisWeek: pendingRows.filter((r) => String(r.created_at).slice(0, 10) >= weekAgo).length,
+    total: Number(pendingAgg?.total) || 0,
+    olderThanThreeDays: Number(pendingAgg?.older_than_three) || 0,
+    thisWeek: Number(pendingAgg?.this_week) || 0,
   };
 
-  const recentPunches = (today.sessions || []).slice(0, 8).map((session) => {
-    const emp = employeeById.get(session.userId);
-    return {
-      ...session,
-      department: emp?.department || null,
-      location: emp?.location || null,
-      profilePhoto: null,
-    };
-  });
+  const dayPunches = todaySessions
+    .filter((s) => (s.userId ? employeeIdSet.has(s.userId) : !managerId))
+    .map((session) => {
+      const emp = employeeById.get(session.userId);
+      const late =
+        session.punchIn && punchTime(session.punchIn) > LATE_AFTER ? true : false;
+      return {
+        ...session,
+        late,
+        department: emp?.department || null,
+        location: emp?.location || null,
+        profilePhoto: null,
+      };
+    })
+    .sort((a, b) => String(a.userName || '').localeCompare(String(b.userName || '')));
 
-  const total = today.total || employees.length;
+  const dayLeaves = [];
+  for (const emp of employees) {
+    const leaveRows = coveringLeaveRows(emp.id, date, false);
+    for (const leave of leaveRows) {
+      dayLeaves.push({
+        userId: emp.id,
+        userName: emp.name,
+        employeeNumber: emp.employee_number,
+        department: emp.department || null,
+        location: emp.location || null,
+        leaveType: leave.leave_type,
+        session: leave.session || 'full',
+        startDate: leave.start_date,
+        endDate: leave.end_date,
+      });
+    }
+    const wfhRows = coveringLeaveRows(emp.id, date, true);
+    for (const leave of wfhRows) {
+      dayLeaves.push({
+        userId: emp.id,
+        userName: emp.name,
+        employeeNumber: emp.employee_number,
+        department: emp.department || null,
+        location: emp.location || null,
+        leaveType: leave.leave_type,
+        session: leave.session || 'full',
+        startDate: leave.start_date,
+        endDate: leave.end_date,
+      });
+    }
+  }
+  dayLeaves.sort((a, b) => String(a.userName || '').localeCompare(String(b.userName || '')));
+
+  const leaveOrWfhIds = new Set(dayLeaves.map((row) => row.userId));
+  const punchedIds = new Set(dayPunches.map((s) => s.userId).filter(Boolean));
+  const dayNotPunched = employees
+    .filter((emp) => !punchedIds.has(emp.id) && !leaveOrWfhIds.has(emp.id))
+    .map((emp) => ({
+      userId: emp.id,
+      userName: emp.name,
+      employeeNumber: emp.employee_number,
+      department: emp.department || null,
+      location: emp.location || null,
+    }))
+    .sort((a, b) => String(a.userName || '').localeCompare(String(b.userName || '')));
+
+  // Backward-compatible alias for older clients.
+  const recentPunches = dayPunches.slice(0, 8);
+
+  const total = employees.length;
   return {
     date,
+    monthStart,
+    monthEnd,
     lateAfter: LATE_AFTER,
     filters,
     kpis: {
       totalEmployees: total,
       locations: filters.locations.length,
-      present: today.presentMapped + today.unmapped,
-      presentPct: pct(today.presentMapped, total),
-      unmatchedPunches: today.unmapped,
-      absent: today.absent,
-      absentPct: pct(today.absent, total),
-      onLeave: today.onLeave,
-      onLeavePct: pct(today.onLeave, total),
-      late: today.late,
-      latePct: pct(today.late, total),
-      wfh: today.wfh,
-      wfhPct: pct(today.wfh, total),
+      present: presentMapped + unmappedToday.length,
+      presentPct: pct(presentMapped, total),
+      unmatchedPunches: unmappedToday.length,
+      absent: absentToday,
+      absentPct: pct(absentToday, total),
+      onLeave: onLeaveToday,
+      onLeavePct: pct(onLeaveToday, total),
+      late: lateToday,
+      latePct: pct(lateToday, total),
+      wfh: wfhToday,
+      wfhPct: pct(wfhToday, total),
     },
     distribution: [
-      { name: 'Present', value: today.presentMapped + today.unmapped, key: 'present' },
-      { name: 'Absent', value: today.absent, key: 'absent' },
-      { name: 'On leave', value: today.onLeave, key: 'leave' },
-      { name: 'Late', value: today.late, key: 'late' },
+      { name: 'Present', value: presentMapped + unmappedToday.length, key: 'present' },
+      { name: 'Absent', value: absentToday, key: 'absent' },
+      { name: 'On leave', value: onLeaveToday, key: 'leave' },
+      { name: 'Late', value: lateToday, key: 'late' },
     ],
     trend,
     byDepartment,
     live: {
-      inOffice: today.inOffice,
-      wfh: today.wfh,
-      yetToCheckIn: today.yetToCheckIn,
-      checkedOut: today.checkedOut,
+      inOffice: inOffice + unmappedIn,
+      wfh: wfhToday,
+      yetToCheckIn,
+      checkedOut: checkedOut + unmappedOut,
     },
     pending,
     recentPunches,
+    dayPunches,
+    dayLeaves,
+    dayNotPunched,
   };
 }

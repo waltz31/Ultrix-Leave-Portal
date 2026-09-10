@@ -24,10 +24,15 @@ import {
   formatSessionWorkDisplay,
   formatTime,
   formatWorkHoursMinutes,
+  holidayKind,
+  holidayKindLabel,
   parseAppDateTime,
   punchInLateness,
   toYmd,
+  expectedLogoutFromPunchIn,
+  REQUIRED_WORK_MINUTES,
 } from '../utils';
+import { PunchCheckoutDisplay } from './PunchStatusChips';
 
 const WEEK_STARTS_ON = 1;
 const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -92,6 +97,17 @@ function isHolidayLeave(leave) {
   );
 }
 
+function holidayDisplayName(holiday) {
+  const named =
+    holiday?.userName ||
+    holiday?.title ||
+    holiday?.name ||
+    holiday?.holiday ||
+    REQUEST_LABELS[holiday?.leaveType] ||
+    REQUEST_LABELS[holiday?.holidayType];
+  return String(named || 'Holiday').trim() || 'Holiday';
+}
+
 function monthRange(monthKey) {
   const [year, monthNum] = monthKey.split('-').map(Number);
   const pad = (n) => String(n).padStart(2, '0');
@@ -125,10 +141,13 @@ function resolveDayStatus(day, ctx) {
   }
 
   if (holiday) {
+    const name = holidayDisplayName(holiday);
+    const kind = holidayKind(holiday);
     return {
-      tone: 'holiday',
-      label: 'Holiday',
+      tone: kind === 'national' ? 'national' : kind === 'restricted' ? 'restricted-holiday' : 'holiday',
+      label: name,
       kind: 'holiday',
+      holidayKind: kind,
       leave: holiday,
     };
   }
@@ -305,7 +324,7 @@ function MonthPicker({ value, onChange, today }) {
 
 function RegularizeAction({ session, onRegularize, className = '' }) {
   if (!session?.canRegularize && !session?.regularizePending) {
-    return <span className={`my-att-regularize-empty ${className}`.trim()}>—</span>;
+    return null;
   }
   if (session.regularizePending) {
     return <span className={`my-att-regularize-pending ${className}`.trim()}>Pending</span>;
@@ -313,18 +332,179 @@ function RegularizeAction({ session, onRegularize, className = '' }) {
   return (
     <button
       type="button"
-      className={`btn primary my-att-regularize-btn ${className}`.trim()}
+      className={`btn my-att-regularize-btn my-att-punch-regularize ${className}`.trim()}
       onClick={(e) => {
         e.stopPropagation();
         onRegularize(session);
       }}
     >
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
       Regularize
     </button>
   );
 }
 
-function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onRegularize }) {
+function PunchStatusBadges({ status, session }) {
+  const stillIn = Boolean(session?.stillIn);
+  const kind = status?.kind || 'empty';
+  const badges = [];
+
+  if (kind === 'late') {
+    badges.push({ key: 'late', label: 'Late', tone: 'late', icon: 'late' });
+  } else if (kind === 'present') {
+    badges.push({ key: 'present', label: 'Present', tone: 'present', icon: 'check' });
+  } else if (kind === 'absent') {
+    badges.push({ key: 'absent', label: 'Absent', tone: 'absent', icon: 'absent' });
+  } else if (kind === 'leave' || kind === 'leave-pending') {
+    badges.push({
+      key: 'leave',
+      label: status?.label || 'Leave',
+      tone: 'leave',
+      icon: 'leave',
+    });
+  } else if (kind === 'holiday') {
+    badges.push({
+      key: 'holiday',
+      label: status?.label || 'Holiday',
+      tone: 'holiday',
+      icon: 'holiday',
+    });
+  }
+
+  if (stillIn) {
+    badges.push({ key: 'progress', label: 'In progress', tone: 'progress', icon: 'dot' });
+  }
+
+  if (!badges.length) {
+    badges.push({ key: 'empty', label: status?.label || '—', tone: 'empty', icon: null });
+  }
+
+  return (
+    <div className="my-att-punch-badges">
+      {badges.map((badge) => (
+        <span key={badge.key} className={`my-att-punch-badge tone-${badge.tone}`}>
+          {badge.icon === 'late' ? (
+            <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+              <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          ) : null}
+          {badge.icon === 'check' ? (
+            <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+              <path
+                d="M5.5 12.5l4 4 9-9"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          ) : null}
+          {badge.icon === 'absent' ? (
+            <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+              <path d="M8 3.5v3M16 3.5v3M4 10h16M9.5 14.5l5 5M14.5 14.5l-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          ) : null}
+          {badge.icon === 'dot' ? <span className="my-att-punch-badge-dot" aria-hidden="true" /> : null}
+          {badge.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PunchDetailCard({ day, status, session, onRegularize }) {
+  const stillIn = Boolean(session?.stillIn);
+  const tone =
+    status?.kind === 'absent'
+      ? 'absent'
+      : status?.kind === 'late' || stillIn
+        ? 'live'
+        : status?.kind === 'present'
+          ? 'present'
+          : status?.kind === 'leave' || status?.kind === 'leave-pending'
+            ? 'leave'
+            : status?.kind === 'holiday'
+              ? 'holiday'
+              : 'neutral';
+
+  const expectedOut = session?.punchIn
+    ? expectedLogoutFromPunchIn(session.punchIn, REQUIRED_WORK_MINUTES)
+    : null;
+  const expectedOutLabel = expectedOut ? formatTime(expectedOut) : null;
+  const checkOutLabel = session?.punchOut
+    ? formatTime(session.punchOut)
+    : stillIn
+      ? 'In progress'
+      : '—';
+  return (
+    <li className={`my-att-punch-card tone-${tone}`}>
+      <div className="my-att-punch-card-date" aria-hidden="true">
+        <strong>{format(day, 'd')}</strong>
+        <span>{format(day, 'EEE').toUpperCase()}</span>
+      </div>
+      <div className="my-att-punch-card-body">
+        <PunchStatusBadges status={status} session={session} />
+        <div className="my-att-punch-blocks">
+          <div className="my-att-punch-block">
+            <span className="my-att-punch-block-label">Punch In</span>
+            <strong className="my-att-punch-block-value">
+              {session?.punchIn ? formatTime(session.punchIn) : '—'}
+            </strong>
+          </div>
+          <div className="my-att-punch-block">
+            <span className="my-att-punch-block-label">Check Out</span>
+            <strong
+              className={`my-att-punch-block-value${
+                stillIn && !session?.punchOut ? ' is-progress' : ''
+              }`}
+            >
+              {checkOutLabel}
+            </strong>
+          </div>
+          <div className="my-att-punch-block">
+            <span className="my-att-punch-block-label">Expected Out</span>
+            <strong
+              className={`my-att-punch-block-value${expectedOutLabel ? ' is-expected' : ''}`}
+            >
+              {expectedOutLabel || '—'}
+            </strong>
+          </div>
+          <div className="my-att-punch-block">
+            <span className="my-att-punch-block-label">Total</span>
+            <strong
+              className={`my-att-punch-block-value${stillIn ? ' is-progress' : ''}`}
+            >
+              {formatSessionWorkDisplay(session)}
+            </strong>
+          </div>
+        </div>
+        {session?.canRegularize || session?.regularizePending ? (
+          <div className="my-att-punch-card-action">
+            <RegularizeAction session={session} onRegularize={onRegularize} />
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function CalendarDayCell({
+  day,
+  outside,
+  isToday,
+  isSelected,
+  status,
+  session,
+  todayYmd,
+  onRegularize,
+  onSelect,
+}) {
   const ymd = format(day, 'yyyy-MM-dd');
   const pastOrToday = ymd <= todayYmd;
   const showTooltip = !outside && pastOrToday && status.kind !== 'empty';
@@ -356,11 +536,15 @@ function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onR
       ? 'WEEKEND'
       : status.kind === 'late'
         ? 'Late'
-        : status.kind === 'leave' || status.kind === 'leave-pending'
-          ? 'Leave'
-          : status.kind === 'holiday'
-            ? 'Holiday'
-            : status.label;
+        : status.kind === 'holiday'
+          ? holidayKindLabel(status.holidayKind) || 'Holiday'
+          : status.kind === 'present'
+            ? 'Present'
+            : status.kind === 'absent'
+              ? 'Absent'
+              : status.kind === 'leave' || status.kind === 'leave-pending'
+                ? status.label
+                : status.label;
 
   const workLabel =
     !outside && (status.kind === 'present' || status.kind === 'late')
@@ -369,14 +553,18 @@ function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onR
 
   return (
     <div
+      role={outside ? undefined : 'button'}
       className={[
         'my-att-cal-cell',
         outside ? 'is-outside' : '',
         isToday ? 'is-today' : '',
+        isSelected ? 'is-selected' : '',
         status.tone !== 'empty' ? `tone-${status.tone}` : '',
         status.kind === 'weekend' ? 'is-weekend' : '',
+        status.holidayKind === 'national' ? 'has-india-flag' : '',
         showTooltip ? 'has-tooltip' : '',
         open ? 'is-open' : '',
+        outside ? '' : 'is-clickable',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -386,11 +574,30 @@ function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onR
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) scheduleClose();
       }}
-      tabIndex={showTooltip ? 0 : undefined}
+      onClick={() => {
+        if (outside || !onSelect) return;
+        onSelect(ymd);
+      }}
+      onKeyDown={(e) => {
+        if (outside || !onSelect) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(ymd);
+        }
+      }}
+      tabIndex={outside ? undefined : 0}
     >
+      {status.holidayKind === 'national' && !outside ? (
+        <span className="india-flag-backdrop" aria-hidden="true" />
+      ) : null}
       <span className="my-att-cal-day">{format(day, 'd')}</span>
       {!outside && pillLabel ? (
         <span className={`my-att-cal-pill tone-${status.tone}`}>{pillLabel}</span>
+      ) : null}
+      {!outside && status.kind === 'holiday' && status.holidayKind ? (
+        <span className={`my-att-cal-holiday-kind is-${status.holidayKind}`} title={status.label}>
+          {status.label}
+        </span>
       ) : null}
       {!outside && workLabel && workLabel !== '—' ? (
         <span className="my-att-cal-hours">{workLabel}</span>
@@ -401,6 +608,7 @@ function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onR
           role="tooltip"
           onMouseEnter={openPanel}
           onMouseLeave={scheduleClose}
+          onClick={(e) => e.stopPropagation()}
         >
           <div className="my-att-cal-tooltip-head">
             <strong>{format(day, 'EEE, d MMM')}</strong>
@@ -421,11 +629,16 @@ function CalendarDayCell({ day, outside, isToday, status, session, todayYmd, onR
               <div>
                 <span>Punch Out</span>
                 <strong>
-                  {session?.punchOut
-                    ? formatTime(session.punchOut)
-                    : session?.stillIn
-                      ? 'Still in'
-                      : '—'}
+                  {session?.punchOut || session?.stillIn ? (
+                    <PunchCheckoutDisplay
+                      session={session}
+                      formatTime={formatTime}
+                      expectedLogoutFromPunchIn={expectedLogoutFromPunchIn}
+                      requiredMinutes={REQUIRED_WORK_MINUTES}
+                    />
+                  ) : (
+                    '—'
+                  )}
                 </strong>
               </div>
               <div>
@@ -464,6 +677,7 @@ export default function MyAttendanceHub() {
   const [error, setError] = useState('');
   const [regularizeOpen, setRegularizeOpen] = useState(false);
   const [regularizeSession, setRegularizeSession] = useState(null);
+  const [selectedDayYmd, setSelectedDayYmd] = useState(() => format(today, 'yyyy-MM-dd'));
 
   const cursor = useMemo(() => {
     const [y, m] = month.split('-').map(Number);
@@ -495,7 +709,7 @@ export default function MyAttendanceHub() {
     }
   }, [range.from, range.to, month]);
 
-  usePollWhenVisible(load, 60_000, [load]);
+  usePollWhenVisible(load, 120_000, [load]);
 
   const filteredLeaves = useMemo(
     () =>
@@ -520,8 +734,22 @@ export default function MyAttendanceHub() {
         map.set(format(day, 'yyyy-MM-dd'), leave);
       }
     }
+    for (const holiday of publishedHolidays || []) {
+      // Restricted dates stay off the calendar until the employee has an approved RH leave.
+      if (holidayKind(holiday) === 'restricted') continue;
+      const startYmd = toYmd(holiday.startDate || holiday.date);
+      const endYmd = toYmd(holiday.endDate || holiday.startDate || holiday.date);
+      if (!startYmd) continue;
+      const start = parseISO(startYmd);
+      const end = parseISO(endYmd || startYmd);
+      if (Number.isNaN(start.getTime())) continue;
+      for (const day of eachDayOfInterval({ start, end })) {
+        const key = format(day, 'yyyy-MM-dd');
+        if (!map.has(key)) map.set(key, holiday);
+      }
+    }
     return map;
-  }, [filteredLeaves]);
+  }, [filteredLeaves, publishedHolidays]);
 
   const leavesByDate = useMemo(() => {
     const map = new Map();
@@ -623,6 +851,7 @@ export default function MyAttendanceHub() {
       return format(parseISO(fromMap[0][0]), 'MMM d');
     }
     const upcoming = [...(publishedHolidays || [])]
+      .filter((h) => holidayKind(h) !== 'restricted')
       .map((h) => toYmd(h.startDate))
       .filter((ymd) => ymd && ymd >= todayYmd)
       .sort((a, b) => a.localeCompare(b));
@@ -637,20 +866,28 @@ export default function MyAttendanceHub() {
   }, [cursor]);
 
   const todayYmd = format(today, 'yyyy-MM-dd');
-  const historyRows = useMemo(() => {
-    return [...monthDays]
-      .reverse()
-      .filter((day) => format(day, 'yyyy-MM-dd') <= todayYmd)
-      .map((day) => {
-        const ymd = format(day, 'yyyy-MM-dd');
-        const status = dayStatuses.get(ymd);
-        const session = sessionsByDate.get(ymd);
-        return { day, ymd, status, session };
-      })
-      .filter((row) => row.status?.kind !== 'empty' && row.status?.kind !== 'weekend');
-  }, [monthDays, todayYmd, dayStatuses, sessionsByDate]);
 
-  const punchDetailRows = useMemo(() => historyRows.slice(0, 12), [historyRows]);
+  useEffect(() => {
+    // Keep selection inside the visible month; default to today when possible.
+    if (selectedDayYmd.startsWith(month)) return;
+    if (todayYmd.startsWith(month)) {
+      setSelectedDayYmd(todayYmd);
+      return;
+    }
+    setSelectedDayYmd(`${month}-01`);
+  }, [month, selectedDayYmd, todayYmd]);
+
+  const selectedDay = useMemo(() => {
+    const parsed = parseISO(selectedDayYmd);
+    if (Number.isNaN(parsed.getTime())) return today;
+    return parsed;
+  }, [selectedDayYmd, today]);
+
+  const selectedPunch = useMemo(() => {
+    const status = dayStatuses.get(selectedDayYmd) || { tone: 'empty', label: '', kind: 'empty' };
+    const session = sessionsByDate.get(selectedDayYmd) || null;
+    return { day: selectedDay, ymd: selectedDayYmd, status, session };
+  }, [dayStatuses, sessionsByDate, selectedDay, selectedDayYmd]);
 
   function exportMonth() {
     downloadPunchesExcel(sessions, `attendance-${month}.xlsx`);
@@ -723,7 +960,9 @@ export default function MyAttendanceHub() {
                 <li><span className="dot late" /> Late</li>
                 <li><span className="dot absent" /> Absent</li>
                 <li><span className="dot leave" /> Leave</li>
-                <li><span className="dot holiday" /> Holiday</li>
+                <li><span className="dot holiday" /> Regional</li>
+                <li><span className="dot national" /> National</li>
+                <li><span className="dot restricted-holiday" /> Restricted</li>
                 <li><span className="dot weekend" /> Weekend</li>
               </ul>
             </div>
@@ -749,10 +988,12 @@ export default function MyAttendanceHub() {
                     day={day}
                     outside={outside}
                     isToday={isToday}
+                    isSelected={ymd === selectedDayYmd}
                     status={status}
                     session={session}
                     todayYmd={todayYmd}
                     onRegularize={openRegularize}
+                    onSelect={setSelectedDayYmd}
                   />
                 );
               })}
@@ -781,61 +1022,92 @@ export default function MyAttendanceHub() {
 
         <aside className="my-att-sidebar">
           <section className="my-att-panel my-att-punch-details">
-            <div className="my-att-panel-head">
-              <div>
-                <h2>Daily Punch Details</h2>
-                <p className="my-att-emp-meta">{format(cursor, 'MMMM yyyy')}</p>
+            <div className="my-att-punch-details-head">
+              <div className="my-att-punch-details-title">
+                <span className="my-att-punch-details-ico" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18">
+                    <rect
+                      x="3.5"
+                      y="5"
+                      width="17"
+                      height="15"
+                      rx="2.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                    />
+                    <path
+                      d="M8 3.5v3M16 3.5v3M3.5 10h17"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+                <div>
+                  <h2>Daily Punch Details</h2>
+                  <p className="my-att-emp-meta">{format(selectedDay, 'EEE, d MMM yyyy')}</p>
+                </div>
               </div>
+              <label className="sr-only" htmlFor="my-att-punch-month">
+                Month
+              </label>
+              <select
+                id="my-att-punch-month"
+                className="my-att-punch-month-select"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+              >
+                {Array.from({ length: 12 }, (_, i) => {
+                  const d = addMonths(startOfMonth(today), i - 8);
+                  const value = format(d, 'yyyy-MM');
+                  return (
+                    <option key={value} value={value}>
+                      {format(d, 'MMMM yyyy')}
+                    </option>
+                  );
+                })}
+              </select>
             </div>
-            {!punchDetailRows.length ? (
-              <p className="empty">No punch records for this month yet.</p>
-            ) : (
-              <ul className="my-att-punch-list">
-                {punchDetailRows.map(({ day, ymd, status, session }) => (
-                  <li key={ymd} className="my-att-punch-row">
-                    <div className="my-att-punch-date">
-                      <strong>{format(day, 'd')}</strong>
-                      <span>{format(day, 'EEE').toUpperCase()}</span>
-                    </div>
-                    <span className={`my-att-status-pill tone-${status?.tone || 'empty'}`}>
-                      {status?.kind === 'late'
-                        ? 'Late'
-                        : status?.kind === 'leave' || status?.kind === 'leave-pending'
-                          ? 'Leave'
-                          : status?.label || '—'}
-                    </span>
-                    <div className="my-att-punch-metrics">
-                      <div>
-                        <strong>{session?.punchIn ? formatTime(session.punchIn) : '—'}</strong>
-                        <span>Punch In</span>
-                      </div>
-                      <div>
-                        <strong>
-                          {session?.punchOut
-                            ? formatTime(session.punchOut)
-                            : session?.stillIn
-                              ? 'Still in'
-                              : '—'}
-                        </strong>
-                        <span>Punch Out</span>
-                      </div>
-                      <div>
-                        <strong>{formatSessionWorkDisplay(session)}</strong>
-                        <span>Total</span>
-                      </div>
-                    </div>
-                    {session?.canRegularize || session?.regularizePending ? (
-                      <div className="my-att-punch-action">
-                        <RegularizeAction session={session} onRegularize={openRegularize} />
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="my-att-total-hours">
-              <span>Total hours worked</span>
-              <strong>{formatWorkHours(stats.totalWorkMinutes)}</strong>
+            <ul className="my-att-punch-list is-single">
+              <PunchDetailCard
+                day={selectedPunch.day}
+                status={selectedPunch.status}
+                session={selectedPunch.session}
+                onRegularize={openRegularize}
+              />
+            </ul>
+            <div className="my-att-punch-summary">
+              <div className="my-att-punch-summary-item">
+                <span className="my-att-punch-summary-ico is-hours" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18">
+                    <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M12 8v4l2.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </span>
+                <div className="my-att-punch-summary-copy">
+                  <span>Total hours worked</span>
+                  <strong>{formatWorkHours(stats.totalWorkMinutes)}</strong>
+                </div>
+              </div>
+              <div className="my-att-punch-summary-item">
+                <span className="my-att-punch-summary-ico is-avg" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18">
+                    <path
+                      d="M5 19V10M10 19V5M15 19v-7M20 19V8"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+                <div className="my-att-punch-summary-copy">
+                  <span>Avg. per day</span>
+                  <strong>{formatWorkHours(stats.avgMinutes)}</strong>
+                </div>
+              </div>
             </div>
           </section>
         </aside>
