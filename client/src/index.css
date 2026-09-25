@@ -18260,6 +18260,12 @@ a.attov-kpi:hover {
   border-bottom-color: var(--brand);
 }
 
+.rmb-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
 .rmb-table td,
 .rmb-table th {
   vertical-align: middle;
@@ -18269,11 +18275,21 @@ a.attov-kpi:hover {
 .rmb-table td.rmb-actions {
   text-align: right;
   white-space: nowrap;
-  width: 1%;
+  vertical-align: middle;
+  width: 6.5rem;
+  min-width: 6.5rem;
+  padding-left: 16px;
+  padding-right: 12px;
+}
+
+.rmb-table td:nth-last-child(2) {
+  white-space: nowrap;
+  padding-right: 12px;
 }
 
 .rmb-check-col {
   width: 40px;
+  min-width: 40px;
   text-align: center;
   vertical-align: middle;
 }
@@ -18297,13 +18313,8 @@ a.attov-kpi:hover {
   background: color-mix(in srgb, var(--brand) 10%, transparent);
 }
 
-.rmb-actions {
-  display: inline-flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  min-height: 36px;
+.rmb-table .rmb-status {
+  white-space: nowrap;
 }
 
 .rmb-view-btn {
@@ -18313,6 +18324,8 @@ a.attov-kpi:hover {
   min-width: 72px;
   margin: 0;
   white-space: nowrap;
+  position: relative;
+  z-index: 1;
 }
 
 .rmb-bulk-bar {
