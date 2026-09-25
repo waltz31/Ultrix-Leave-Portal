@@ -1,6 +1,7 @@
 import './time.js';
 import fs from 'fs';
 import path from 'path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { isPostgres, translateSql, toPgPlaceholders } from './sqlDialect.js';
@@ -63,6 +64,16 @@ function createPostgres() {
     return client.query(translated, params);
   }
 
+  // Per-async-context transaction client. Mutating adapter.prepare globally races
+  // under concurrent transactions and can leave queries bound to a released client
+  // (symptoms: /auth/login and other DB routes return 500 while /health still looks fine).
+  const txContext = new AsyncLocalStorage();
+
+  function activeQuery(sql, params) {
+    const txClient = txContext.getStore();
+    return clientQuery(txClient || pool, sql, params);
+  }
+
   function makePrepare(queryFn) {
     return (sql) => ({
       get: async (...params) => {
@@ -97,17 +108,19 @@ function createPostgres() {
   const adapter = {
     dialect: 'postgres',
     ready,
-    prepare: makePrepare((sql, params) => clientQuery(pool, sql, params)),
+    prepare: makePrepare(activeQuery),
     exec: async (sql) => {
-      await pool.query(translateSql(sql));
+      await activeQuery(sql, []);
     },
     async transaction(fn) {
+      if (txContext.getStore()) {
+        // Already inside a transaction — reuse the same client/context.
+        return fn();
+      }
       const client = await pool.connect();
-      const prevPrepare = adapter.prepare;
       try {
         await client.query('BEGIN');
-        adapter.prepare = makePrepare((sql, params) => clientQuery(client, sql, params));
-        const result = await fn();
+        const result = await txContext.run(client, fn);
         await client.query('COMMIT');
         return result;
       } catch (err) {
@@ -118,7 +131,6 @@ function createPostgres() {
         }
         throw err;
       } finally {
-        adapter.prepare = prevPrepare;
         client.release();
       }
     },

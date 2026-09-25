@@ -65,11 +65,20 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
  * Readiness for the app is exposed as `ready` / `status` so cold-start
  * clients can keep retrying API calls without the proxy killing the instance.
  */
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  let dbOk = false;
+  if (dbReady) {
+    try {
+      await db.prepare('SELECT 1 AS ok').get();
+      dbOk = true;
+    } catch (err) {
+      console.error('Health DB probe failed:', err?.message || err);
+    }
+  }
   res.status(200).json({
     ok: true,
-    ready: dbReady,
-    status: dbReady ? 'ok' : 'starting',
+    ready: dbReady && dbOk,
+    status: dbReady && dbOk ? 'ok' : dbReady ? 'db_error' : 'starting',
     listening: httpListening,
     timezone: 'Asia/Kolkata',
     ...(dbReady

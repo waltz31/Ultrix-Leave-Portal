@@ -320,27 +320,32 @@ async function publicUserWithPhoto(user) {
 
 // ——— Auth ———
 router.post('/auth/login', async (req, res) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    const user = await db
+      .prepare(
+        `SELECT id, name, email, role, manager_id, active, password_hash, employee_number
+         FROM users WHERE email = ?`
+      )
+      .get(String(email).toLowerCase().trim());
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    const isActive = user.active === true || user.active === 1 || user.active === '1';
+    if (!isActive) {
+      return res.status(401).json({ error: 'Account is inactive. Ask HR to activate it.' });
+    }
+    if (!user.password_hash || !(await verifyPassword(String(password), user.password_hash))) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    res.json({ token: signToken(user), user: await publicUserWithPhoto(user) });
+  } catch (err) {
+    console.error('Login failed:', err?.message || err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  const user = await db
-    .prepare(
-      `SELECT id, name, email, role, manager_id, active, password_hash, employee_number
-       FROM users WHERE email = ?`
-    )
-    .get(email.toLowerCase().trim());
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
-  const isActive = user.active === true || user.active === 1 || user.active === '1';
-  if (!isActive) {
-    return res.status(401).json({ error: 'Account is inactive. Ask HR to activate it.' });
-  }
-  if (!user.password_hash || !(await verifyPassword(String(password), user.password_hash))) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
-  res.json({ token: signToken(user), user: await publicUserWithPhoto(user) });
 });
 
 router.get('/auth/me', authRequired, async (req, res) => {
