@@ -18265,10 +18265,90 @@ a.attov-kpi:hover {
   vertical-align: middle;
 }
 
+.rmb-table th.rmb-action-col,
+.rmb-table td.rmb-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.rmb-check-col {
+  width: 40px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.rmb-check-col input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--brand);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.rmb-check-spacer {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+}
+
+.rmb-table tbody tr.is-selected td {
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+}
+
 .rmb-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 36px;
+}
+
+.rmb-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.rmb-bulk-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--shell-border-soft, var(--line));
+  background: var(--shell-surface, color-mix(in srgb, var(--brand) 8%, transparent));
+}
+
+.rmb-bulk-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--shell-strong, var(--ink));
+  cursor: pointer;
+}
+
+.rmb-bulk-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.rmb-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .rmb-status {

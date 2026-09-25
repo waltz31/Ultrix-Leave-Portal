@@ -82,6 +82,8 @@ export default function ReimbursementBoard({ mode = 'self' }) {
   const [selected, setSelected] = useState(null);
   const [reviewNote, setReviewNote] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [submittedPopup, setSubmittedPopup] = useState(null);
   const fileRef = useRef(null);
 
@@ -97,6 +99,7 @@ export default function ReimbursementBoard({ mode = 'self' }) {
       ]);
       setItems(listRes.reimbursements || []);
       setStats(statsRes);
+      setSelectedIds(new Set());
     } catch (err) {
       setError(err.message || 'Could not load reimbursements');
     } finally {
@@ -119,6 +122,61 @@ export default function ReimbursementBoard({ mode = 'self' }) {
       reimbursed: by.reimbursed?.count || 0,
     };
   }, [stats]);
+
+  const pendingItems = useMemo(
+    () => (isHr ? items.filter((item) => item.status === 'pending') : []),
+    [isHr, items]
+  );
+  const pendingIds = useMemo(() => pendingItems.map((item) => item.id), [pendingItems]);
+  const allPendingSelected =
+    pendingIds.length > 0 && pendingIds.every((id) => selectedIds.has(id));
+  const selectedCount = selectedIds.size;
+
+  function toggleSelect(id) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllPending() {
+    setSelectedIds((current) => {
+      if (pendingIds.length && pendingIds.every((id) => current.has(id))) {
+        return new Set();
+      }
+      return new Set(pendingIds);
+    });
+  }
+
+  async function bulkReview(action) {
+    if (!isHr || !selectedCount) return;
+    const label = action === 'approve' ? 'approve' : action === 'reject' ? 'reject' : 'mark reimbursed';
+    if (!window.confirm(`${label[0].toUpperCase()}${label.slice(1)} ${selectedCount} selected request${selectedCount === 1 ? '' : 's'}?`)) {
+      return;
+    }
+    setBulkBusy(true);
+    setError('');
+    try {
+      const data = await api('/reimbursements/bulk-review', {
+        method: 'PATCH',
+        body: { ids: [...selectedIds], action },
+      });
+      setSelectedIds(new Set());
+      if (selected && selectedIds.has(selected.id)) setSelected(null);
+      await load();
+      if (data.failed?.length) {
+        setError(
+          `Updated ${data.updated || 0}; ${data.failed.length} could not be updated.`
+        );
+      }
+    } catch (err) {
+      setError(err.message || 'Could not update selected requests');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   function openCreate() {
     setForm(EMPTY_FORM);
@@ -700,6 +758,42 @@ export default function ReimbursementBoard({ mode = 'self' }) {
         ))}
       </div>
 
+      {isHr && pendingItems.length ? (
+        <div className="rmb-bulk-bar">
+          <label className="rmb-bulk-select">
+            <input
+              type="checkbox"
+              checked={allPendingSelected}
+              onChange={toggleSelectAllPending}
+              disabled={bulkBusy || !pendingIds.length}
+            />
+            <span>
+              {selectedCount
+                ? `${selectedCount} selected`
+                : `Select pending (${pendingIds.length})`}
+            </span>
+          </label>
+          <div className="rmb-bulk-actions">
+            <button
+              type="button"
+              className="btn primary"
+              disabled={bulkBusy || !selectedCount}
+              onClick={() => bulkReview('approve')}
+            >
+              {bulkBusy ? 'Updating…' : `Approve selected${selectedCount ? ` (${selectedCount})` : ''}`}
+            </button>
+            <button
+              type="button"
+              className="btn secondary"
+              disabled={bulkBusy || !selectedCount}
+              onClick={() => bulkReview('reject')}
+            >
+              Reject selected
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {loading && <p className="muted">Loading reimbursements…</p>}
       {!loading && !items.length && <p className="empty">No reimbursement requests yet.</p>}
 
@@ -708,6 +802,18 @@ export default function ReimbursementBoard({ mode = 'self' }) {
           <table className="rmb-table">
             <thead>
               <tr>
+                {isHr ? (
+                  <th className="rmb-check-col" scope="col">
+                    <span className="sr-only">Select</span>
+                    <input
+                      type="checkbox"
+                      checked={allPendingSelected}
+                      onChange={toggleSelectAllPending}
+                      disabled={bulkBusy || !pendingIds.length}
+                      aria-label="Select all pending"
+                    />
+                  </th>
+                ) : null}
                 <th>Request ID</th>
                 {isHr ? <th>Employee</th> : null}
                 <th>Date</th>
@@ -715,12 +821,27 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                 <th>Description</th>
                 <th>Amount</th>
                 <th>Status</th>
-                <th>Action</th>
+                <th className="rmb-action-col">Action</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={item.id}>
+                <tr key={item.id} className={selectedIds.has(item.id) ? 'is-selected' : ''}>
+                  {isHr ? (
+                    <td className="rmb-check-col">
+                      {item.status === 'pending' ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(item.id)}
+                          onChange={() => toggleSelect(item.id)}
+                          disabled={bulkBusy}
+                          aria-label={`Select ${item.requestCode}`}
+                        />
+                      ) : (
+                        <span className="rmb-check-spacer" aria-hidden="true" />
+                      )}
+                    </td>
+                  ) : null}
                   <td>{item.requestCode}</td>
                   {isHr ? (
                     <td>
@@ -742,7 +863,11 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                     </span>
                   </td>
                   <td className="rmb-actions">
-                    <button type="button" className="btn secondary" onClick={() => openDetail(item)}>
+                    <button
+                      type="button"
+                      className="btn secondary rmb-view-btn"
+                      onClick={() => openDetail(item)}
+                    >
                       View
                     </button>
                   </td>

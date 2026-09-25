@@ -4256,12 +4256,9 @@ router.patch('/reimbursements/:id/cancel', authRequired, async (req, res) => {
   res.json({ reimbursement: updated });
 });
 
-router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req, res) => {
-  const id = Number(req.params.id);
-  const action = String(req.body?.action || '').trim().toLowerCase();
-  const note = String(req.body?.note || '').trim().slice(0, 500);
+async function applyReimbursementReview({ id, action, note, hrUserId }) {
   const row = await getReimbursementById(id);
-  if (!row) return res.status(404).json({ error: 'Reimbursement not found' });
+  if (!row) return { error: 'Reimbursement not found', status: 404 };
 
   let nextStatus = null;
   let notifyType = null;
@@ -4269,7 +4266,7 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
   let message = '';
   if (action === 'approve') {
     if (row.status !== 'pending') {
-      return res.status(400).json({ error: 'Only pending requests can be approved' });
+      return { error: 'Only pending requests can be approved', status: 400 };
     }
     nextStatus = 'approved';
     notifyType = 'reimbursement_approved';
@@ -4277,7 +4274,7 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
     message = `Your request ${row.request_code} was approved by HR.`;
   } else if (action === 'reject') {
     if (row.status !== 'pending') {
-      return res.status(400).json({ error: 'Only pending requests can be rejected' });
+      return { error: 'Only pending requests can be rejected', status: 400 };
     }
     nextStatus = 'rejected';
     notifyType = 'reimbursement_rejected';
@@ -4285,14 +4282,14 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
     message = `Your request ${row.request_code} was rejected by HR.`;
   } else if (action === 'reimburse') {
     if (row.status !== 'approved') {
-      return res.status(400).json({ error: 'Only approved requests can be marked reimbursed' });
+      return { error: 'Only approved requests can be marked reimbursed', status: 400 };
     }
     nextStatus = 'reimbursed';
     notifyType = 'reimbursement_reimbursed';
     title = 'Reimbursement paid';
     message = `Your request ${row.request_code} has been reimbursed.`;
   } else {
-    return res.status(400).json({ error: 'Action must be approve, reject, or reimburse' });
+    return { error: 'Action must be approve, reject, or reimburse', status: 400 };
   }
 
   if (action === 'reimburse') {
@@ -4304,7 +4301,7 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
              reimbursed_at = ${SQL_NOW_IST}, updated_at = ${SQL_NOW_IST}
          WHERE id = ?`
       )
-      .run(nextStatus, note, req.user.id, id);
+      .run(nextStatus, note, hrUserId, id);
   } else {
     await db
       .prepare(
@@ -4313,7 +4310,7 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
              updated_at = ${SQL_NOW_IST}
          WHERE id = ?`
       )
-      .run(nextStatus, note || null, req.user.id, id);
+      .run(nextStatus, note || null, hrUserId, id);
   }
 
   const updated = mapReimbursement(await getReimbursementById(id));
@@ -4324,7 +4321,68 @@ router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req,
     title,
     message: note ? `${message} Note: ${note}` : message,
   });
-  res.json({ reimbursement: updated });
+  return { reimbursement: updated };
+}
+
+router.patch('/reimbursements/bulk-review', authRequired, hrRequired, async (req, res) => {
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const note = String(req.body?.note || '').trim().slice(0, 500);
+  const rawIds = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const ids = [...new Set(rawIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+  if (!ids.length) {
+    return res.status(400).json({ error: 'Select at least one reimbursement' });
+  }
+  if (!['approve', 'reject', 'reimburse'].includes(action)) {
+    return res.status(400).json({ error: 'Action must be approve, reject, or reimburse' });
+  }
+  if (ids.length > 100) {
+    return res.status(400).json({ error: 'You can review at most 100 requests at once' });
+  }
+
+  const updated = [];
+  const failed = [];
+  for (const id of ids) {
+    const result = await applyReimbursementReview({
+      id,
+      action,
+      note,
+      hrUserId: req.user.id,
+    });
+    if (result.error) {
+      failed.push({ id, error: result.error });
+    } else {
+      updated.push(result.reimbursement);
+    }
+  }
+
+  if (!updated.length) {
+    return res.status(400).json({
+      error: failed[0]?.error || 'Could not update selected requests',
+      failed,
+    });
+  }
+
+  res.json({
+    reimbursements: updated,
+    updated: updated.length,
+    failed,
+  });
+});
+
+router.patch('/reimbursements/:id/review', authRequired, hrRequired, async (req, res) => {
+  const id = Number(req.params.id);
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const note = String(req.body?.note || '').trim().slice(0, 500);
+  const result = await applyReimbursementReview({
+    id,
+    action,
+    note,
+    hrUserId: req.user.id,
+  });
+  if (result.error) {
+    return res.status(result.status || 400).json({ error: result.error });
+  }
+  res.json({ reimbursement: result.reimbursement });
 });
 
 router.use((req, res) => {
