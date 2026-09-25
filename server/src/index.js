@@ -11,6 +11,7 @@ import { startPunchPolling } from './punchSync.js';
 const app = express();
 const PORT = process.env.PORT || 4000;
 let dbReady = false;
+let httpListening = false;
 
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
   .split(',')
@@ -59,25 +60,34 @@ app.post(
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
+/**
+ * Liveness for Render: return 200 as soon as HTTP is listening.
+ * Readiness for the app is exposed as `ready` / `status` so cold-start
+ * clients can keep retrying API calls without the proxy killing the instance.
+ */
 app.get('/api/health', (_req, res) => {
-  if (!dbReady) {
-    return res.status(503).json({
-      ok: false,
-      status: 'starting',
-      timezone: 'Asia/Kolkata',
-    });
-  }
-  res.json({
+  res.status(200).json({
     ok: true,
+    ready: dbReady,
+    status: dbReady ? 'ok' : 'starting',
+    listening: httpListening,
     timezone: 'Asia/Kolkata',
-    db: db.dialect,
-    slack: slackStatus(),
+    ...(dbReady
+      ? {
+          db: db.dialect,
+          slack: slackStatus(),
+        }
+      : {}),
   });
 });
 
 app.use('/api', async (req, res, next) => {
+  if (req.path === '/health') return next();
   if (!dbReady) {
-    return res.status(503).json({ error: 'Server is starting, please retry in a few seconds' });
+    return res.status(503).json({
+      error: 'Server is starting, please retry in a few seconds',
+      status: 'starting',
+    });
   }
   return next();
 });
@@ -94,7 +104,8 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
+  httpListening = true;
   const slack = slackStatus();
   console.log(`Leave Portal API running on port ${PORT} (IST, ${db.dialect})`);
   console.log(

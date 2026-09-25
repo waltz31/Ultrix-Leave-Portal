@@ -47,6 +47,16 @@ function categoryClass(category) {
   return `rmb-cat rmb-cat-${category || 'other'}`;
 }
 
+function isImageReceipt(mimeOrData) {
+  const value = String(mimeOrData || '').toLowerCase();
+  return value.includes('image/jpeg') || value.includes('image/jpg') || value.includes('image/png');
+}
+
+function isPdfReceipt(mimeOrData) {
+  const value = String(mimeOrData || '').toLowerCase();
+  return value.includes('application/pdf');
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -377,6 +387,16 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                         ) : (
                           <p className="muted">JPG, PNG, PDF files only. Max size 5MB per file.</p>
                         )}
+                        {form.receiptData && isImageReceipt(form.receiptData) ? (
+                          <div className="rmb-receipt-preview">
+                            <img src={form.receiptData} alt="Receipt preview" />
+                          </div>
+                        ) : null}
+                        {form.receiptData && isPdfReceipt(form.receiptData) ? (
+                          <div className="rmb-receipt-preview is-pdf">
+                            <iframe title="Receipt preview" src={form.receiptData} />
+                          </div>
+                        ) : null}
                       </div>
                     </section>
 
@@ -488,6 +508,35 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                       <div className="rmb-view-block">
                         <h3>HR note</h3>
                         <p>{selected.hrNote}</p>
+                      </div>
+                    ) : null}
+
+                    {selected.hasReceipt ? (
+                      <div className="rmb-view-block">
+                        <h3>Receipt</h3>
+                        {selected.receiptData && isImageReceipt(selected.receiptMime || selected.receiptData) ? (
+                          <div className="rmb-receipt-preview">
+                            <img
+                              src={selected.receiptData}
+                              alt={selected.receiptName || 'Receipt'}
+                            />
+                          </div>
+                        ) : selected.receiptData &&
+                          isPdfReceipt(selected.receiptMime || selected.receiptData) ? (
+                          <div className="rmb-receipt-preview is-pdf">
+                            <iframe
+                              title={selected.receiptName || 'Receipt PDF'}
+                              src={selected.receiptData}
+                            />
+                          </div>
+                        ) : (
+                          <p className="muted">
+                            {selected.receiptName || 'Receipt attached'} — use Download to open.
+                          </p>
+                        )}
+                        {selected.receiptName ? (
+                          <p className="rmb-file-name">{selected.receiptName}</p>
+                        ) : null}
                       </div>
                     ) : null}
 
@@ -696,16 +745,6 @@ export default function ReimbursementBoard({ mode = 'self' }) {
                     <button type="button" className="btn secondary" onClick={() => openDetail(item)}>
                       View
                     </button>
-                    {item.hasReceipt &&
-                    (item.status === 'approved' || item.status === 'reimbursed') ? (
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => downloadReceipt(item)}
-                      >
-                        Download
-                      </button>
-                    ) : null}
                   </td>
                 </tr>
               ))}

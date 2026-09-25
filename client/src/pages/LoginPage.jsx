@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
+import { isTransientApiError, wakeApiServer } from '../api';
 import { homePathForRole } from '../utils';
 import { APP_VERSION } from '../version';
 import LoginBackground from '../components/LoginBackground';
@@ -13,17 +14,46 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Start waking the Render API as soon as the login screen opens.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatus('Connecting to server…');
+      await wakeApiServer();
+      if (!cancelled) setStatus('');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (busy) return;
     setError('');
     setBusy(true);
+    setStatus('Signing in…');
     try {
-      const user = await login(email, password);
+      const user = await login(email, password, {
+        onRetry: ({ attempt, max }) => {
+          setStatus(
+            attempt <= 2
+              ? 'Server is waking up — please wait…'
+              : `Still connecting… (try ${attempt}/${max})`
+          );
+        },
+      });
       navigate(homePathForRole(user.role), { replace: true });
     } catch (err) {
-      setError(err.message);
+      setError(
+        isTransientApiError(err)
+          ? 'Server is still starting. Wait a few seconds and try again.'
+          : err.message || 'Sign in failed'
+      );
+      setStatus('');
     } finally {
       setBusy(false);
     }
@@ -54,6 +84,7 @@ export default function LoginPage() {
                 autoComplete="username"
                 placeholder="you@company.com"
                 spellCheck={false}
+                disabled={busy}
               />
             </label>
             <label>
@@ -66,6 +97,7 @@ export default function LoginPage() {
                   required
                   autoComplete="current-password"
                   placeholder="Enter your password"
+                  disabled={busy}
                 />
                 <button
                   type="button"
@@ -78,8 +110,9 @@ export default function LoginPage() {
               </div>
             </label>
             {error && <p className="form-error">{error}</p>}
+            {status && !error ? <p className="login-status">{status}</p> : null}
             <button className="btn primary full" type="submit" disabled={busy}>
-              {busy ? 'Signing in…' : 'Continue'}
+              {busy ? status || 'Signing in…' : 'Continue'}
             </button>
           </form>
         </div>

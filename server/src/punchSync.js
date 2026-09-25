@@ -607,7 +607,8 @@ export function isShortWorkDay(workMinutes) {
 /**
  * Punch day stays open until 23:59:59 IST.
  * Before that, sessions keep last punch-in details (still in) unless there is an
- * explicit Check-Out. After the cutoff (or on past dates), checkout is finalized.
+ * explicit Check-Out. After the cutoff (or on past dates), checkout is finalized
+ * from the real last punch — never a synthetic 23:59:59 timestamp.
  */
 export function isPunchDayClosed(punchDate, nowStamp = nowIst()) {
   const date = String(punchDate || '').slice(0, 10);
@@ -644,18 +645,10 @@ export function summarizeDaySessions(punches) {
       : null;
 
     // While the day is open, hold punch-in details — never infer an early checkout
-    // from extra Check-In taps. After 23:59:59 (or past days), finalize checkout.
+    // from extra Check-In taps. After 23:59:59 (or past days), finalize from the
+    // real last punch (same as punch-in when only one scan was recorded).
     if (!punchOut && dayClosed) {
-      const lastIsOut =
-        last.direction === 'out' ||
-        (last.direction !== 'in' && list.length > 1 && list.length % 2 === 0);
-      if (lastIsOut && list.length > 1 && last.punchedAt !== punchIn) {
-        punchOut = last.punchedAt;
-      } else if (list.length > 1 && last.punchedAt !== punchIn) {
-        punchOut = last.punchedAt;
-      } else {
-        punchOut = `${punchDate} 23:59:59`;
-      }
+      punchOut = last.punchedAt || punchIn;
     }
 
     let workMinutes = null;

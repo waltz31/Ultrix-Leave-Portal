@@ -34,9 +34,25 @@ import {
 } from './pages/ReimbursementPages';
 import { homePathForRole } from './utils';
 
+function BootScreen({ message = 'Loading…', error = '', onRetry }) {
+  return (
+    <div className="boot">
+      <p>{error || message}</p>
+      {error && onRetry ? (
+        <button type="button" className="btn primary" onClick={onRetry}>
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function Protected({ role, children }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="boot">Loading…</div>;
+  const { user, loading, bootError, retrySession } = useAuth();
+  if (loading) return <BootScreen message="Connecting to server…" />;
+  if (bootError && !user) {
+    return <BootScreen error={bootError} onRetry={retrySession} />;
+  }
   if (!user) return <Navigate to="/login" replace />;
   if (role && user.role !== role) {
     return <Navigate to={homePathForRole(user.role)} replace />;
@@ -45,8 +61,11 @@ function Protected({ role, children }) {
 }
 
 function HomeRedirect() {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="boot">Loading…</div>;
+  const { user, loading, bootError, retrySession } = useAuth();
+  if (loading) return <BootScreen message="Connecting to server…" />;
+  if (bootError && !user) {
+    return <BootScreen error={bootError} onRetry={retrySession} />;
+  }
   if (!user) return <Navigate to="/login" replace />;
   return <Navigate to={homePathForRole(user.role)} replace />;
 }
