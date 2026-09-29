@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { api } from '../api';
 import { pathForNotification, useNotifications } from '../notifications';
 import { useAuth } from '../auth';
+import { getPortalRoot } from '../portalRoot';
 import { DARK_THEMES, LIGHT_THEMES, useTheme } from '../theme';
 import { avatarSrc, formatDateTime } from '../utils';
 import StatusCelebration from './StatusCelebration';
@@ -339,7 +342,7 @@ function ChangePasswordModal({ onClose }) {
     }
   }
 
-  return (
+  const modal = (
     <div className="modal-backdrop modal-backdrop-static">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="change-pass-title">
         <h2 id="change-pass-title">Change password</h2>
@@ -391,6 +394,9 @@ function ChangePasswordModal({ onClose }) {
       </div>
     </div>
   );
+
+  const portalRoot = getPortalRoot();
+  return portalRoot ? createPortal(modal, portalRoot) : modal;
 }
 
 function ChangeNameModal({ onClose }) {
@@ -416,7 +422,7 @@ function ChangeNameModal({ onClose }) {
     }
   }
 
-  return (
+  const modal = (
     <div className="modal-backdrop modal-backdrop-static">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="change-name-title">
         <h2 id="change-name-title">Update name</h2>
@@ -446,6 +452,9 @@ function ChangeNameModal({ onClose }) {
       </div>
     </div>
   );
+
+  const portalRoot = getPortalRoot();
+  return portalRoot ? createPortal(modal, portalRoot) : modal;
 }
 
 function SettingsMenu() {

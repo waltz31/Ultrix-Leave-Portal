@@ -1,15 +1,19 @@
 import { jsPDF } from 'jspdf';
 import html2pdf from 'html2pdf.js';
 
-/** Capture tuned for crisp text at modest file size. */
-const PDF_CANVAS_SCALE = 1.4;
-const PDF_TARGET_WIDTH_PX = 880;
-const PDF_TARGET_BYTES = 25 * 1024;
-const PDF_START_QUALITY = 0.64;
-const PDF_MIN_QUALITY = 0.46;
+/** Capture at high DPI so text stays sharp when fitted to A4. */
+const PDF_CANVAS_SCALE = 2.5;
+/** Soft upper bound so huge captures still fit storage (~8MB base64 cap on server). */
+const PDF_MAX_WIDTH_PX = 2480;
+const PDF_TARGET_BYTES = 1_500_000;
+const PDF_START_QUALITY = 0.92;
+const PDF_MIN_QUALITY = 0.82;
 
 function preparePdfCanvas(sourceCanvas) {
-  const scale = Math.min(1, PDF_TARGET_WIDTH_PX / sourceCanvas.width);
+  // Only shrink oversized captures; never downscale a sharp render to a tiny width.
+  if (sourceCanvas.width <= PDF_MAX_WIDTH_PX) return sourceCanvas;
+
+  const scale = PDF_MAX_WIDTH_PX / sourceCanvas.width;
   const out = document.createElement('canvas');
   out.width = Math.max(1, Math.round(sourceCanvas.width * scale));
   out.height = Math.max(1, Math.round(sourceCanvas.height * scale));
@@ -31,7 +35,7 @@ function buildPdfBlob(canvas, quality) {
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 6;
+  const margin = 8;
   const maxWidth = pageWidth - margin * 2;
   const maxHeight = pageHeight - margin * 2;
 
@@ -46,7 +50,8 @@ function buildPdfBlob(canvas, quality) {
   const offsetX = margin + (maxWidth - drawWidth) / 2;
   const offsetY = margin;
   const imgData = canvas.toDataURL('image/jpeg', quality);
-  pdf.addImage(imgData, 'JPEG', offsetX, offsetY, drawWidth, drawHeight, undefined, 'MEDIUM');
+  // NONE avoids a second lossy pass on top of the JPEG encode.
+  pdf.addImage(imgData, 'JPEG', offsetX, offsetY, drawWidth, drawHeight, undefined, 'NONE');
   return pdf.output('blob');
 }
 
@@ -54,13 +59,13 @@ function canvasToPdfBlob(canvas) {
   let quality = PDF_START_QUALITY;
   let blob = buildPdfBlob(canvas, quality);
   while (blob.size > PDF_TARGET_BYTES && quality > PDF_MIN_QUALITY) {
-    quality = Math.max(PDF_MIN_QUALITY, quality - 0.04);
+    quality = Math.max(PDF_MIN_QUALITY, Number((quality - 0.03).toFixed(2)));
     blob = buildPdfBlob(canvas, quality);
   }
   return blob;
 }
 
-/** Generate a compact JPEG-based PDF blob from the invoice preview element. */
+/** Generate a high-resolution JPEG-based PDF blob from the invoice preview element. */
 export async function generateInvoicePdfBlob(previewEl) {
   previewEl.classList.add('pdf-export');
   try {
@@ -69,17 +74,25 @@ export async function generateInvoicePdfBlob(previewEl) {
       requestAnimationFrame(() => requestAnimationFrame(resolve))
     );
 
-    const worker = html2pdf().set({
-      html2canvas: {
-        scale: PDF_CANVAS_SCALE,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        logging: false,
-        scrollX: 0,
-        scrollY: 0,
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    }).from(previewEl);
+    const scale = Math.max(
+      PDF_CANVAS_SCALE,
+      Math.min(3, (typeof window !== 'undefined' ? window.devicePixelRatio : 1) || 1)
+    );
+
+    const worker = html2pdf()
+      .set({
+        html2canvas: {
+          scale,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          scrollX: 0,
+          scrollY: 0,
+          letterRendering: true,
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      })
+      .from(previewEl);
 
     const canvasEl = await worker.toCanvas().get('canvas');
     if (!canvasEl) return null;
@@ -104,9 +117,9 @@ export async function blobToBase64(blob) {
 /** Shrink signature images before they land in the preview / PDF. */
 export function compressSignatureDataUrl(
   dataUrl,
-  maxWidth = 480,
-  maxHeight = 120,
-  quality = 0.78
+  maxWidth = 960,
+  maxHeight = 240,
+  quality = 0.92
 ) {
   if (!dataUrl || !dataUrl.startsWith('data:image')) return Promise.resolve(dataUrl);
 
@@ -126,8 +139,10 @@ export function compressSignatureDataUrl(
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, w, h);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', quality));
+      resolve(canvas.toDataURL('image/png'));
     };
     img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;

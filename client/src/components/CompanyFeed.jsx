@@ -217,8 +217,10 @@ function loadEmojiCatalog() {
 
 function initialsFromName(name) {
   const parts = String(name || '')
+    .replace(/\([^)]*\)/g, ' ')
     .trim()
     .split(/\s+/)
+    .map((part) => part.replace(/[^A-Za-z0-9]/g, ''))
     .filter(Boolean);
   if (!parts.length) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
@@ -477,11 +479,13 @@ function Avatar({ name, photo, userId, size = 'md' }) {
   const [broken, setBroken] = useState(false);
   const initials = initialsFromName(name);
   const tone = Number(userId || 0) % 6;
-  const src = avatarSrc(photo);
-  if (!broken) {
+  // Feed payloads intentionally omit profile photos — use initials instead of the
+  // shared default silhouette so every teammate doesn't look identical.
+  const src = photo ? avatarSrc(photo) : '';
+  if (src && !broken) {
     return (
       <img
-        className={`feed-avatar feed-avatar-${size}${photo ? '' : ' is-default-avatar'}`}
+        className={`feed-avatar feed-avatar-${size}`}
         src={src}
         alt=""
         onError={() => setBroken(true)}
@@ -1413,13 +1417,6 @@ export default function CompanyFeed() {
                   <ImageIcon />
                   {imageBusy ? 'Uploading…' : composerImage ? 'Change photo' : 'Add photo'}
                 </button>
-                <EmojiPicker
-                  onPick={(emoji) => {
-                    setComposer((value) => insertEmoji(value, emoji, composerRef.current));
-                    requestAnimationFrame(() => composerRef.current?.focus());
-                  }}
-                  label="Insert emoji in post"
-                />
                 <button type="button" className="btn feed-share-btn" disabled={posting || imageBusy} onClick={handleShare}>
                   Share Post
                 </button>

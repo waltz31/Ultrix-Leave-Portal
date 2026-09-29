@@ -34,8 +34,10 @@ export const EMOJI_GROUP_ORDER = Object.keys(EMOJI_GROUP_LABELS);
 
 export function initialsFromName(name) {
   const parts = String(name || '')
+    .replace(/\([^)]*\)/g, ' ')
     .trim()
     .split(/\s+/)
+    .map((part) => part.replace(/[^A-Za-z0-9]/g, ''))
     .filter(Boolean);
   if (!parts.length) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();

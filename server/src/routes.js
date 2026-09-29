@@ -353,23 +353,31 @@ router.get('/auth/me', authRequired, async (req, res) => {
 });
 
 router.patch('/auth/password', authRequired, async (req, res) => {
-  const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'Current and new password are required' });
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current and new password are required' });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (
+      !user.password_hash ||
+      !(await verifyPassword(String(currentPassword), user.password_hash))
+    ) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    await db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(
+      await hashPassword(String(newPassword)),
+      user.id
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Password update failed:', err?.message || err);
+    res.status(500).json({ error: 'Could not update password' });
   }
-  if (String(newPassword).length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters' });
-  }
-  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (!(await verifyPassword(currentPassword, user.password_hash))) {
-    return res.status(401).json({ error: 'Current password is incorrect' });
-  }
-  await db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(
-    await hashPassword(newPassword),
-    user.id
-  );
-  res.json({ ok: true });
 });
 
 router.patch('/auth/profile', authRequired, hrRequired, async (req, res) => {

@@ -877,7 +877,7 @@ export default function InvoiceGenerator() {
         <div className="invoice-studio-preview">
           <div className="invoice-preview-toolbar">
             <span>Live preview</span>
-            <span className="muted">A4 · compact PDF</span>
+            <span className="muted">A4 · high-resolution PDF</span>
           </div>
           <div className="invoice-preview-stage">
             <InvoiceDocument key={`preview-${formKey}`} form={form} previewRef={previewRef} />
